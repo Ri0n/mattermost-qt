@@ -318,6 +318,10 @@ void ChatArea::init() {
 		}
 	})
 	);
+
+	if (!pendingPostId.isEmpty()) {
+		goToPost(pendingPostId);
+	}
 }
 
 void ChatArea::deinit() {
@@ -604,6 +608,10 @@ void ChatArea::fillChannelPosts (const ChannelNewPosts& newPosts)
 	ui->listWidget->scrollToBottom ();
 	if (!isThread)
 		setUnreadMessagesCount (unreadMessagesCount);
+
+	if (!pendingPostId.isEmpty()) {
+		goToPost(pendingPostId);
+	}
 }
 
 void ChatArea::appendChannelPost (BackendPost& post)
@@ -634,6 +642,10 @@ void ChatArea::appendChannelPost (BackendPost& post)
 
 	ui->listWidget->adjustSize();
 	ui->listWidget->scrollToBottom();
+
+	if (!pendingPostId.isEmpty()) {
+		goToPost(pendingPostId);
+	}
 
 	//if(!isThread)
 	//	moveOnListTop ();
@@ -767,8 +779,22 @@ void ChatArea::dropEvent (QDropEvent* event)
 
 void ChatArea::goToPost (const BackendPost& post)
 {
-	int pos = ui->listWidget->findPostByIndex (post.id, 0);
+	goToPost(post.id);
+}
 
+void ChatArea::goToPost (const QString& postId)
+{
+	if (postId.isEmpty()) {
+		return;
+	}
+
+	const int pos = ui->listWidget->findPostByIndex (postId, 0);
+	if (pos < 0) {
+		pendingPostId = postId;
+		return;
+	}
+
+	pendingPostId.clear();
 	ui->listWidget->scrollToItem(ui->listWidget->item(pos), QAbstractItemView::PositionAtTop);
 }
 
