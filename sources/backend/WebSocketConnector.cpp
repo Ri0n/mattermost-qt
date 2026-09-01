@@ -67,10 +67,15 @@ WebSocketConnector::WebSocketConnector (WebSocketEventHandler& eventHandler)
 :eventHandler (eventHandler)
 ,hasReconnect (false)
 {
-	connect (&webSocket, qOverload<QAbstractSocket::SocketError>(&QWebSocket::error), [this] (QAbstractSocket::SocketError error){
+	auto errorHandler = [this] (QAbstractSocket::SocketError error) {
 		LOG_DEBUG ("WebSocket error " << error << " " << webSocket.errorString());
 		doReconnect ();
-	});
+	};
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+	connect (&webSocket, &QWebSocket::errorOccurred, this, errorHandler);
+#else
+	connect (&webSocket, qOverload<QAbstractSocket::SocketError>(&QWebSocket::error), this, errorHandler);
+#endif
 
 	connect(&webSocket, &QWebSocket::connected, [this] {
 		LOG_DEBUG ("WebSocket connected");
