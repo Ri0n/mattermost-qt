@@ -72,6 +72,13 @@ void ChannelItem::setMuted(bool muted)
     }
 }
 
+void ChannelItem::setMentioned(bool mentioned)
+{
+    if (widget) {
+        widget->setMentioned(mentioned);
+    }
+}
+
 void ChannelItem::addCommonContextMenuActions(QMenu& menu, BackendChannel& channel)
 {
     auto& sidebar = SidebarService::instance(backend);
