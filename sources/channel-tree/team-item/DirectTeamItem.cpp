@@ -33,9 +33,9 @@
 
 namespace Mattermost {
 
-ChannelItem* DirectTeamItem::createChannelItem (Backend& backend, ChannelItemWidget* itemWidget)
+ChannelItem* DirectTeamItem::createChannelItem (Backend& backendRef, ChannelItemWidget* itemWidget)
 {
-	return new DirectChannelItem (backend, itemWidget);
+	return new DirectChannelItem (backendRef, itemWidget);
 }
 
 void DirectTeamItem::showContextMenu (const QPoint& pos)
