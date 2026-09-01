@@ -135,7 +135,7 @@ BackendPost* BackendChannel::addPost (const QJsonObject& postObject)
 	return newPost;
 }
 
-void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPost>::iterator position, ChannelNewPostsChunk& currentChunk, QVector<QPair<QString, QString>>& rootIdAndPostList, bool initialLoad)
+void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPost>::iterator position, ChannelNewPostsChunk& currentChunk, QVector<QPair<QString, QString>>& rootLinks, bool initialLoad)
 {
 	/*
 	 * Add a post.
@@ -150,7 +150,7 @@ void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPo
 
 	 if (!rootId.isEmpty()) {
 		//qDebug() << rootId << newPost->id;
-	 	rootIdAndPostList.push_back(QPair<QString,QString> (rootId, newPost->id));
+	 	rootLinks.push_back(QPair<QString,QString> (rootId, newPost->id));
 	 	newPost->hidden = true;
 	 	BackendPost* rootPost = findPostById(rootId);
 	 	if (rootPost) {
@@ -350,9 +350,9 @@ QSet<const BackendUser*> BackendChannel::getAllMembers () const
 	return ret;
 }
 
-void BackendChannel::addMember (const Storage& storage, const QJsonObject& jsonObject)
+void BackendChannel::addMember (const Storage& channelStorage, const QJsonObject& jsonObject)
 {
-	BackendChannelMember member (storage, jsonObject);
+	BackendChannelMember member (channelStorage, jsonObject);
 	if (member.user) {
 		members.insert (member.user->id, std::move (member));
 	} else {
