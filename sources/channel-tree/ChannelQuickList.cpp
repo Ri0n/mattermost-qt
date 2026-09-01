@@ -8,6 +8,8 @@
 #include <algorithm>
 
 #include <QHeaderView>
+#include <QIcon>
+#include <QVector>
 
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
