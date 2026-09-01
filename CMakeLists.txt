@@ -59,6 +59,10 @@ find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Widgets REQUIRED)
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Network REQUIRED)
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS WebSockets REQUIRED)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	find_package(Qt${QT_VERSION_MAJOR} COMPONENTS DBus REQUIRED)
+endif()
+
 include(CTest)
 if(BUILD_TESTING)
 	find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Test REQUIRED)
@@ -104,6 +108,11 @@ if(BUILD_TESTING)
 endif()
 
 target_link_libraries (${APPID} PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::WebSockets)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	target_link_libraries(${APPID} PRIVATE Qt${QT_VERSION_MAJOR}::DBus)
+	target_compile_definitions(${APPID} PRIVATE MATTERMOST_QT_FREEDESKTOP_NOTIFICATIONS)
+endif()
 
 if(UNIX)
 	include(GNUInstallDirs)
