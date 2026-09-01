@@ -6,7 +6,9 @@
 #include "NotificationManager.h"
 
 #include <QApplication>
+#include <QStringList>
 #include <QSystemTrayIcon>
+#include <QTimer>
 
 #ifdef MATTERMOST_QT_FREEDESKTOP_NOTIFICATIONS
 #include <QVariantMap>
@@ -76,9 +78,13 @@ void NotificationManager::show(const QString& title, const QString& body,
 
 void NotificationManager::onFallbackMessageClicked()
 {
-    if (fallbackTarget.isValid()) {
-        emit activated(fallbackTarget);
+    if (!fallbackTarget.isValid()) {
+        return;
     }
+
+    const NotificationTarget target = fallbackTarget;
+    fallbackTarget = NotificationTarget {};
+    emit activated(target);
 }
 
 #ifdef MATTERMOST_QT_FREEDESKTOP_NOTIFICATIONS
@@ -145,7 +151,14 @@ void NotificationManager::onActionInvoked(uint notificationId, const QString& ac
 void NotificationManager::onNotificationClosed(uint notificationId, uint reason)
 {
     Q_UNUSED(reason);
-    freedesktopTargets.remove(notificationId);
+
+    // Some notification servers close a notification as part of invoking its
+    // default action. The specification does not guarantee whether
+    // NotificationClosed or ActionInvoked is delivered first, so retain the
+    // target briefly to let a following ActionInvoked resolve the same ID.
+    QTimer::singleShot(5000, this, [this, notificationId] {
+        freedesktopTargets.remove(notificationId);
+    });
 }
 #endif
 
