@@ -169,7 +169,18 @@ private slots:
         QVERIFY(tracker.isUnread(QStringLiteral("channel")));
     }
 
-    void threadReplyNeedsMentionButStillUpdatesActivity()
+    void threadReplyBelongsToChannelWhenCrtIsOff()
+    {
+        ChannelActivityTracker tracker;
+        setMembership(tracker, 1000, 5, 5);
+        synchronize(tracker, 1000, 5, 5, true, false);
+
+        tracker.recordPost(QStringLiteral("channel"), 2000, false, true, false);
+        QVERIFY(tracker.isUnread(QStringLiteral("channel")));
+        QCOMPARE(tracker.activityTime(QStringLiteral("channel")), uint64_t(2000));
+    }
+
+    void threadReplyStaysOutOfParentChannelWhenCrtIsOn()
     {
         ChannelActivityTracker tracker;
         setMembership(tracker, 1000, 5, 5);
@@ -179,8 +190,11 @@ private slots:
         QVERIFY(!tracker.isUnread(QStringLiteral("channel")));
         QCOMPARE(tracker.activityTime(QStringLiteral("channel")), uint64_t(2000));
 
+        // A mention in a CRT reply belongs to the followed thread's unread
+        // state, not to the parent channel's mention_count_root.
         tracker.recordPost(QStringLiteral("channel"), 2100, false, true, true);
-        QVERIFY(tracker.isUnread(QStringLiteral("channel")));
+        QVERIFY(!tracker.hasMention(QStringLiteral("channel")));
+        QVERIFY(!tracker.isUnread(QStringLiteral("channel")));
     }
 
     void ownPostDoesNotCreateUnreadState()
