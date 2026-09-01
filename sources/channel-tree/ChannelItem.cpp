@@ -24,7 +24,12 @@
 
 #include "ChannelItem.h"
 
+#include <QMenu>
+
 #include "ChannelItemWidget.h"
+#include "ChannelTree.h"
+#include "backend/SidebarService.h"
+#include "backend/types/BackendChannel.h"
 
 namespace Mattermost {
 
@@ -58,6 +63,35 @@ void ChannelItem::setLabel (const QString& label)
 void ChannelItem::setWidget (ChannelItemWidget* widget)
 {
 	this->widget = widget;
+}
+
+void ChannelItem::setMuted(bool muted)
+{
+    if (widget) {
+        widget->setMuted(muted);
+    }
+}
+
+void ChannelItem::addCommonContextMenuActions(QMenu& menu, BackendChannel& channel)
+{
+    auto& sidebar = SidebarService::instance(backend);
+    const bool muted = sidebar.isChannelMuted(channel);
+    const bool conversation = channel.type == BackendChannel::directChannel
+        || channel.type == BackendChannel::groupChannel;
+
+    menu.addAction(muted
+                       ? (conversation ? QStringLiteral("Unmute Conversation") : QStringLiteral("Unmute Channel"))
+                       : (conversation ? QStringLiteral("Mute Conversation") : QStringLiteral("Mute Channel")),
+                   [this, &channel, muted] {
+        SidebarService::instance(backend).setChannelMuted(channel, !muted);
+    });
+
+    auto* tree = static_cast<ChannelTree*>(treeWidget());
+    if (tree && tree->canRemoveChannelFromCategory(this)) {
+        menu.addAction(QStringLiteral("Remove from group"), [tree, this] {
+            tree->removeChannelFromCategory(this);
+        });
+    }
 }
 
 } /* namespace Mattermost */
