@@ -44,7 +44,7 @@ class BackendChannel;
 class BackendPost;
 class BackendUser;
 class ChannelItem;
-class ChannelNewPosts;
+struct ChannelNewPosts;
 class OutgoingAttachmentList;
 class QChatArea;
 
