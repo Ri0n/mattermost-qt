@@ -58,13 +58,6 @@
      <property name="contextMenuPolicy">
       <enum>Qt::NoContextMenu</enum>
      </property>
-     <property name="styleSheet">
-      <string notr="true">QListWidget::item {
-	border: 1px solid black;
-	margin-bottom: 10px;
-}
-</string>
-     </property>
      <property name="frameShape">
       <enum>QFrame::NoFrame</enum>
      </property>
