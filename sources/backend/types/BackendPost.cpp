@@ -105,7 +105,11 @@ bool BackendPost::isOwnPollPost () const
 		return false;
 	}
 
-#warning "fix"
+#if defined(_MSC_VER)
+#pragma message("warning: fix BackendPost::isOwnPollPost")
+#else
+#warning "fix BackendPost::isOwnPollPost"
+#endif
 	return true;
 	//BackendUser* user =
 	//return poll->authorName
