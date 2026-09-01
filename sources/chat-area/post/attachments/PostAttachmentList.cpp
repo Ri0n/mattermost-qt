@@ -20,9 +20,10 @@
 #include "PostAttachmentList.h"
 #include "ui_PostAttachmentList.h"
 
-#include <QLabel>
 #include <QDebug>
+#include <QLabel>
 #include <QListWidgetItem>
+#include <QVBoxLayout>
 #include "AttachedBinaryFile.h"
 #include "AttachedImageFile.h"
 #include "AttachedVideoFile.h"
@@ -55,6 +56,7 @@ void PostAttachmentList::addFile (const BackendFile& file, const QString& author
 {
     auto* newItem = new QListWidgetItem();
     QWidget* fileWidget = nullptr;
+    AttachedImageFile* imageWidget = nullptr;
 
 #if BUILD_MULTIMEDIA
     if (file.name.endsWith(".mp4", Qt::CaseInsensitive) || file.name.endsWith(".mov", Qt::CaseInsensitive)) {
@@ -64,21 +66,45 @@ void PostAttachmentList::addFile (const BackendFile& file, const QString& author
     if (!file.mimeType.startsWith("image")) {
         fileWidget = new AttachedBinaryFile (backend, file, this);
     } else {
-        auto* imageWidget = new AttachedImageFile (backend, file, authorName, this);
+        imageWidget = new AttachedImageFile (backend, file, authorName, this);
         fileWidget = imageWidget;
-        connect(imageWidget, &AttachedImageFile::dimensionsChanged, this,
-                [this, newItem, fileWidget] {
-            newItem->setSizeHint(fileWidget->size());
-            updateDimensions();
-        });
     }
 
-    ui->listWidget->addItem(newItem);
-    ui->listWidget->setItemWidget(newItem, fileWidget);
-
+    // QListWidget paints the item border underneath the widget installed with
+    // setItemWidget(). If the attachment widget occupies the complete item
+    // rectangle, an opaque image covers the left/right/bottom border pixels.
+    // Keep the content one physical layout pixel inside the item on every side
+    // so the delegate-owned border and the attachment geometry cannot overlap.
     fileWidget->adjustSize();
-    newItem->setSizeHint(fileWidget->size());
-    updateDimensions();
+
+    auto* itemWidget = new QWidget();
+    auto* itemLayout = new QVBoxLayout(itemWidget);
+    itemLayout->setContentsMargins(1, 1, 1, 1);
+    itemLayout->setSpacing(0);
+    itemLayout->addWidget(fileWidget);
+    itemWidget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+
+    ui->listWidget->addItem(newItem);
+    ui->listWidget->setItemWidget(newItem, itemWidget);
+
+    const auto syncItemGeometry = [this, newItem, fileWidget, itemWidget, itemLayout] {
+        const QSize contentSize = fileWidget->size().expandedTo(QSize(1, 1));
+        const QMargins margins = itemLayout->contentsMargins();
+        const QSize itemSize(
+            contentSize.width() + margins.left() + margins.right(),
+            contentSize.height() + margins.top() + margins.bottom());
+
+        itemWidget->setFixedSize(itemSize);
+        newItem->setSizeHint(itemSize);
+        updateDimensions();
+    };
+
+    if (imageWidget) {
+        connect(imageWidget, &AttachedImageFile::dimensionsChanged,
+                this, syncItemGeometry);
+    }
+
+    syncItemGeometry();
 }
 
 void PostAttachmentList::updateDimensions()
