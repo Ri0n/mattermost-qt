@@ -19,18 +19,79 @@ constexpr int MuteIconSize = 16;
 constexpr int HorizontalMargin = 4;
 constexpr int ItemSpacing = 4;
 
-QColor statusColor(const QString& status)
+const QColor OnlineColor(QStringLiteral("#3DB887"));
+const QColor AwayColor(QStringLiteral("#FFBC1F"));
+const QColor DndColor(QStringLiteral("#D24B4E"));
+
+void drawStatusBadge(QPainter* painter, const QRect& rect, const QString& status,
+                     const QColor& backgroundColor)
 {
+    if (status.isEmpty()) {
+        return;
+    }
+
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+
+    // A one-pixel halo keeps the badge readable where it overlaps the avatar.
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(backgroundColor);
+    painter->drawEllipse(QRectF(rect).adjusted(-1.0, -1.0, 1.0, 1.0));
+
+    const QRectF badgeRect(rect);
+
     if (status == QStringLiteral("online")) {
-        return QColor(QStringLiteral("#3DB887"));
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(OnlineColor);
+        painter->drawEllipse(badgeRect);
+
+        QPen pen(Qt::white);
+        pen.setWidthF(1.15);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        painter->setPen(pen);
+        painter->setBrush(Qt::NoBrush);
+
+        QPainterPath check;
+        check.moveTo(badgeRect.left() + 1.8, badgeRect.top() + 4.1);
+        check.lineTo(badgeRect.left() + 3.3, badgeRect.top() + 5.5);
+        check.lineTo(badgeRect.left() + 6.3, badgeRect.top() + 2.4);
+        painter->drawPath(check);
+    } else if (status == QStringLiteral("away")) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(AwayColor);
+        painter->drawEllipse(badgeRect);
+
+        QPen pen(Qt::white);
+        pen.setWidthF(1.0);
+        pen.setCapStyle(Qt::RoundCap);
+        painter->setPen(pen);
+        const QPointF center = badgeRect.center();
+        painter->drawLine(center, QPointF(center.x(), badgeRect.top() + 2.0));
+        painter->drawLine(center, QPointF(badgeRect.right() - 1.7, center.y() + 1.0));
+    } else if (status == QStringLiteral("dnd")) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(DndColor);
+        painter->drawEllipse(badgeRect);
+
+        QPen pen(Qt::white);
+        pen.setWidthF(1.25);
+        pen.setCapStyle(Qt::RoundCap);
+        painter->setPen(pen);
+        painter->drawLine(QPointF(badgeRect.left() + 2.0, badgeRect.center().y()),
+                          QPointF(badgeRect.right() - 2.0, badgeRect.center().y()));
+    } else {
+        // Mattermost's offline marker is a dark center with a green outline.
+        // Treat unknown server states as offline rather than silently dropping
+        // the status indicator.
+        QPen pen(OnlineColor);
+        pen.setWidthF(1.25);
+        painter->setPen(pen);
+        painter->setBrush(Qt::black);
+        painter->drawEllipse(badgeRect.adjusted(0.65, 0.65, -0.65, -0.65));
     }
-    if (status == QStringLiteral("away")) {
-        return QColor(QStringLiteral("#FFBC1F"));
-    }
-    if (status == QStringLiteral("dnd")) {
-        return QColor(QStringLiteral("#D24B4E"));
-    }
-    return QColor(QStringLiteral("#8E9AA5"));
+
+    painter->restore();
 }
 
 } // namespace
@@ -93,12 +154,11 @@ void ChannelItemDelegate::paint(QPainter* painter,
                                    avatarRect.bottom() - StatusSize + 2,
                                    StatusSize,
                                    StatusSize);
-            painter->save();
-            painter->setRenderHint(QPainter::Antialiasing, true);
-            painter->setPen(QPen(option.palette.color(QPalette::Base), 2));
-            painter->setBrush(statusColor(status));
-            painter->drawEllipse(statusRect);
-            painter->restore();
+            const bool selected = option.state.testFlag(QStyle::State_Selected);
+            const QColor badgeBackground = selected
+                ? option.palette.color(QPalette::Highlight)
+                : option.palette.color(QPalette::Base);
+            drawStatusBadge(painter, statusRect, status, badgeBackground);
         }
 
         textLeft = avatarRect.right() + 1 + ItemSpacing;
