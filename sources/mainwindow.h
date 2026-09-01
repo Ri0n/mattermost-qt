@@ -38,7 +38,9 @@ class Backend;
 class BackendChannel;
 class BackendPost;
 class BackendTeam;
+class NotificationManager;
 class SettingsWindow;
+struct NotificationTarget;
 
 class MainWindow: public QMainWindow {
 	Q_OBJECT
@@ -81,10 +83,11 @@ public:
 private:
 	void createMenu ();
 	void reload ();
-	void activateLastNotification ();
+	void activateNotification (const NotificationTarget& target);
 private:
 	std::unique_ptr<Ui::MainWindow>		ui;
 	QSystemTrayIcon&					trayIcon;
+	std::unique_ptr<NotificationManager>	notificationManager;
 	ChooseEmojiDialogWrapper			chooseEmojiDialog;
 	QSet<const BackendChannel*>			channelsWithNewPosts;
 	Backend&							backend;
@@ -92,10 +95,6 @@ private:
 	QMenu*								mainMenu;
 	SettingsWindow*						settingsWindow;
 	bool								doDeinit;
-	QString							lastNotificationChannelId;
-	QString							lastNotificationPostId;
-	QString							lastNotificationRootId;
 };
 
 } /* namespace Mattermost */
-
