@@ -5,6 +5,9 @@
 
 #include "SidebarService.h"
 
+#include <algorithm>
+
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -12,7 +15,9 @@
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
 #include "backend/QByteArrayCreator.h"
+#include "backend/Storage.h"
 #include "backend/types/BackendChannel.h"
+#include "backend/types/BackendPost.h"
 #include "backend/types/BackendTeam.h"
 
 namespace Mattermost {
@@ -108,6 +113,17 @@ SidebarService::SidebarService(Backend& backend)
             &backend, &Backend::onNetworkError);
     connect(&httpConnector, &HTTPConnector::onHttpError,
             &backend, &Backend::onHttpError);
+
+    connect(&backend, &Backend::onNewPost, this,
+            [this](BackendChannel& channel, const BackendPost& post) {
+        recordChannelPost(channel, post);
+    });
+    connect(&backend, &Backend::onChannelViewed, this,
+            [this](const BackendChannel& channel) {
+        recordChannelViewed(channel);
+    });
+    connect(&backend, &Backend::onAllTeamChannelsPopulated,
+            this, &SidebarService::synchronizeChannelActivity);
 }
 
 void SidebarService::clear()
@@ -116,6 +132,8 @@ void SidebarService::clear()
     mutedChannelIds.clear();
     mentionedChannelIds.clear();
     sidebarByTeam.clear();
+    activityTracker.clear();
+    emit channelActivityReset();
 }
 
 QString SidebarService::currentUserId() const
@@ -162,7 +180,74 @@ void SidebarService::setChannelMentioned(const QString& channelId, bool mentione
     } else {
         mentionedChannelIds.remove(channelId);
     }
+    activityTracker.setMentioned(channelId, mentioned);
     emit channelMentionedChanged(channelId, mentioned);
+    emit channelActivityChanged(channelId);
+}
+
+bool SidebarService::isChannelTracked(const QString& channelId) const
+{
+    if (!activityTracker.isTracked(channelId)) {
+        return false;
+    }
+
+    // Keep Recent/Unreads in the same universe as the Channels tab. A channel
+    // membership may exist on the server while the conversation is hidden by
+    // the user's sidebar configuration (for example an old DM beyond the
+    // configured Direct Messages limit).
+    for (auto teamIt = sidebarByTeam.cbegin(); teamIt != sidebarByTeam.cend(); ++teamIt) {
+        const SidebarTeamState& state = teamIt.value();
+        for (auto categoryIt = state.categories.cbegin(); categoryIt != state.categories.cend(); ++categoryIt) {
+            if (categoryIt->channelIds.contains(channelId)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool SidebarService::isChannelUnread(const BackendChannel& channel) const
+{
+    return activityTracker.isUnread(channel.id);
+}
+
+quint64 SidebarService::channelActivityTime(const BackendChannel& channel) const
+{
+    return std::max(activityTracker.activityTime(channel.id), channel.last_post_at);
+}
+
+void SidebarService::synchronizeChannelActivity()
+{
+    const auto& channels = backend.getStorage().channels;
+    for (auto it = channels.cbegin(); it != channels.cend(); ++it) {
+        const BackendChannel* channel = it.value();
+        if (!channel) {
+            continue;
+        }
+        activityTracker.synchronizeChannel(channel->id, channel->last_post_at,
+                                           static_cast<quint64>(std::max(0, channel->total_msg_count)));
+    }
+    emit channelActivityReset();
+}
+
+void SidebarService::recordChannelPost(BackendChannel& channel, const BackendPost& post)
+{
+    activityTracker.recordPost(channel.id, post.create_at, post.isOwnPost(),
+                               !post.root_id.isEmpty(), post.currentUserMentioned);
+    emit channelActivityChanged(channel.id);
+}
+
+void SidebarService::recordChannelViewed(const BackendChannel& channel)
+{
+    const quint64 viewedAt = std::max<quint64>(
+        static_cast<quint64>(QDateTime::currentMSecsSinceEpoch()), channel.last_post_at);
+    activityTracker.recordViewed(channel.id, viewedAt,
+                                 static_cast<quint64>(std::max(0, channel.total_msg_count)));
+
+    if (mentionedChannelIds.remove(channel.id) > 0) {
+        emit channelMentionedChanged(channel.id, false);
+    }
+    emit channelActivityChanged(channel.id);
 }
 
 void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
@@ -178,17 +263,32 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
     httpConnector.get(request, HttpResponseCallback([this, callback](const QJsonDocument& doc) {
         mutedChannelIds.clear();
         mentionedChannelIds.clear();
+        activityTracker.clear();
+
         for (const auto& value : doc.array()) {
             const auto object = value.toObject();
             const QString channelId = object.value(QStringLiteral("channel_id")).toString();
             const auto notifyProps = object.value(QStringLiteral("notify_props")).toObject();
-            if (notifyProps.value(QStringLiteral("mark_unread")).toString() == QStringLiteral("mention")) {
+            const bool muted = notifyProps.value(QStringLiteral("mark_unread")).toString()
+                == QStringLiteral("mention");
+            const bool mentioned = object.value(QStringLiteral("mention_count")).toInt() > 0;
+
+            if (muted) {
                 mutedChannelIds.insert(channelId);
             }
-            if (object.value(QStringLiteral("mention_count")).toInt() > 0) {
+            if (mentioned) {
                 mentionedChannelIds.insert(channelId);
             }
+
+            activityTracker.setMembership(
+                channelId,
+                object.value(QStringLiteral("last_viewed_at")).toVariant().toULongLong(),
+                object.value(QStringLiteral("msg_count")).toVariant().toULongLong(),
+                mentioned,
+                muted);
         }
+
+        synchronizeChannelActivity();
         if (callback) {
             callback();
         }
@@ -218,7 +318,9 @@ void SidebarService::setChannelMuted(BackendChannel& channel, bool muted,
         } else {
             mutedChannelIds.remove(channelId);
         }
+        activityTracker.setMuted(channelId, muted);
         emit channelMutedChanged(channelId, muted);
+        emit channelActivityChanged(channelId);
         if (callback) {
             callback(true);
         }
