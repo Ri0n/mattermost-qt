@@ -71,8 +71,8 @@ void TeamChannelsListDialog::create (const FilterListDialogConfig& cfg, const st
 		set.insert (&it);
 	}
 
-	ui->tableWidget->setRowCount (set.size());
-	uint32_t channelsCount = 0;
+	ui->tableWidget->setRowCount (static_cast<int>(set.size()));
+	int channelsCount = 0;
 
 	for (auto& channel: set) {
 
@@ -89,7 +89,7 @@ void TeamChannelsListDialog::create (const FilterListDialogConfig& cfg, const st
 	ui->tableWidget->horizontalHeader()->setSectionResizeMode (1, QHeaderView::Stretch);
 	ui->tableWidget->resizeRowsToContents();
 
-	setItemCountLabel (channelsCount);
+	setItemCountLabel (static_cast<uint32_t>(channelsCount));
 	connect (ui->tableWidget->horizontalHeader(), &QHeaderView::sectionResized, ui->tableWidget, &QTableWidget::resizeRowsToContents);
 }
 

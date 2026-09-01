@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -28,6 +28,8 @@
 #include "backend/types/BackendPost.h"
 #include "backend/emoji/EmojiInfo.h"
 #include "chat-area/ChatArea.h"
+#include "MessageContentWidget.h"
+#include "MessageFormatter.h"
 #include "PostQuoteFrame.h"
 #include "attachments/PostAttachmentList.h"
 #include "attachments/PostPoll.h"
@@ -41,6 +43,7 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 ,post (post)
 ,threadButton(nullptr)
 ,ui(new Ui::PostWidget)
+,messageContent(nullptr)
 ,parentChatArea(chatArea)
 {
 	ui->setupUi(this);
@@ -50,9 +53,20 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 		ui->authorName->setStyleSheet("QLabel { color : blue; }");
 	}
 
-	ui->message->setText (formatMessageText (post.message));
+	messageContent = new MessageContentWidget(this);
+	const int messageIndex = ui->verticalLayout->indexOf(ui->message);
+	ui->verticalLayout->removeWidget(ui->message);
+	ui->message->hide();
+	ui->verticalLayout->insertWidget(messageIndex, messageContent);
+	connect(messageContent, &MessageContentWidget::dimensionsChanged,
+			this, &PostWidget::dimensionsChanged);
+	messageContent->setMessage(post.message);
 	ui->time->setText (getMessageTimeString (post.create_at));
 
+	connect(messageContent, &MessageContentWidget::linkHovered, this, [this](const QString& link) {
+		qDebug() << "Link hovered: " << link;
+		hoveredLink = link;
+	});
 
 	//avatars are downloaded in background, need to redraw it when ready
 
@@ -86,10 +100,12 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 	//Add previews for files, if any
 	if (!post.files.empty()) {
 		attachments = std::make_unique<PostAttachmentList> (backend, this);
+		connect(attachments.get(), &PostAttachmentList::dimensionsChanged,
+				this, &PostWidget::dimensionsChanged);
+		ui->verticalLayout->addWidget (attachments.get(), 0, Qt::AlignLeft);
 		for (const BackendFile& file: post.files) {
 			attachments->addFile (file, post.getDisplayAuthorName());
 		}
-		ui->verticalLayout->addWidget (attachments.get(), 0, Qt::AlignLeft);
 	}
 
 	//Add reactions, if any
@@ -117,11 +133,6 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 		connect (threadButton, &QPushButton::clicked, this, &PostWidget::openThreadWindow);
 		ui->verticalLayout->addWidget(threadButton);
 	}
-
-	connect (ui->message, &QLabel::linkHovered, [this] (const QString& link) {
-		qDebug() << "Link hovered: " << link;
-		hoveredLink = link;
-	});
 }
 
 PostWidget::~PostWidget()
@@ -131,7 +142,7 @@ PostWidget::~PostWidget()
 
 void PostWidget::setEdited (const QString& message)
 {
-	ui->message->setText (formatMessageText (message));
+	messageContent->setMessage(message);
 
 	/**
 	 * if (there is a poll in the post, just recreate the poll instance
@@ -208,119 +219,21 @@ void PostWidget::markAsDeleted ()
 		ui->verticalLayout->removeWidget (poll.get());
 		poll.reset (nullptr);
 
-		ui->message->setText ("(Poll deleted)");
-		ui->message->setMaximumHeight (100);
+		messageContent->setMessage(QStringLiteral("(Poll deleted)"));
 	} else {
-		ui->message->setText ("(Message deleted)");
+		messageContent->setMessage(QStringLiteral("(Message deleted)"));
 	}
 }
 
 
 QString PostWidget::getSelectedText ()
 {
-	return ui->message->selectedText();
-}
-
-static void replaceEmojis (QString& str)
-{
-	int emojiStart = 0;
-	int emojiEnd = 0;
-
-	do {
-
-		//find a substring enclosed in ':' - for example - :wave:
-		emojiStart = str.indexOf (':', emojiEnd);
-		if (emojiStart == -1) {
-			break;
-		}
-
-		emojiEnd = str.indexOf (':', emojiStart + 1);
-		if (emojiEnd == -1) {
-			break;
-		}
-
-		if (emojiEnd - emojiStart == 1) {
-			++emojiEnd;
-			continue;
-		}
-
-		int emojiNameSize = emojiEnd - emojiStart - 1;
-
-		//get the substring enclosed in ':' (without the ':'). This is the emoji name
-		QString emojiName = str.mid (emojiStart + 1, emojiNameSize);
-
-		EmojiID emojiID = EmojiInfo::findByName (emojiName);
-
-		if (!emojiID) {
-			continue;
-		}
-
-		Emoji emoji = EmojiInfo::getEmoji (emojiID);
-
-		//replace the emoji name (together with ':') with it's corresponding value
-		str.replace (emojiStart, emojiNameSize + 2, emoji.unicodeString);
-
-		emojiEnd -= emojiName.size() + 2 - emoji.unicodeString.size();
-		++emojiEnd;
-
-	} while (emojiStart != -1);
-
+	return messageContent->selectedText();
 }
 
 QString PostWidget::formatMessageText (const QString& str)
 {
-	QString ret (str.toHtmlEscaped ());
-	ret.replace("\n", "<br>");
-
-	int linkStart = 0;
-	int linkEnd = 0;
-
-	replaceEmojis (ret);
-
-	do {
-
-		QLatin1String lookups[2] = { QLatin1String ("http://"), QLatin1String ("https://") };
-		QLatin1String* useLookup = nullptr;
-
-		for (auto& lookup: lookups) {
-			linkStart = ret.indexOf (lookup, linkEnd);
-
-			if (linkStart != -1) {
-				useLookup = &lookup;
-				break;
-			}
-		}
-
-		if (!useLookup) {
-			break;
-		}
-
-		//poor man's find_first_of - there is no such thing in QT, and std::string is not aware of multibyte characters
-		for (linkEnd = linkStart + useLookup->size(); linkEnd < ret.size(); ++linkEnd) {
-			if (ret.at (linkEnd) == ' ' || ret.at (linkEnd) == '<') {
-				break;
-			}
-		}
-
-		if (linkEnd == -1) {
-			linkEnd = ret.size();
-		}
-
-		size_t size = linkEnd - linkStart;
-#if QT_VERSION < QT_VERSION_CHECK(6,0,0)
-		ret.insert (linkEnd, "\">" + QStringRef (&ret, linkStart,  size) + "</a>");
-#else
-		QStringView strView(ret);
-		ret.insert (linkEnd, "\">" + strView.sliced(linkStart,  size).toString() + "</a>");
-#endif
-		ret.insert (linkStart, "<a href=\"");
-
-		linkEnd += size + 15;
-	} while (linkStart != -1);
-
-	//std::cout << str.toStdString() << std::endl;
-	//std::cout << ret.toStdString() << std::endl;
-	return ret;
+	return MessageFormatter::formatMessageText(str);
 }
 
 QString PostWidget::getMessageTimeString (uint64_t timestamp)
@@ -355,9 +268,7 @@ QString PostWidget::formatForClipboardSelection (FormatType formatType) const
 
 void PostWidget::clearMessageText ()
 {
-	ui->message->setText ("");
-	ui->message->setMaximumHeight (0);
+	messageContent->clear();
 }
 
 } /* namespace Mattermost */
-

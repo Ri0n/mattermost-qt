@@ -37,10 +37,13 @@ namespace Mattermost {
 
 void GroupChannelItem::showContextMenu (const QPoint& pos)
 {
-	// Create menu and insert some actions
 	QMenu myMenu;
 
 	ChatArea *chatArea = data(0, Qt::UserRole).value<ChatArea*>();
+	if (!chatArea) {
+		return;
+	}
+
 	BackendChannel& channel = chatArea->getChannel();
 
 	myMenu.addAction ("View Channel details", [this, &channel] {
@@ -55,6 +58,9 @@ void GroupChannelItem::showContextMenu (const QPoint& pos)
 	});
 
 	myMenu.addAction ("Add user to the channel", [this, &channel] {
+		if (!channel.team) {
+			return;
+		}
 
 		std::vector<const BackendUser*> availableUsers;
 
@@ -100,6 +106,10 @@ void GroupChannelItem::showContextMenu (const QPoint& pos)
 			backend.editChannelProperties (channel, dialog->getNewProperties ());
 		});
 	});
+
+	myMenu.addSeparator();
+	addCommonContextMenuActions(myMenu, channel);
+	myMenu.addSeparator();
 
 	myMenu.addAction ("Leave Channel", [this, &channel] {
 

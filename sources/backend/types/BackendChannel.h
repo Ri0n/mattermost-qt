@@ -75,7 +75,7 @@ public:
 	QString getTeamAndChannelName ();
 
 	QSet<const BackendUser*> getAllMembers () const;
-	void addMember (const Storage& storage, const QJsonObject& jsonObject);
+	void addMember (const Storage& channelStorage, const QJsonObject& jsonObject);
 
 	BackendPost* addPost (const QJsonObject& postObject);
 
@@ -164,7 +164,7 @@ signals:
 	 */
 	void onUserRemoved (const BackendUser& user);
 private:
-	void addPost (const QJsonObject& postObject, std::list<BackendPost>::iterator position, ChannelNewPostsChunk& currentChunk, QVector<QPair<QString, QString>>& rootIdAndPostList, bool initialLoad);
+	void addPost (const QJsonObject& postObject, std::list<BackendPost>::iterator position, ChannelNewPostsChunk& currentChunk, QVector<QPair<QString, QString>>& rootLinks, bool initialLoad);
 	BackendPost* findPostById (QString postID);
 public:
 	const Storage&					storage;

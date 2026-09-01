@@ -44,7 +44,7 @@ class BackendChannel;
 class BackendPost;
 class BackendUser;
 class ChannelItem;
-class ChannelNewPosts;
+struct ChannelNewPosts;
 class OutgoingAttachmentList;
 class QChatArea;
 
@@ -63,10 +63,11 @@ public:
 	void handleUserTyping (const BackendUser& user);
 
 	/**
-	 * Scroll to given post
-	 * @param post post
+	 * Scroll to given post. If it is not loaded yet, remember the target and
+	 * complete the navigation when the post arrives.
 	 */
 	void goToPost (const BackendPost& post);
+	void goToPost (const QString& postId);
 
 	/**
 	 * Called when the chat area is being selected from the channels menu (so that it's contents is shown)
@@ -99,6 +100,7 @@ private:
 	
 	ChatArea*					parentArea;
 	QString						parentPostId;
+	QString						pendingPostId;
 
 public:
 	Ui::ChatArea 					*ui;

@@ -83,33 +83,6 @@ static QString timeToString (uint64_t timestamp)
 UserListEntry::UserListEntry (const BackendChannelMember& channelMember)
 :UserListEntry (channelMember.user)
 {
-//	QString timeString;
-//	int64_t diffSeconds = (QDateTime::currentMSecsSinceEpoch() - channelMember.last_viewed_at) / 1000;
-//
-//
-//	int64_t secondsInDay = 3600 * 24;
-//	int64_t secondsInHour = 3600;
-//	int64_t secondsInMinute = 60;
-//
-//
-//	if (diffSeconds > secondsInDay) {
-//		int64_t days = diffSeconds / secondsInDay;
-//		timeString += QString::number (days) + " days, ";
-//		diffSeconds %= days * secondsInDay;
-//	}
-//
-//	if (diffSeconds > secondsInHour) {
-//		int64_t hours = diffSeconds / secondsInHour;
-//		timeString += QString::number (hours) + " hours";
-//		diffSeconds %= hours * secondsInHour;
-//	}
-//
-//	if (diffSeconds > secondsInMinute) {
-//		int64_t minutes = diffSeconds / secondsInMinute;
-//		timeString += QString::number (minutes) + " minutes";
-//		diffSeconds %= minutes * secondsInMinute;
-//	}
-
 	fields[userMessageCount] = timeToString (channelMember.last_viewed_at);
 
 	if (channelMember.isAdmin) {
@@ -133,14 +106,14 @@ UserListDialog::UserListDialog (const FilterListDialogConfig& cfg, const std::ma
 UserListDialog::UserListDialog (const FilterListDialogConfig& cfg, const std::vector<const BackendUser*>& allUsers, const QSet<const BackendUser*>* alreadyExistingUsers, QWidget* parent)
 :FilterListDialog (parent)
 {
-    std::set<UserListEntry> entrySet;
+	std::set<UserListEntry> entrySet;
 
 	for (auto& it: allUsers) {
 		bool isAlreadyExisting = alreadyExistingUsers->find (it) != alreadyExistingUsers->end();
 		entrySet.emplace (it, isAlreadyExisting);
 	}
 
-    create (cfg, entrySet, {"Full Name", "Status"});
+	create (cfg, entrySet, {"Full Name", "Status"});
 }
 
 UserListDialog::~UserListDialog () = default;
@@ -170,8 +143,8 @@ void UserListDialog::create (const FilterListDialogConfig& cfg, const std::set<U
 		}
 	}
 
-	ui->tableWidget->setRowCount (users.size());
-	uint32_t usersCount = 0;
+	ui->tableWidget->setRowCount (static_cast<int>(users.size()));
+	int usersCount = 0;
 
 	for (const UserListEntry& entry: users) {
 
@@ -208,7 +181,7 @@ void UserListDialog::create (const FilterListDialogConfig& cfg, const std::set<U
 	ui->tableWidget->setIconSize(QSize (24,24));
 	ui->tableWidget->horizontalHeader()->setSectionResizeMode (0, QHeaderView::Stretch);
 
-	setItemCountLabel (usersCount);
+	setItemCountLabel (static_cast<uint32_t>(usersCount));
 }
 
 void UserListDialog::setItemCountLabel (uint32_t count)
@@ -227,7 +200,6 @@ void UserListDialog::addContextMenuActions (QMenu& menu, const QVariant& selecte
 
 	//direct channel
 	menu.addAction ("View Profile", [this, user] {
-	//	qDebug() << "View Profile for " << user->getDisplayName();
 		UserProfileDialog* dialog = new UserProfileDialog (*user, ui->tableWidget);
 		dialog->show ();
 	});
@@ -248,4 +220,3 @@ void UserListDialog::removeRowByData (const BackendUser& user)
 }
 
 } /* namespace Mattermost */
-

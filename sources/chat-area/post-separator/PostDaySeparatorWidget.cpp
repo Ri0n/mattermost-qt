@@ -38,8 +38,6 @@ static QString getDayString (int daysAgo)
 	default:
 		return QDateTime::currentDateTime().date().addDays(-daysAgo).toString("dd MMM yyyy");
 	}
-
-	return "";
 }
 
 PostDaySeparatorWidget::PostDaySeparatorWidget (uint32_t daysAgo)

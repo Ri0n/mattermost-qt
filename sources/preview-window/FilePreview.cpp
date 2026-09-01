@@ -54,9 +54,9 @@ FilePreview::~FilePreview()
     delete ui;
 }
 
-QSize FilePreview::getMinimumSize (const QPixmap& pixmap)
+QSize FilePreview::getMinimumSize (const QPixmap& sourcePixmap)
 {
-	QSize ret = pixmap.size();
+	QSize ret = sourcePixmap.size();
 
 #if QT_VERSION < QT_VERSION_CHECK(6,0,0)
 	QRect screenGeometry = QApplication::desktop()->screenGeometry (this);
@@ -66,14 +66,14 @@ QSize FilePreview::getMinimumSize (const QPixmap& pixmap)
 	screenGeometry.setWidth(screenGeometry.width() * 0.9);
 	screenGeometry.setHeight(screenGeometry.height() * 0.8);
 
-	ret.scale (std::min (pixmap.width(), screenGeometry.width()), std::min (pixmap.height(), screenGeometry.height()), Qt::KeepAspectRatio);
+	ret.scale (std::min (sourcePixmap.width(), screenGeometry.width()), std::min (sourcePixmap.height(), screenGeometry.height()), Qt::KeepAspectRatio);
 	return ret;
 }
 
 void FilePreview::resizeEvent (QResizeEvent* event)
 {
 	//new window size
-	QSize newWindowSize (event->size());
+	QSize requestedWindowSize (event->size());
 
 	//difference between the current and the previous size. Used to determine whether the user wants to expand or to shrink the window
 	QSize diff (event->size() - event->oldSize());
@@ -114,8 +114,8 @@ void FilePreview::resizeEvent (QResizeEvent* event)
 	int absHeight = abs (aspectRatioDiff.height());
 
 	if (absWidth > newImageSizeScaled.width() * 0.05 || absHeight > newImageSizeScaled.height() * 0.05) {
-		this->newWindowSize = newWindowSize + aspectRatioDiff;
-		//qDebug () << "Window start resize timer:" << aspectRatioDiff << " new size: " << newWindowSize + aspectRatioDiff;
+		newWindowSize = requestedWindowSize + aspectRatioDiff;
+		//qDebug () << "Window start resize timer:" << aspectRatioDiff << " new size: " << requestedWindowSize + aspectRatioDiff;
 		resizeTimer.start (200);
 	}
 

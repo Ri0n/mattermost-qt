@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -129,13 +129,13 @@ void ChatArea::init() {
 
 	signalConnections.push_back( connect (&channel, &BackendChannel::onPinnedPostsReceived,this, [this] () {
 		ui->pinnedPostsButton->show();
-		uint32_t pinnedPostCount = this->channel.pinnedPosts.size();
+		const auto pinnedPostCount = this->channel.pinnedPosts.size();
 		const char* pinnedPostsString[2] = {
 			" pinned post",
 			" pinned posts"
 		};
 
-		ui->pinnedPostsButton->setText (QString::number (pinnedPostCount) + pinnedPostsString[pinnedPostCount > 1]);
+		ui->pinnedPostsButton->setText (QString::number (static_cast<qulonglong>(pinnedPostCount)) + pinnedPostsString[pinnedPostCount > 1]);
 	})
 	);
 
@@ -170,7 +170,6 @@ void ChatArea::init() {
 
 	signalConnections.push_back( connect (&channel, &BackendChannel::onPostDeleted,this, [this] (const QString& postId) {
 		PostWidget* postWidget = ui->listWidget->findPost (postId);
-
 		if (postWidget) {
 			postWidget->markAsDeleted ();
 			ui->listWidget->adjustSize();
@@ -318,6 +317,10 @@ void ChatArea::init() {
 		}
 	})
 	);
+
+	if (!pendingPostId.isEmpty()) {
+		goToPost(pendingPostId);
+	}
 }
 
 void ChatArea::deinit() {
@@ -470,7 +473,6 @@ ChatArea::ChatArea (Backend& backend, BackendChannel& channel, QString rootId, C
 
 ChatArea::~ChatArea()
 {
-	disconnect();
 	if (isThread)
 		parentArea->threadsAreas.remove(this);
 	delete ui;
@@ -604,6 +606,10 @@ void ChatArea::fillChannelPosts (const ChannelNewPosts& newPosts)
 	ui->listWidget->scrollToBottom ();
 	if (!isThread)
 		setUnreadMessagesCount (unreadMessagesCount);
+
+	if (!pendingPostId.isEmpty()) {
+		goToPost(pendingPostId);
+	}
 }
 
 void ChatArea::appendChannelPost (BackendPost& post)
@@ -634,6 +640,10 @@ void ChatArea::appendChannelPost (BackendPost& post)
 
 	ui->listWidget->adjustSize();
 	ui->listWidget->scrollToBottom();
+
+	if (!pendingPostId.isEmpty()) {
+		goToPost(pendingPostId);
+	}
 
 	//if(!isThread)
 	//	moveOnListTop ();
@@ -767,8 +777,22 @@ void ChatArea::dropEvent (QDropEvent* event)
 
 void ChatArea::goToPost (const BackendPost& post)
 {
-	int pos = ui->listWidget->findPostByIndex (post.id, 0);
+	goToPost(post.id);
+}
 
+void ChatArea::goToPost (const QString& postId)
+{
+	if (postId.isEmpty()) {
+		return;
+	}
+
+	const int pos = ui->listWidget->findPostByIndex (postId, 0);
+	if (pos < 0) {
+		pendingPostId = postId;
+		return;
+	}
+
+	pendingPostId.clear();
 	ui->listWidget->scrollToItem(ui->listWidget->item(pos), QAbstractItemView::PositionAtTop);
 }
 

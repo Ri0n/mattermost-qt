@@ -35,6 +35,7 @@ namespace Mattermost {
 BackendPost::BackendPost (const QJsonObject& jsonObject, const Storage& storage)
 :rootPost (nullptr)
 ,isDeleted (false)
+,currentUserMentioned(jsonObject.value(QStringLiteral("_mmqt_current_user_mentioned")).toBool())
 ,has_thread(false)
 {
 	id = jsonObject.value("id").toString();
@@ -104,7 +105,11 @@ bool BackendPost::isOwnPollPost () const
 		return false;
 	}
 
-#warning "fix"
+#if defined(_MSC_VER)
+#pragma message("warning: fix BackendPost::isOwnPollPost")
+#else
+#warning "fix BackendPost::isOwnPollPost"
+#endif
 	return true;
 	//BackendUser* user =
 	//return poll->authorName

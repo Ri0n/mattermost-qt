@@ -167,18 +167,15 @@ BackendChannel* Storage::addChannel (BackendTeam& team, const QJsonObject& json)
 
 BackendChannel* Storage::addTeamChannel (BackendTeam& team, const QJsonObject& json)
 {
-	//get channel ID and channel type in order to check if a channel has to be created
+	//get channel type in order to check if a channel has to be created
 	uint32_t channelType = BackendChannel::getChannelType (json);
-	QString channelId = json.value("id").toString();
-
-	BackendChannel* newChannel;
 
 	if (channelType == BackendChannel::directChannel) {
-		LOG_DEBUG ("Storage::addNonDirectChannel called for direct channel " << newChannel->id << " " << newChannel->display_name);
+		LOG_DEBUG ("Storage::addNonDirectChannel called for direct channel " << json.value("id").toString());
 		return nullptr;
 	}
 
-	newChannel = new BackendChannel (*this, json);
+	BackendChannel* newChannel = new BackendChannel (*this, json);
 
 	team.channels.emplace_back (newChannel);
 	channels[newChannel->id] = team.channels.back().get();
@@ -232,7 +229,7 @@ BackendChannel* Storage::addDirectChannel (const QJsonObject& json)
 	//get pointer to the user
 	BackendUser* user = getUserById (userID);
 
-	//set user's name as the channel display name
+	//set user's name as a channel display name
 	if (user) {
 		newChannel->display_name = user->getDisplayName();
 		directChannels.members.push_back (user);

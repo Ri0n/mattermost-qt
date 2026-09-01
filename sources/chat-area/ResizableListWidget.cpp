@@ -1,6 +1,6 @@
 /**
  * @file ResizableListWidget.cpp
- * @brief QListWidget wrapper, which adjust items' sizes when resized
+ * @brief QListWidget wrapper, which adjusts items' sizes when resized
  * @author Lyubomir Filipov
  * @date Apr 1, 2023
  *
@@ -23,34 +23,118 @@
  */
 
 #include "ResizableListWidget.h"
+
+#include <algorithm>
+
+#include <QEvent>
+#include <QLayout>
+#include <QPersistentModelIndex>
+#include <QPointer>
 #include <QResizeEvent>
-#include <QScrollBar>
-#include <QDebug>
+#include <QTimer>
 
-/**
- * Overriding resizeEvent is needed, so that
- * the QListWidget will adjust it's items' sizes to the size of
- * contained widgets (which may change because of text wrapping)
- *
- * https://stackoverflow.com/questions/67961282/qlistwidgetitems-adjust-to-contents
- *
- * @param event resiseEvent
- */
-void ResizableListWidget::resizeEvent (QResizeEvent* event)
+namespace {
+constexpr const char* RowResizePendingProperty = "_mattermostRowResizePending";
+}
+
+void ResizableListWidget::setItemWidget(QListWidgetItem* item, QWidget* widget)
 {
-	for (int i = 0; i < count(); ++i) {
-		QListWidgetItem* item = this->item(i);
-		QWidget* widget = (QWidget*)itemWidget (item);
+    QListWidget::setItemWidget(item, widget);
+    if (!item || !widget) {
+        return;
+    }
 
-		if (!widget) {
-			qDebug() << "ResizeEvent: Item has null widget";
-			return;
-		}
+    widget->installEventFilter(this);
 
-		if (widget->heightForWidth(event->size().width()) != -1) {
-			item->setSizeHint(QSize (viewportSizeHint().width(), widget->heightForWidth(event->size().width())));
-		}
-	}
+    const int initialHeight = std::max({
+        1,
+        widget->sizeHint().height(),
+        widget->minimumSizeHint().height()
+    });
+    item->setSizeHint(QSize(std::max(1, viewport()->width()), initialHeight));
+    scheduleItemResize(item, widget);
+}
 
-	QListWidget::resizeEvent (event);
+void ResizableListWidget::scheduleItemResize(QListWidgetItem* item, QWidget* widget)
+{
+    if (!item || !widget || widget->property(RowResizePendingProperty).toBool()) {
+        return;
+    }
+
+    const QPersistentModelIndex index = indexFromItem(item);
+    QPointer<QWidget> guardedWidget(widget);
+    widget->setProperty(RowResizePendingProperty, true);
+
+    QTimer::singleShot(0, this, [this, index, guardedWidget] {
+        if (!guardedWidget) {
+            return;
+        }
+
+        if (!index.isValid()) {
+            guardedWidget->setProperty(RowResizePendingProperty, false);
+            return;
+        }
+
+        QListWidgetItem* currentItem = itemFromIndex(index);
+        if (!currentItem || itemWidget(currentItem) != guardedWidget.data()) {
+            guardedWidget->setProperty(RowResizePendingProperty, false);
+            return;
+        }
+
+        const int rowWidth = std::max(1, viewport()->width());
+        if (guardedWidget->width() != rowWidth) {
+            guardedWidget->resize(rowWidth, std::max(1, guardedWidget->height()));
+        }
+
+        if (QLayout* itemLayout = guardedWidget->layout()) {
+            itemLayout->activate();
+        }
+        guardedWidget->updateGeometry();
+
+        const int heightForWidth = guardedWidget->heightForWidth(rowWidth);
+        const int targetHeight = std::max({
+            1,
+            heightForWidth,
+            guardedWidget->sizeHint().height(),
+            guardedWidget->minimumSizeHint().height()
+        });
+
+        currentItem->setSizeHint(QSize(rowWidth, targetHeight));
+        guardedWidget->setProperty(RowResizePendingProperty, false);
+    });
+}
+
+void ResizableListWidget::scheduleAllItemResizes()
+{
+    for (int i = 0; i < count(); ++i) {
+        QListWidgetItem* listItem = item(i);
+        QWidget* widget = itemWidget(listItem);
+        if (widget) {
+            scheduleItemResize(listItem, widget);
+        }
+    }
+}
+
+bool ResizableListWidget::eventFilter(QObject* watched, QEvent* event)
+{
+    if (event->type() == QEvent::LayoutRequest || event->type() == QEvent::Resize) {
+        auto* widget = qobject_cast<QWidget*>(watched);
+        if (widget) {
+            for (int i = 0; i < count(); ++i) {
+                QListWidgetItem* listItem = item(i);
+                if (itemWidget(listItem) == widget) {
+                    scheduleItemResize(listItem, widget);
+                    break;
+                }
+            }
+        }
+    }
+
+    return QListWidget::eventFilter(watched, event);
+}
+
+void ResizableListWidget::resizeEvent(QResizeEvent* event)
+{
+    QListWidget::resizeEvent(event);
+    scheduleAllItemResizes();
 }

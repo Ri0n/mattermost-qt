@@ -33,10 +33,13 @@ namespace Mattermost {
 
 void DirectChannelItem::showContextMenu (const QPoint& pos)
 {
-	// Create menu and insert some actions
 	QMenu myMenu;
 
 	ChatArea *chatArea = data(0, Qt::UserRole).value<ChatArea*>();
+	if (!chatArea) {
+		return;
+	}
+
 	BackendChannel& channel = chatArea->getChannel();
 	BackendUser* user = chatArea->backend.getStorage().getUserById (channel.name);
 
@@ -45,8 +48,10 @@ void DirectChannelItem::showContextMenu (const QPoint& pos)
 			UserProfileDialog* dialog = new UserProfileDialog (*user, treeWidget());
 			dialog->show ();
 		});
+		myMenu.addSeparator();
 	}
 
+	addCommonContextMenuActions(myMenu, channel);
 	myMenu.exec (pos);
 }
 

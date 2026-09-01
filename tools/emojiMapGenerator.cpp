@@ -111,8 +111,8 @@ static QMap<QString, uint32_t> categoryLookup {
 	{categoryNames[EmojiCategory::food], 		EmojiCategory::food},
 	{categoryNames[EmojiCategory::travel], 		EmojiCategory::travel},
 	{categoryNames[EmojiCategory::activities], 	EmojiCategory::activities},
-	{categoryNames[EmojiCategory::objects], 	EmojiCategory::objects},
-	{categoryNames[EmojiCategory::symbols], 	EmojiCategory::symbols},
+	{categoryNames[EmojiCategory::objects], 		EmojiCategory::objects},
+	{categoryNames[EmojiCategory::symbols], 		EmojiCategory::symbols},
 	{categoryNames[EmojiCategory::flags], 		EmojiCategory::flags},
 	{categoryNames[EmojiCategory::custom], 		EmojiCategory::custom},
 };
@@ -298,13 +298,13 @@ void addEmoji (const QJsonObject& jsonObject)
 
 		const QJsonObject& skinValue = skinVariations.value (skinName).toObject();
 
-		QString unicode = skinValue.value("unified").toString();
-		qDebug() << "[" << category << "] Add emoji '" << name << "'" << unicode;
+		QString skinUnicode = skinValue.value("unified").toString();
+		qDebug() << "[" << category << "] Add emoji '" << name << "'" << skinUnicode;
 
 		uint32_t skinIndex = getSkinIndex (skinName);
 
 		if (skinIndex != 0) {
-			emojiValues[skinIndex] = getUnicodeFromJson (unicode);
+			emojiValues[skinIndex] = getUnicodeFromJson (skinUnicode);
 		}
 	}
 

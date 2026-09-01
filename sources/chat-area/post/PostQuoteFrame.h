@@ -30,6 +30,7 @@ namespace Mattermost {
 class BackendPost;
 class Storage;
 class PostWidget;
+class MessageContentWidget;
 
 class PostQuoteFrame: public QFrame
 {
@@ -44,6 +45,7 @@ signals:
 	void postClicked ();
 private:
     Ui::PostQuoteFrame *ui;
+    MessageContentWidget* messageContent;
 };
 
 } /* namespace Mattermost */

@@ -29,6 +29,7 @@
 #include <QList>
 #include <QNetworkDiskCache>
 #include <QAtomicInteger>
+#include <QTimer>
 
 #include "backend/types/BackendLoginData.h"
 #include "backend/HTTPConnector.h"
@@ -40,7 +41,7 @@
 
 namespace Mattermost {
 
-class BackendNewPollData;
+struct BackendNewPollData;
 
 class Backend: public QObject
 {

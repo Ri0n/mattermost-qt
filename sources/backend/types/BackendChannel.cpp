@@ -45,7 +45,6 @@ uint32_t BackendChannel::getChannelType (const QJsonObject& jsonObject)
 		return groupChannel;
 	default:
 		return unknown;
-		break;
 	}
 }
 
@@ -136,7 +135,7 @@ BackendPost* BackendChannel::addPost (const QJsonObject& postObject)
 	return newPost;
 }
 
-void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPost>::iterator position, ChannelNewPostsChunk& currentChunk, QVector<QPair<QString, QString>>& rootIdAndPostList, bool initialLoad)
+void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPost>::iterator position, ChannelNewPostsChunk& currentChunk, QVector<QPair<QString, QString>>& rootLinks, bool initialLoad)
 {
 	/*
 	 * Add a post.
@@ -151,7 +150,7 @@ void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPo
 
 	 if (!rootId.isEmpty()) {
 		//qDebug() << rootId << newPost->id;
-	 	rootIdAndPostList.push_back(QPair<QString,QString> (rootId, newPost->id));
+	 	rootLinks.push_back(QPair<QString,QString> (rootId, newPost->id));
 	 	newPost->hidden = true;
 	 	BackendPost* rootPost = findPostById(rootId);
 	 	if (rootPost) {
@@ -220,7 +219,11 @@ void BackendChannel::addPosts (const QJsonArray& orderArray, const QJsonObject& 
 	 */
 	std::list<BackendPost>::reverse_iterator currentLocalPost = posts.rbegin();
 
+#if defined(_MSC_VER)
+#pragma message("warning: Handle case of deleted post, that is not deleted locally")
+#else
 #warning "Handle case of deleted post, that is not deleted locally"
+#endif
 
 	bool initialLoad = (posts.empty());
 	bool lastPostWasSkipped = false;
@@ -347,9 +350,9 @@ QSet<const BackendUser*> BackendChannel::getAllMembers () const
 	return ret;
 }
 
-void BackendChannel::addMember (const Storage& storage, const QJsonObject& jsonObject)
+void BackendChannel::addMember (const Storage& channelStorage, const QJsonObject& jsonObject)
 {
-	BackendChannelMember member (storage, jsonObject);
+	BackendChannelMember member (channelStorage, jsonObject);
 	if (member.user) {
 		members.insert (member.user->id, std::move (member));
 	} else {

@@ -24,14 +24,19 @@
 
 #include "ChannelItem.h"
 
+#include <QMenu>
+
 #include "ChannelItemWidget.h"
+#include "ChannelTree.h"
+#include "backend/SidebarService.h"
+#include "backend/types/BackendChannel.h"
 
 namespace Mattermost {
 
-ChannelItem::ChannelItem (Backend& backend, ChannelItemWidget* widget)
+ChannelItem::ChannelItem (Backend& backend, ChannelItemWidget* itemWidget)
 :ChannelTreeItem ()
 ,backend (backend)
-,widget (widget)
+,widget (itemWidget)
 {
 	QFont font1;
 	font1.setBold (true);
@@ -43,6 +48,7 @@ ChannelItem::~ChannelItem () = default;
 
 void ChannelItem::setIcon (const QIcon& icon)
 {
+    QTreeWidgetItem::setIcon(0, icon);
 	if (widget) {
 		widget->setIcon (icon);
 	}
@@ -50,14 +56,58 @@ void ChannelItem::setIcon (const QIcon& icon)
 
 void ChannelItem::setLabel (const QString& label)
 {
+    setText(0, label);
 	if (widget) {
 		widget->setLabel (label);
 	}
 }
 
-void ChannelItem::setWidget (ChannelItemWidget* widget)
+void ChannelItem::setWidget (ChannelItemWidget* itemWidget)
 {
-	this->widget = widget;
+	widget = itemWidget;
+}
+
+void ChannelItem::setMuted(bool muted)
+{
+    setData(0, ChannelTree::ItemMutedRole, muted);
+    if (widget) {
+        widget->setMuted(muted);
+    }
+}
+
+void ChannelItem::setMentioned(bool mentioned)
+{
+    setData(0, ChannelTree::ItemMentionedRole, mentioned);
+    if (widget) {
+        widget->setMentioned(mentioned);
+    }
+}
+
+void ChannelItem::setStatus(const QString& status)
+{
+    setData(0, ChannelTree::ItemStatusRole, status);
+}
+
+void ChannelItem::addCommonContextMenuActions(QMenu& menu, BackendChannel& channel)
+{
+    auto& sidebar = SidebarService::instance(backend);
+    const bool muted = sidebar.isChannelMuted(channel);
+    const bool conversation = channel.type == BackendChannel::directChannel
+        || channel.type == BackendChannel::groupChannel;
+
+    menu.addAction(muted
+                       ? (conversation ? QStringLiteral("Unmute Conversation") : QStringLiteral("Unmute Channel"))
+                       : (conversation ? QStringLiteral("Mute Conversation") : QStringLiteral("Mute Channel")),
+                   [this, &channel, muted] {
+        SidebarService::instance(backend).setChannelMuted(channel, !muted);
+    });
+
+    auto* tree = static_cast<ChannelTree*>(treeWidget());
+    if (tree && tree->canRemoveChannelFromCategory(this)) {
+        menu.addAction(QStringLiteral("Remove from group"), [tree, this] {
+            tree->removeChannelFromCategory(this);
+        });
+    }
 }
 
 } /* namespace Mattermost */

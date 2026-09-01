@@ -1,6 +1,6 @@
 /**
  * @file ResizableListWidget.h
- * @brief QListWidget wrapper, which adjust items' sizes when resized
+ * @brief QListWidget wrapper, which adjusts items' sizes when resized
  * @author Lyubomir Filipov
  * @date Apr 1, 2023
  *
@@ -28,8 +28,13 @@
 
 class ResizableListWidget: public QListWidget {
 public:
-	using QListWidget::QListWidget;
-public:
-	void resizeEvent (QResizeEvent* event)		override;
-};
+    using QListWidget::QListWidget;
 
+    void setItemWidget(QListWidgetItem* item, QWidget* widget);
+
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    void scheduleItemResize(QListWidgetItem* item, QWidget* widget);
+    void scheduleAllItemResizes();
+};

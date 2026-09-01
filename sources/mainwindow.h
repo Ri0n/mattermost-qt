@@ -38,7 +38,9 @@ class Backend;
 class BackendChannel;
 class BackendPost;
 class BackendTeam;
+class NotificationManager;
 class SettingsWindow;
+struct NotificationTarget;
 
 class MainWindow: public QMainWindow {
 	Q_OBJECT
@@ -67,7 +69,7 @@ public:
 	 * @param channel channel
 	 * @param post post
 	 */
-	void messageNotify (const BackendChannel& channel, const BackendPost& post);
+	void messageNotify (BackendChannel& channel, const BackendPost& post);
 
 	/**
 	 * Called on Mattermost client startup, when there were new posts, while the client was not open
@@ -81,9 +83,11 @@ public:
 private:
 	void createMenu ();
 	void reload ();
+	void activateNotification (const NotificationTarget& target);
 private:
 	std::unique_ptr<Ui::MainWindow>		ui;
 	QSystemTrayIcon&					trayIcon;
+	std::unique_ptr<NotificationManager>	notificationManager;
 	ChooseEmojiDialogWrapper			chooseEmojiDialog;
 	QSet<const BackendChannel*>			channelsWithNewPosts;
 	Backend&							backend;
@@ -94,4 +98,3 @@ private:
 };
 
 } /* namespace Mattermost */
-

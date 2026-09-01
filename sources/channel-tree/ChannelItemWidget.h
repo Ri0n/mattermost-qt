@@ -22,6 +22,7 @@
 
 #include <QWidget>
 #include <QIcon>
+#include <QPalette>
 
 namespace Ui {
 class ChannelItemWidget;
@@ -38,9 +39,12 @@ public:
     const QPixmap getPixmap () const;
     void setIcon (const QIcon &icon);
     void setLabel (const QString& label);
+    void setMuted (bool muted);
+    void setMentioned (bool mentioned);
 
 private:
     Ui::ChannelItemWidget *ui;
+    QPalette defaultLabelPalette;
 };
 
 #endif // CHANNELITEMWIDGET_H

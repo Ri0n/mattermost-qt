@@ -20,12 +20,17 @@
 #include "ChannelItemWidget.h"
 #include "ui_ChannelItemWidget.h"
 
+#include <QStyle>
+
 ChannelItemWidget::ChannelItemWidget(QWidget *parent) :
     QWidget(parent),
     ui(new Ui::ChannelItemWidget)
 {
     ui->setupUi (this);
     ui->icon->setVisible (false);
+    ui->mutedIcon->setPixmap(style()->standardIcon(QStyle::SP_MediaVolumeMuted).pixmap(16, 16));
+    ui->mutedIcon->setVisible(false);
+    defaultLabelPalette = ui->label->palette();
 }
 
 ChannelItemWidget::~ChannelItemWidget()
@@ -53,3 +58,24 @@ void ChannelItemWidget::setLabel (const QString& label)
 	ui->label->setText (label);
 }
 
+void ChannelItemWidget::setMuted(bool muted)
+{
+    ui->mutedIcon->setVisible(muted);
+
+    if (!muted) {
+        ui->label->setPalette(defaultLabelPalette);
+        return;
+    }
+
+    QPalette mutedPalette = defaultLabelPalette;
+    mutedPalette.setColor(QPalette::WindowText,
+                          defaultLabelPalette.color(QPalette::Disabled, QPalette::WindowText));
+    ui->label->setPalette(mutedPalette);
+}
+
+void ChannelItemWidget::setMentioned(bool mentioned)
+{
+    QFont font = ui->label->font();
+    font.setBold(mentioned);
+    ui->label->setFont(font);
+}

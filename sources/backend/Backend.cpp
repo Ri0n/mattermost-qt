@@ -128,14 +128,14 @@ void debugRequest (const QNetworkRequest& request, QByteArray data = QByteArray(
   qDebug() << data;
 }
 
-void Backend::login (const BackendLoginData& loginData, std::function<void(const QString&)> callback)
+void Backend::login (const BackendLoginData& credentials, std::function<void(const QString&)> callback)
 {
-	this->loginData = loginData;
-	NetworkRequest::setHost (loginData.domain);
+	loginData = credentials;
+	NetworkRequest::setHost (credentials.domain);
 
-	if (!loginData.token.isEmpty()) {
+	if (!credentials.token.isEmpty()) {
 
-		NetworkRequest::setToken (loginData.token);
+		NetworkRequest::setToken (credentials.token);
 		NetworkRequest request ("users/me");
 
 		httpConnector.get (request, HttpResponseCallback ([this, callback](const QJsonDocument& data, const QNetworkReply& reply) {
@@ -160,8 +160,8 @@ void Backend::login (const BackendLoginData& loginData, std::function<void(const
 	QJsonDocument  json;
 	QJsonObject  jsonRoot;
 
-	jsonRoot.insert("login_id", loginData.username);
-	jsonRoot.insert("password", loginData.password);
+	jsonRoot.insert("login_id", credentials.username);
+	jsonRoot.insert("password", credentials.password);
 	//jsonRoot.insert("device_id", "QT Client");
 #if 0
 	if (!token.isEmpty())

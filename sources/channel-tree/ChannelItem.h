@@ -28,18 +28,24 @@
 #include "fwd.h"
 
 class ChannelItemWidget;
+class QMenu;
 
 namespace Mattermost {
 
 class ChannelItem: public ChannelTreeItem {
 public:
-	explicit ChannelItem (Backend& backend, ChannelItemWidget* widget);
+	explicit ChannelItem (Backend& backend, ChannelItemWidget* itemWidget);
 	virtual ~ChannelItem ();
 public:
     void setIcon (const QIcon &icon);
     void setLabel (const QString& label);
-    void setWidget (ChannelItemWidget* widget);
+    void setWidget (ChannelItemWidget* itemWidget);
+    void setMuted (bool muted);
+    void setMentioned (bool mentioned);
+    void setStatus (const QString& status);
 protected:
+    void addCommonContextMenuActions(QMenu& menu, BackendChannel& channel);
+
     Backend& 			backend;
     ChannelItemWidget* 	widget;
 };
