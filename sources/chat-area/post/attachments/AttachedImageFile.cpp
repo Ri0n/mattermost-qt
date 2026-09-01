@@ -22,23 +22,22 @@
 
 #include <QDebug>
 #include <QFileDialog>
+#include <QSettings>
 #include <QMenu>
 #include <QPointer>
-#include <QSettings>
-
-#include "backend/Backend.h"
 #include "backend/types/BackendFile.h"
+#include "backend/Backend.h"
 #include "Settings.h"
 
 namespace Mattermost {
 
-std::map<const QWidget*, FilePreview*> AttachedImageFile::currentlyOpenFiles;
+std::map <const QWidget*, FilePreview*> AttachedImageFile::currentlyOpenFiles;
 
-AttachedImageFile::AttachedImageFile(Backend& backend, const BackendFile& file, const QString&, QWidget* parent)
-    : QWidget(parent)
-    , ui(new Ui::AttachedImageFile)
-    , file(file)
-    , backend(backend)
+AttachedImageFile::AttachedImageFile (Backend& backend, const BackendFile& file, const QString&, QWidget *parent)
+:QWidget(parent)
+,ui(new Ui::AttachedImageFile)
+,file(file)
+,backend(backend)
 {
     ui->setupUi(this);
     ui->imageName->setText(file.name);
@@ -85,13 +84,14 @@ AttachedImageFile::AttachedImageFile(Backend& backend, const BackendFile& file, 
                 return;
             }
 
-            backend.retrieveFile(fileId, [saveFileDestination](const QByteArray& fileContents) {
+            this->backend.retrieveFile(fileId, [saveFileDestination](const QByteArray& fileContents) {
                 QFile destFile(saveFileDestination);
                 if (!destFile.open(QIODevice::WriteOnly)) {
                     qWarning() << "Cannot save image to" << saveFileDestination << ":" << destFile.errorString();
                     return;
                 }
                 destFile.write(fileContents);
+                destFile.close();
             });
         });
 
