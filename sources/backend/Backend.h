@@ -29,6 +29,7 @@
 #include <QList>
 #include <QNetworkDiskCache>
 #include <QAtomicInteger>
+#include <QTimer>
 
 #include "backend/types/BackendLoginData.h"
 #include "backend/HTTPConnector.h"
