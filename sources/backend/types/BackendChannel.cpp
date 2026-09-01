@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -93,7 +93,8 @@ BackendChannel::BackendChannel (Storage& storage, const QJsonObject& jsonObject)
 	last_post_at = jsonObject.value("last_post_at").toVariant().toULongLong();
 
 	total_msg_count = jsonObject.value("total_msg_count").toInt();
-	total_msg_count_root = jsonObject.contains("total_msg_count_root")
+	has_total_msg_count_root = jsonObject.contains("total_msg_count_root");
+	total_msg_count_root = has_total_msg_count_root
 		? jsonObject.value("total_msg_count_root").toInt()
 		: total_msg_count;
 	extra_update_at = jsonObject.value("extra_update_at").toInt();
