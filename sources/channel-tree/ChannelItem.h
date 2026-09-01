@@ -28,6 +28,7 @@
 #include "fwd.h"
 
 class ChannelItemWidget;
+class QMenu;
 
 namespace Mattermost {
 
@@ -39,7 +40,10 @@ public:
     void setIcon (const QIcon &icon);
     void setLabel (const QString& label);
     void setWidget (ChannelItemWidget* widget);
+    void setMuted (bool muted);
 protected:
+    void addCommonContextMenuActions(QMenu& menu, BackendChannel& channel);
+
     Backend& 			backend;
     ChannelItemWidget* 	widget;
 };
