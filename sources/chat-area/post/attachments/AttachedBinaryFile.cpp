@@ -80,7 +80,7 @@ AttachedBinaryFile::AttachedBinaryFile (Backend& backend, const BackendFile& fil
 		}
 
 		ui->openButton->setDisabled (true);
-		backend.retrieveFile (file.id, [this, &file, downloadDir] (const QByteArray& data){
+		backend.retrieveFile (file.id, [this, &file, downloadDir] (const QByteArray& fileData){
 
 			QString fileDestination (downloadDir.filePath(file.name));
 
@@ -90,7 +90,7 @@ AttachedBinaryFile::AttachedBinaryFile (Backend& backend, const BackendFile& fil
 				ui->openButton->setDisabled (false);
 				return;
 			}
-			destFile.write (data);
+			destFile.write (fileData);
 			destFile.close ();
 			ui->downloadedLabel->setText ("File downloaded to '" + downloadDir.absolutePath() + "'");
 			downloadedPath = fileDestination;
@@ -110,7 +110,7 @@ AttachedBinaryFile::AttachedBinaryFile (Backend& backend, const BackendFile& fil
 			return;
 		}
 
-		backend.retrieveFile (file.id, [this, &file] (const QByteArray& data){
+		backend.retrieveFile (file.id, [this, &file] (const QByteArray& fileData){
 
 			QString tmpName (file.name);
 			int dot = tmpName.indexOf (".");
@@ -125,7 +125,7 @@ AttachedBinaryFile::AttachedBinaryFile (Backend& backend, const BackendFile& fil
 				return;
 			}
 
-			tempFile.write (data);
+			tempFile.write (fileData);
 			tempFile.close ();
 			QDesktopServices::openUrl ("file://" + tempFile.fileName());
 		});
