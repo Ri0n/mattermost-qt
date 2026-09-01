@@ -98,6 +98,16 @@ QTextBlock firstImageBlock(const QTextDocument& document)
     return {};
 }
 
+bool hasPreformattedBlock(const QTextDocument& document)
+{
+    for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+        if (block.blockFormat().nonBreakableLines()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 #endif
 
@@ -106,7 +116,7 @@ class MessageFormatterTest : public QObject
     Q_OBJECT
 
 private slots:
-    void inlineCodePreservesQuotes()
+    void multilineSingleBacktickCodeBecomesPreformattedBlock()
     {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
         const QString source = QStringLiteral(
@@ -117,25 +127,51 @@ private slots:
             "  }\n"
             "}`");
 
-        const QString plain = renderedPlainText(source);
-        QVERIFY2(plain.contains(QStringLiteral("\"name\": \"ContextOverflowError\"")), qPrintable(plain));
-        QVERIFY2(plain.contains(QStringLiteral("\"message\": \"Compaction exhausted")), qPrintable(plain));
+        const QString html = MessageFormatter::formatMessageText(source);
+        QVERIFY2(html.contains(QStringLiteral("<pre"), Qt::CaseInsensitive), qPrintable(html));
+
+        QTextDocument rendered;
+        rendered.setHtml(html);
+        const QString plain = rendered.toPlainText();
+        QVERIFY2(hasPreformattedBlock(rendered), qPrintable(html));
+        QVERIFY2(plain.contains(QStringLiteral("{\n  \"name\": \"ContextOverflowError\",\n  \"data\": {")), qPrintable(plain));
+        QVERIFY2(plain.contains(QStringLiteral("\n    \"message\": \"Compaction exhausted")), qPrintable(plain));
         QVERIFY2(!plain.contains(QStringLiteral("&quot;")), qPrintable(plain));
 #else
         QSKIP("Qt Markdown renderer is enabled starting with Qt 6.10");
 #endif
     }
 
-    void fencedCodePreservesQuotesAndAmpersands()
+    void singleLineInlineCodeStaysInline()
+    {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+        const QString html = MessageFormatter::formatMessageText(QStringLiteral("before `foo()` after"));
+        QVERIFY2(!html.contains(QStringLiteral("<pre"), Qt::CaseInsensitive), qPrintable(html));
+        QCOMPARE(renderedPlainText(QStringLiteral("before `foo()` after")), QStringLiteral("before foo() after"));
+#else
+        QSKIP("Qt Markdown renderer is enabled starting with Qt 6.10");
+#endif
+    }
+
+    void fencedCodePreservesLineBreaksQuotesAndAmpersands()
     {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
         const QString source = QStringLiteral(
             "```json\n"
-            "{\"quoted\": \"value\", \"entity\": \"A & B\"}\n"
+            "{\n"
+            "  \"quoted\": \"value\",\n"
+            "  \"entity\": \"A & B\"\n"
+            "}\n"
             "```");
 
-        const QString plain = renderedPlainText(source);
-        QVERIFY2(plain.contains(QStringLiteral("{\"quoted\": \"value\", \"entity\": \"A & B\"}")), qPrintable(plain));
+        const QString html = MessageFormatter::formatMessageText(source);
+        QVERIFY2(html.contains(QStringLiteral("<pre"), Qt::CaseInsensitive), qPrintable(html));
+
+        QTextDocument rendered;
+        rendered.setHtml(html);
+        const QString plain = rendered.toPlainText();
+        QVERIFY2(hasPreformattedBlock(rendered), qPrintable(html));
+        QVERIFY2(plain.contains(QStringLiteral("{\n  \"quoted\": \"value\",\n  \"entity\": \"A & B\"\n}")), qPrintable(plain));
         QVERIFY2(!plain.contains(QStringLiteral("&quot;")), qPrintable(plain));
         QVERIFY2(!plain.contains(QStringLiteral("&amp;")), qPrintable(plain));
 #else
