@@ -211,7 +211,7 @@ bool SidebarService::isChannelUnread(const BackendChannel& channel) const
     return activityTracker.isUnread(channel.id);
 }
 
-quint64 SidebarService::channelActivityTime(const BackendChannel& channel) const
+uint64_t SidebarService::channelActivityTime(const BackendChannel& channel) const
 {
     return std::max(activityTracker.activityTime(channel.id), channel.last_post_at);
 }
@@ -225,7 +225,7 @@ void SidebarService::synchronizeChannelActivity()
             continue;
         }
         activityTracker.synchronizeChannel(channel->id, channel->last_post_at,
-                                           static_cast<quint64>(std::max(0, channel->total_msg_count)));
+                                           static_cast<uint64_t>(std::max(0, channel->total_msg_count)));
     }
     emit channelActivityReset();
 }
@@ -239,10 +239,10 @@ void SidebarService::recordChannelPost(BackendChannel& channel, const BackendPos
 
 void SidebarService::recordChannelViewed(const BackendChannel& channel)
 {
-    const quint64 viewedAt = std::max<quint64>(
-        static_cast<quint64>(QDateTime::currentMSecsSinceEpoch()), channel.last_post_at);
+    const uint64_t viewedAt = std::max<uint64_t>(
+        static_cast<uint64_t>(QDateTime::currentMSecsSinceEpoch()), channel.last_post_at);
     activityTracker.recordViewed(channel.id, viewedAt,
-                                 static_cast<quint64>(std::max(0, channel.total_msg_count)));
+                                 static_cast<uint64_t>(std::max(0, channel.total_msg_count)));
 
     if (mentionedChannelIds.remove(channel.id) > 0) {
         emit channelMentionedChanged(channel.id, false);
@@ -263,8 +263,11 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
     httpConnector.get(request, HttpResponseCallback([this, callback](const QJsonDocument& doc) {
         mutedChannelIds.clear();
         mentionedChannelIds.clear();
-        activityTracker.clear();
 
+        // clear() is called before this request starts. Do not clear the tracker
+        // here: a websocket post may have arrived while the membership request
+        // was in flight, and setMembership() deliberately preserves that runtime
+        // activity while adding the authoritative server read state.
         for (const auto& value : doc.array()) {
             const auto object = value.toObject();
             const QString channelId = object.value(QStringLiteral("channel_id")).toString();
