@@ -32,7 +32,7 @@ class GroupTeamItem: public TeamItem {
 public:
 	using TeamItem::TeamItem;
 protected:
-	ChannelItem* createChannelItem (Backend& backend, ChannelItemWidget* itemWidget) 	override;
+	ChannelItem* createChannelItem (Backend& backendRef, ChannelItemWidget* itemWidget) 	override;
 	void showContextMenu (const QPoint& pos)											override;
 };
 
