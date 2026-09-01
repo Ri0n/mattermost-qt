@@ -64,6 +64,7 @@ void ChannelQuickList::refresh()
         BackendChannel* channel = nullptr;
         uint64_t sortTime = 0;
         bool unread = false;
+        bool mentioned = false;
     };
 
     auto& sidebar = SidebarService::instance(*backend);
@@ -78,15 +79,23 @@ void ChannelQuickList::refresh()
         }
 
         const bool unread = sidebar.isChannelUnread(*channel);
-        if (mode == Unreads && !unread) {
+        const bool muted = sidebar.isChannelMuted(*channel);
+        const bool mentioned = sidebar.hasUnreadMention(channel->id);
+
+        // Mattermost's Quick Switcher doesn't show muted channels in its
+        // Unread group, even when they contain a mention.
+        if (mode == Unreads && (!unread || muted)) {
             continue;
         }
 
-        // "Recent" means recently viewed by this user, not channels with the
-        // newest global traffic. Using last_post_at here made busy channels
-        // appear at the top even when the user had not opened them recently.
+        // The original Recent group excludes the conversation that is already
+        // open, since it is a switch target rather than a history display.
+        if (mode == Recent && backend->getCurrentChannel() == channel) {
+            continue;
+        }
+
         const uint64_t sortTime = mode == Recent
-            ? sidebar.channelLastViewedTime(*channel)
+            ? sidebar.channelRecentTime(*channel)
             : sidebar.channelActivityTime(*channel);
         if (mode == Recent && sortTime == 0) {
             continue;
@@ -96,16 +105,28 @@ void ChannelQuickList::refresh()
             channel,
             sortTime,
             unread,
+            mentioned,
         });
     }
 
-    std::sort(candidates.begin(), candidates.end(), [](const Candidate& lhs, const Candidate& rhs) {
+    std::sort(candidates.begin(), candidates.end(), [this](const Candidate& lhs, const Candidate& rhs) {
+        // Mattermost sorts unread channels with mentions first, then by the
+        // most recent channel activity. Recent channels are sorted only by
+        // their user-specific recency key.
+        if (mode == Unreads && lhs.mentioned != rhs.mentioned) {
+            return lhs.mentioned;
+        }
         if (lhs.sortTime != rhs.sortTime) {
             return lhs.sortTime > rhs.sortTime;
         }
         return QString::localeAwareCompare(lhs.channel->display_name,
                                            rhs.channel->display_name) < 0;
     });
+
+    // The original Quick Switcher limits its Recent group to 20 entries.
+    if (mode == Recent && candidates.size() > 20) {
+        candidates.resize(20);
+    }
 
     const QString selectedChannelId = currentItem()
         ? currentItem()->data(0, ChannelTree::ItemIdRole).toString()
@@ -123,7 +144,7 @@ void ChannelQuickList::refresh()
         item->setData(0, ChannelTree::ItemKindRole, ChannelTree::ChannelItemKind);
         item->setData(0, ChannelTree::ItemIdRole, channel.id);
         item->setData(0, ChannelTree::ItemMutedRole, sidebar.isChannelMuted(channel));
-        item->setData(0, ChannelTree::ItemMentionedRole, sidebar.hasUnreadMention(channel.id));
+        item->setData(0, ChannelTree::ItemMentionedRole, candidate.mentioned);
         item->setData(0, ChannelTree::ItemUnreadRole, candidate.unread);
         item->setToolTip(0, channel.getTeamAndChannelName());
 
