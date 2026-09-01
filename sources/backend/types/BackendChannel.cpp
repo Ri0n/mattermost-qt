@@ -45,7 +45,6 @@ uint32_t BackendChannel::getChannelType (const QJsonObject& jsonObject)
 		return groupChannel;
 	default:
 		return unknown;
-		break;
 	}
 }
 
@@ -220,7 +219,11 @@ void BackendChannel::addPosts (const QJsonArray& orderArray, const QJsonObject& 
 	 */
 	std::list<BackendPost>::reverse_iterator currentLocalPost = posts.rbegin();
 
+#if defined(_MSC_VER)
+#pragma message("warning: Handle case of deleted post, that is not deleted locally")
+#else
 #warning "Handle case of deleted post, that is not deleted locally"
+#endif
 
 	bool initialLoad = (posts.empty());
 	bool lastPostWasSkipped = false;
