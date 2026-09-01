@@ -20,6 +20,30 @@ private slots:
         QCOMPARE(tracker.activityTime(QStringLiteral("channel")), uint64_t(2000));
     }
 
+    void newerActivityTimestampAloneDoesNotCreateUnreadState()
+    {
+        ChannelActivityTracker tracker;
+        tracker.setMembership(QStringLiteral("channel"), 1000, 5, false, false);
+        tracker.synchronizeChannel(QStringLiteral("channel"), 2000, 5);
+
+        QVERIFY(!tracker.isUnread(QStringLiteral("channel")));
+        QCOMPARE(tracker.activityTime(QStringLiteral("channel")), uint64_t(2000));
+    }
+
+    void membershipResponsePreservesRuntimeActivity()
+    {
+        ChannelActivityTracker tracker;
+        tracker.recordPost(QStringLiteral("channel"), 3000, false, false, true);
+
+        // Simulate a membership request that started before the websocket post
+        // and therefore returns older read/mention state.
+        tracker.setMembership(QStringLiteral("channel"), 1000, 5, false, false);
+        tracker.synchronizeChannel(QStringLiteral("channel"), 2000, 5);
+
+        QVERIFY(tracker.isUnread(QStringLiteral("channel")));
+        QCOMPARE(tracker.activityTime(QStringLiteral("channel")), uint64_t(3000));
+    }
+
     void viewingChannelClearsUnreadAndMakesItRecent()
     {
         ChannelActivityTracker tracker;
