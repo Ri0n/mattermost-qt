@@ -74,6 +74,7 @@ if(BUILD_MULTIMEDIA)
 endif()
 
 include_directories(${Qt${QT_VERSION_MAJOR}Network_INCLUDE_DIRS} sources/)
+add_subdirectory(third_party/QSourceHighlite)
 
 if(ANDROID)
   add_library(mattermost-client SHARED
@@ -107,7 +108,7 @@ if(BUILD_TESTING)
 	add_subdirectory(tests)
 endif()
 
-target_link_libraries (${APPID} PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::WebSockets)
+target_link_libraries (${APPID} PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::WebSockets qsourcehighlite)
 
 if(TARGET Qt${QT_VERSION_MAJOR}::DBus)
 	target_link_libraries(${APPID} PRIVATE Qt${QT_VERSION_MAJOR}::DBus)
