@@ -48,35 +48,28 @@ class Backend: public QObject
     Q_OBJECT
 public:
 	explicit Backend (QObject *parent = nullptr);
+	~Backend();
 
-	bool autoLoginEnabled ();
+	void setLoginData (const BackendLoginData& loginData);
+	void connectToServer (std::function<void(const QString&)> callback);
+	void disconnectFromServer ();
 
-	void reset ();
+	BackendLoginData& getLoginData ();
+	const BackendLoginData& getLoginData () const;
 
-	//login to server (/users/login)
-	void login (const BackendLoginData& loginData, std::function<void(const QString&)> callback);
+	//get user (/users/{user_id})
+	void retrieveUser (const QString& userID, std::function<void(BackendUser&)> callback = {});
 
-	//login retry - after a HTTP error
-	void loginRetry ();
+	//get multiple users by ids (/users/ids)
+	void retrieveUsers (const QList<QString>& userIDs, std::function<void()> callback = {});
 
-	//logout (/users/logout)
-	void logout (std::function<void ()> callback);
+	//get logged in user's teams (/users/me/teams)
+	void retrieveOwnTeams (std::function<void(BackendTeam&)> callback);
 
-	//get specific user (/users/userID)
-	void retrieveUser (const QString& userID, std::function<void(const BackendUser&)> callback);
+	//get all public teams (/teams)
+	void retrieveAllPublicTeams ();
 
-	//get user's preferences (/users/{user_id}/preferences)
-	void retrieveUserPreferences ();
-
-	void updateUserPreferences (const BackendUserPreferences& preferences);
-
-	//get user's status (/users/status/ids)
-	void retrieveMultipleUsersStatus (const QVector<QString>& userIDs, std::function<void()> callback);
-
-	//get count of all users in the system (users/stats)
-	void retrieveTotalUsersCount (std::function<void(uint32_t)> callback);
-
-	//get all users (/users?per_page=200&page=pageIdx);
+	//get all users (/users)
 	void retrieveAllUsers ();
 
 	//get user's avatar image (/users/userID/image). Emits BackendUser::onAvatarChanged
@@ -84,6 +77,7 @@ public:
 
 	//get file (files/fileID)
 	void retrieveFile (const QString& fileID, std::function<void(const QByteArray&)> callback);
+	void retrieveFile (const QString& fileID, QObject* context, std::function<void(const QByteArray&)> callback);
 
 	//get own teams (/users/me/teams)
 	void retrieveOwnTeams (std::function<void(BackendTeam&)> callback);
@@ -176,7 +170,7 @@ public:
 	//join a channel (addUserToChannel for loginUser)
 	void joinChannel (const BackendChannel& channel);
 
-	//leave a channel (/channels/{channel_id}/members/{user_id})
+	//leave a channel (/channels/members/me/view), so that the server knows that the channel is viewed
 	void leaveChannel (const BackendChannel& channel);
 
 	//add a user to a team (/teams/{team_id}/members)
@@ -259,13 +253,6 @@ private:
     QNetworkDiskCache				attachmentsCache;
     RequestTracker					requestTracker;
     BackendChannel*					currentChannel;
-    QTimer 							timeoutTimer;
-    bool							isLoggedIn;
-    bool							autoLoginEnabledFlag;
-    uint32_t						nonFilledTeams;
-    uint64_t						lastStartTime;
-    QAtomicInteger<unsigned>				avatarsLoaded;
 };
 
 } /* namespace Mattermost */
-
