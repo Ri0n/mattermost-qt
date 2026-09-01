@@ -41,8 +41,8 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
   qt5-ubuntu:
-    name: Qt 5 / Ubuntu
-    runs-on: ubuntu-24.04
+    name: Qt 5 / Ubuntu 22.04
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout
