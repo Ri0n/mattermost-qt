@@ -14,8 +14,8 @@ void ChannelActivityTracker::clear()
     entries.clear();
 }
 
-void ChannelActivityTracker::setMembership(const QString& channelId, quint64 lastViewedAt,
-                                           quint64 readMessageCount, bool mentioned, bool muted)
+void ChannelActivityTracker::setMembership(const QString& channelId, uint64_t lastViewedAt,
+                                           uint64_t readMessageCount, bool mentioned, bool muted)
 {
     if (channelId.isEmpty()) {
         return;
@@ -29,8 +29,8 @@ void ChannelActivityTracker::setMembership(const QString& channelId, quint64 las
     entry.tracked = true;
 }
 
-void ChannelActivityTracker::synchronizeChannel(const QString& channelId, quint64 lastPostAt,
-                                                quint64 totalMessageCount)
+void ChannelActivityTracker::synchronizeChannel(const QString& channelId, uint64_t lastPostAt,
+                                                uint64_t totalMessageCount)
 {
     auto it = entries.find(channelId);
     if (it == entries.end() || !it->tracked) {
@@ -45,7 +45,7 @@ void ChannelActivityTracker::synchronizeChannel(const QString& channelId, quint6
     entry.hasUnreadActivity = entry.hasUnreadActivity || newerMessageCount || newerTimestamp;
 }
 
-void ChannelActivityTracker::recordPost(const QString& channelId, quint64 createdAt, bool ownPost,
+void ChannelActivityTracker::recordPost(const QString& channelId, uint64_t createdAt, bool ownPost,
                                         bool threadReply, bool mentioned)
 {
     if (channelId.isEmpty()) {
@@ -72,8 +72,8 @@ void ChannelActivityTracker::recordPost(const QString& channelId, quint64 create
     }
 }
 
-void ChannelActivityTracker::recordViewed(const QString& channelId, quint64 viewedAt,
-                                          quint64 totalMessageCount)
+void ChannelActivityTracker::recordViewed(const QString& channelId, uint64_t viewedAt,
+                                          uint64_t totalMessageCount)
 {
     if (channelId.isEmpty()) {
         return;
@@ -122,7 +122,7 @@ bool ChannelActivityTracker::isUnread(const QString& channelId) const
     return entry.mentioned || (!entry.muted && entry.hasUnreadActivity);
 }
 
-quint64 ChannelActivityTracker::activityTime(const QString& channelId) const
+uint64_t ChannelActivityTracker::activityTime(const QString& channelId) const
 {
     const auto it = entries.constFind(channelId);
     if (it == entries.cend() || !it->tracked) {
