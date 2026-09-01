@@ -25,6 +25,7 @@
 #include "Backend.h"
 
 #include <iostream>
+#include <utility>
 #include <QtWebSockets/QWebSocket>
 #include <QNetworkCookie>
 #include <QNetworkReply>
@@ -455,7 +456,7 @@ void Backend::retrieveAllUsers ()
 				auto it = storage.users.begin(), end = storage.users.end();
 				//intersect active and known user sets, just to show correct total number,
 				//save deleted known users, to load their info and avatars later
-				for (it ; it != end; ++it){
+				for (; it != end; ++it){
 					if (storage.knownUsers.contains(it->first))
 						storage.knownActiveUsers.insert(it->first);
 					else
@@ -558,7 +559,7 @@ void Backend::retrieveOwnTeams (std::function<void(BackendTeam&)> callback)
 #endif
 
 		 auto root = doc.array();
-		for (const auto &itemRef: qAsConst(root)) {
+		for (const auto &itemRef: std::as_const(root)) {
 			storage.addTeam (itemRef.toObject());
 			++nonFilledTeams;
 		}
@@ -700,7 +701,7 @@ void Backend::retrieveTeamMembers (BackendTeam& team, int page)
 		std::cout << "retrieveTeamMembers reply: " <<  jsonString.toStdString() << std::endl;
 #endif
 		auto root = doc.array();
-		for (const auto &itemRef: qAsConst(root)) {
+		for (const auto &itemRef: std::as_const(root)) {
 			team.addMember (storage, itemRef.toObject());
 		}
 
@@ -824,6 +825,11 @@ void Backend::retrieveChannelPinnedPosts (BackendChannel& channel)
 
 void Backend::retrieveChannelOlderPosts (BackendChannel& channel, int perPage)
 {
+	if (channel.posts.empty()) {
+		LOG_DEBUG ("retrieveChannelOlderPosts skipped for empty channel " << channel.display_name << " (" << channel.id << ")");
+		return;
+	}
+
     NetworkRequest request ("channels/" + channel.id + "/posts?page=" + QString::number(0) + "&per_page=" + QString::number(perPage) + "&before=" + channel.posts.front().id);
 
     httpConnector.get (request, HttpResponseCallback ([this, &channel](const QJsonDocument& doc) {
@@ -879,7 +885,7 @@ void Backend::retrieveChannelMembers (BackendChannel& channel, std::function<voi
 		std::cout << "retrieveChannelMembers reply: " <<  jsonString.toStdString() << std::endl;
 #endif
 		auto root = doc.array();
-		for (const auto &itemRef: qAsConst(root)) {
+		for (const auto &itemRef: std::as_const(root)) {
 			channel.addMember (storage, itemRef.toObject());
 		}
 		callback ();
@@ -1057,7 +1063,7 @@ void Backend::deletePost (const QString postID)
 
 void Backend::pinPost (const QString postID)
 {
-
+	Q_UNUSED (postID);
 }
 
 void Backend::addPoll (BackendChannel& channel, const BackendNewPollData& pollData)
