@@ -42,6 +42,7 @@ public:
     void setWidget (ChannelItemWidget* widget);
     void setMuted (bool muted);
     void setMentioned (bool mentioned);
+    void setStatus (const QString& status);
 protected:
     void addCommonContextMenuActions(QMenu& menu, BackendChannel& channel);
 
