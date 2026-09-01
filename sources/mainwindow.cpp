@@ -26,6 +26,7 @@
 #include "./ui_mainwindow.h"
 #include "chat-area/ChatArea.h"
 #include "backend/Backend.h"
+#include "backend/SidebarService.h"
 #include "SettingsWindow.h"
 #include "build-config.h"
 #include "log.h"
@@ -56,6 +57,10 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 		qCritical() << "Current User's ID is empty string";
 		return;
 	}
+
+	auto& sidebar = SidebarService::instance(backend);
+	sidebar.clear();
+	sidebar.retrieveChannelMemberships();
 
 	connect (&currentUser, &BackendUser::onStatusChanged, [this, &currentUser] {
 		ui->statusLabel->setText (currentUser.status);
@@ -97,29 +102,12 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	});
 
 	/*
-	 * After all team channels are received from the server, create tree items for the direct channels.
-	 * For some reason the server duplicates the direct channels in each team.
-	 * Here they are in a single list (The official Mattermost client shows them in each team, which IMHO looks like a total mess).
-	 * So, all team channels have to be received in order to know all (unique) direct channels
-	 *
-	 * The list of users needs to be obtained too, because direct channels' names consist of user IDs,
-	 * which need to be displayer ad user names
+	 * The Mattermost sidebar categories are per-user and per-team. Wait until all
+	 * channels (including DM/GM channels duplicated by the server across teams)
+	 * are in storage, then build each team's sidebar from the server category list.
 	 */
 	connect (&backend, &Backend::onAllTeamChannelsPopulated, [this] {
-		ui->channelList->addGroupChannelsList (backend);
-		ui->channelList->addDirectChannelsList (backend);
-
-//		QSettings settings;
-//		QString currentTeam (settings.value ("current_team", 0).toString());
-
-		//Activate the same team that was active during the last session
-//				if (teamChannelTree->team.id == currentTeam) {
-//					LOG_DEBUG ("MainWindow activate team " << currentTeam);
-//					//ui->teamComboBox->setCurrentIndex (teamSeq);
-//					//channelList.activateTeam (teamSeq);
-//					currentTeamRestoredFromSettings = true;
-//				}
-
+		ui->channelList->populateSidebars (backend);
 		initializationComplete ();
 	});
 
@@ -315,6 +303,11 @@ void MainWindow::messageNotify (const BackendChannel& channel, const BackendPost
 		return;
 	}
 
+	// Mattermost mute disables all desktop/email/push notifications for the channel.
+	if (SidebarService::instance(backend).isChannelMuted(channel)) {
+		return;
+	}
+
 	/**
 	 * If the Mattermost window is active (has focus) and the current channel is active,
 	 * do not add notifications. We assume that the user is watching the chat window
@@ -342,6 +335,10 @@ void MainWindow::messageNotify (const BackendChannel& channel, const BackendPost
 
 void MainWindow::unreadMessagesNotify (const BackendChannel& channel)
 {
+	if (SidebarService::instance(backend).isChannelMuted(channel)) {
+		return;
+	}
+
 	//update the count of new channels in the taskbar and tray icon
 	channelsWithNewPosts.insert(&channel);
 	setNotificationsCountVisualization (channelsWithNewPosts.size());
