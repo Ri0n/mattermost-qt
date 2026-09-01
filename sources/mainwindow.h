@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -29,6 +29,7 @@ namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
 class QSystemTrayIcon;
+class QTabWidget;
 class QTreeWidgetItem;
 
 namespace Mattermost {
@@ -38,6 +39,7 @@ class Backend;
 class BackendChannel;
 class BackendPost;
 class BackendTeam;
+class ChannelQuickList;
 class NotificationManager;
 class SettingsWindow;
 struct NotificationTarget;
@@ -84,6 +86,8 @@ private:
 	void createMenu ();
 	void reload ();
 	void activateNotification (const NotificationTarget& target);
+	void setupChannelTabs ();
+	void refreshChannelQuickLists ();
 private:
 	std::unique_ptr<Ui::MainWindow>		ui;
 	QSystemTrayIcon&					trayIcon;
@@ -91,6 +95,9 @@ private:
 	ChooseEmojiDialogWrapper			chooseEmojiDialog;
 	QSet<const BackendChannel*>			channelsWithNewPosts;
 	Backend&							backend;
+	QTabWidget*							channelTabs = nullptr;
+	ChannelQuickList*					recentChannels = nullptr;
+	ChannelQuickList*					unreadChannels = nullptr;
 	bool								currentTeamRestoredFromSettings;
 	QMenu*								mainMenu;
 	SettingsWindow*						settingsWindow;
