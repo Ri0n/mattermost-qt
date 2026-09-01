@@ -65,6 +65,8 @@ public:
     bool isChannelTracked(const QString& channelId) const;
     bool isChannelUnread(const BackendChannel& channel) const;
     uint64_t channelActivityTime(const BackendChannel& channel) const;
+    uint64_t channelLastViewedTime(const BackendChannel& channel) const;
+    void markChannelViewedLocally(const BackendChannel& channel);
     void synchronizeChannelActivity();
 
     void retrieveChannelMemberships(std::function<void()> callback = {});
