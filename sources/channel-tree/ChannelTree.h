@@ -95,10 +95,8 @@ private:
 	                               QTreeWidgetItem& categoryItem, BackendChannel& channel);
 	void setCategoryCollapsed(QTreeWidgetItem* item, bool collapsed);
 	void setChannelMutedVisual(const QString& channelId, bool muted);
-	void moveChannelItem(ChannelItem* item, QTreeWidgetItem* targetCategory, int targetIndex);
 	void syncCategoryChannels(QTreeWidgetItem* firstCategory, QTreeWidgetItem* secondCategory = nullptr);
 	void syncCategoryOrder(QTreeWidgetItem* teamItem);
-	QTreeWidgetItem* findCategoryItem(QTreeWidgetItem* teamItem, const QString& categoryId) const;
 	QStringList channelIds(QTreeWidgetItem* categoryItem) const;
 
 	QStackedWidget*						chatAreaStackedWidget;
