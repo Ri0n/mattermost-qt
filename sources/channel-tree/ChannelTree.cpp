@@ -500,31 +500,55 @@ void ChannelTree::dropEvent(QDropEvent* event)
 
     if (sourceKind == CategoryItemKind) {
         QTreeWidgetItem* sourceTeam = source->parent();
-        if (!sourceTeam) {
+        if (!sourceTeam || sourceTeam->data(0, ItemKindRole).toInt() != TeamItemKind) {
             event->ignore();
             return;
         }
 
+        // A category can only be reordered among sibling categories. In particular,
+        // never reinterpret a drop on a channel as a drop on that channel's parent:
+        // QTreeWidget would then use the original cursor geometry and could nest the
+        // dragged category inside another category.
         if (targetKind == ChannelItemKind) {
-            target = target->parent();
+            event->ignore();
+            return;
         }
 
-        if (target->data(0, ItemKindRole).toInt() == CategoryItemKind) {
+        int insertIndex = -1;
+        if (targetKind == CategoryItemKind) {
             if (target->parent() != sourceTeam || indicator == QAbstractItemView::OnItem) {
                 event->ignore();
                 return;
             }
-        } else if (target->data(0, ItemKindRole).toInt() == TeamItemKind) {
+
+            insertIndex = sourceTeam->indexOfChild(target);
+            if (indicator == QAbstractItemView::BelowItem) {
+                ++insertIndex;
+            }
+        } else if (targetKind == TeamItemKind) {
             if (target != sourceTeam || indicator != QAbstractItemView::OnItem) {
                 event->ignore();
                 return;
             }
+            insertIndex = sourceTeam->childCount();
         } else {
             event->ignore();
             return;
         }
 
-        QTreeWidget::dropEvent(event);
+        const int sourceIndex = sourceTeam->indexOfChild(source);
+        if (sourceIndex < 0 || insertIndex < 0) {
+            event->ignore();
+            return;
+        }
+
+        QTreeWidgetItem* movedCategory = sourceTeam->takeChild(sourceIndex);
+        if (sourceIndex < insertIndex) {
+            --insertIndex;
+        }
+        sourceTeam->insertChild(insertIndex, movedCategory);
+        event->setDropAction(Qt::MoveAction);
+        event->accept();
         syncCategoryOrder(sourceTeam);
         return;
     }
@@ -557,9 +581,12 @@ void ChannelTree::dropEvent(QDropEvent* event)
         QTreeWidgetItem* newCategory = source->parent();
         if (!newCategory || newCategory->data(0, ItemKindRole).toInt() != CategoryItemKind) {
             event->ignore();
-            refreshTeamSidebar(*backendForSidebar,
-                               *backendForSidebar->getStorage().getTeamById(
-                                   sourceTeam->data(0, ItemTeamIdRole).toString()));
+            if (backendForSidebar) {
+                const QString teamId = sourceTeam->data(0, ItemTeamIdRole).toString();
+                if (BackendTeam* team = backendForSidebar->getStorage().getTeamById(teamId)) {
+                    refreshTeamSidebar(*backendForSidebar, *team);
+                }
+            }
             return;
         }
 
