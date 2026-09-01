@@ -20,6 +20,8 @@
 #pragma once
 
 #include <QPushButton>
+#include <QTextBlock>
+#include <QTextFragment>
 #include <memory>
 
 namespace Ui {
