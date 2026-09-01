@@ -224,8 +224,10 @@ void SidebarService::synchronizeChannelActivity()
         if (!channel) {
             continue;
         }
-        activityTracker.synchronizeChannel(channel->id, channel->last_post_at,
-                                           static_cast<uint64_t>(std::max(0, channel->total_msg_count)));
+        activityTracker.synchronizeChannel(
+            channel->id,
+            channel->last_post_at,
+            static_cast<uint64_t>(std::max(0, channel->total_msg_count_root)));
     }
     emit channelActivityReset();
 }
@@ -241,8 +243,10 @@ void SidebarService::recordChannelViewed(const BackendChannel& channel)
 {
     const uint64_t viewedAt = std::max<uint64_t>(
         static_cast<uint64_t>(QDateTime::currentMSecsSinceEpoch()), channel.last_post_at);
-    activityTracker.recordViewed(channel.id, viewedAt,
-                                 static_cast<uint64_t>(std::max(0, channel.total_msg_count)));
+    activityTracker.recordViewed(
+        channel.id,
+        viewedAt,
+        static_cast<uint64_t>(std::max(0, channel.total_msg_count_root)));
 
     if (mentionedChannelIds.remove(channel.id)) {
         emit channelMentionedChanged(channel.id, false);
@@ -275,6 +279,9 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
             const bool muted = notifyProps.value(QStringLiteral("mark_unread")).toString()
                 == QStringLiteral("mention");
             const bool mentioned = object.value(QStringLiteral("mention_count")).toInt() > 0;
+            const uint64_t readRootMessageCount = object.contains(QStringLiteral("msg_count_root"))
+                ? object.value(QStringLiteral("msg_count_root")).toVariant().toULongLong()
+                : object.value(QStringLiteral("msg_count")).toVariant().toULongLong();
 
             if (muted) {
                 mutedChannelIds.insert(channelId);
@@ -286,7 +293,7 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
             activityTracker.setMembership(
                 channelId,
                 object.value(QStringLiteral("last_viewed_at")).toVariant().toULongLong(),
-                object.value(QStringLiteral("msg_count")).toVariant().toULongLong(),
+                readRootMessageCount,
                 mentioned,
                 muted);
         }
