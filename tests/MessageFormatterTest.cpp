@@ -9,6 +9,7 @@
 
 using namespace Mattermost;
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
 namespace {
 
 bool blockHasText(const QTextBlock& block)
@@ -74,6 +75,7 @@ QString firstAnchorHref(const QTextDocument& document)
 }
 
 } // namespace
+#endif
 
 class MessageFormatterTest : public QObject
 {
