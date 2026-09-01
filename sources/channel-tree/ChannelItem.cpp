@@ -48,6 +48,7 @@ ChannelItem::~ChannelItem () = default;
 
 void ChannelItem::setIcon (const QIcon& icon)
 {
+    QTreeWidgetItem::setIcon(0, icon);
 	if (widget) {
 		widget->setIcon (icon);
 	}
@@ -55,6 +56,7 @@ void ChannelItem::setIcon (const QIcon& icon)
 
 void ChannelItem::setLabel (const QString& label)
 {
+    setText(0, label);
 	if (widget) {
 		widget->setLabel (label);
 	}
@@ -67,6 +69,7 @@ void ChannelItem::setWidget (ChannelItemWidget* widget)
 
 void ChannelItem::setMuted(bool muted)
 {
+    setData(0, ChannelTree::ItemMutedRole, muted);
     if (widget) {
         widget->setMuted(muted);
     }
@@ -74,9 +77,15 @@ void ChannelItem::setMuted(bool muted)
 
 void ChannelItem::setMentioned(bool mentioned)
 {
+    setData(0, ChannelTree::ItemMentionedRole, mentioned);
     if (widget) {
         widget->setMentioned(mentioned);
     }
+}
+
+void ChannelItem::setStatus(const QString& status)
+{
+    setData(0, ChannelTree::ItemStatusRole, status);
 }
 
 void ChannelItem::addCommonContextMenuActions(QMenu& menu, BackendChannel& channel)
