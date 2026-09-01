@@ -27,6 +27,7 @@
 #include <QDropEvent>
 #include <QHeaderView>
 #include <QStackedWidget>
+#include <QTimer>
 
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
@@ -222,6 +223,16 @@ void ChannelTree::renderTeamSidebar(Backend& backend, TeamItem& teamItem,
 
     teamItem.setExpanded(true);
     renderingSidebar = false;
+
+    // setItemWidget() can leave QTreeView's cached row geometry stale while a
+    // whole sidebar is rebuilt. A vertical window resize happens to repair it,
+    // which used to make channel rows occasionally overlap by a few pixels.
+    // Re-run the layout after all embedded widgets have been polished.
+    QTimer::singleShot(0, this, [this] {
+        doItemsLayout();
+        updateGeometries();
+        viewport()->update();
+    });
 }
 
 void ChannelTree::clearTeamSidebar(TeamItem& teamItem)
@@ -258,6 +269,7 @@ QTreeWidgetItem* ChannelTree::createCategoryItem(TeamItem& teamItem, const QStri
     font.setBold(true);
     font.setPixelSize(12);
     item->setFont(0, font);
+    item->setSizeHint(0, QSize(0, 22));
     item->setExpanded(!collapsed);
     return item;
 }
@@ -267,6 +279,7 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
 {
     auto* itemWidget = new ChannelItemWidget(this);
     itemWidget->setLabel(channel.display_name);
+    itemWidget->ensurePolished();
 
     ChannelItem* item = nullptr;
     if (channel.type == BackendChannel::directChannel || channel.type == BackendChannel::groupChannel) {
@@ -280,6 +293,10 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
     item->setData(0, ItemIdRole, channel.id);
     item->setData(0, ItemTeamIdRole, teamItem.teamId);
     item->setFlags((item->flags() | Qt::ItemIsDragEnabled) & ~Qt::ItemIsDropEnabled);
+
+    const int rowHeight = qMax(30, qMax(itemWidget->sizeHint().height(),
+                                        itemWidget->minimumSizeHint().height()));
+    item->setSizeHint(0, QSize(0, rowHeight));
 
     ChatArea* chatArea = new ChatArea(backend, channel, item, chatAreaStackedWidget, false);
     chatAreaStackedWidget->addWidget(chatArea);
