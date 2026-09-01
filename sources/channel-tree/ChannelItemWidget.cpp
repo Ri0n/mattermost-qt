@@ -72,3 +72,10 @@ void ChannelItemWidget::setMuted(bool muted)
                           defaultLabelPalette.color(QPalette::Disabled, QPalette::WindowText));
     ui->label->setPalette(mutedPalette);
 }
+
+void ChannelItemWidget::setMentioned(bool mentioned)
+{
+    QFont font = ui->label->font();
+    font.setBold(mentioned);
+    ui->label->setFont(font);
+}
