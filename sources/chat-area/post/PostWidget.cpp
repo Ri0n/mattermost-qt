@@ -24,7 +24,9 @@
 #include <QDateTime>
 #include <QResizeEvent>
 #include <QPushButton>
+#include <QTextCursor>
 #include <QTextDocument>
+#include <QTextFormat>
 #include "backend/Backend.h"
 #include "backend/types/BackendPost.h"
 #include "backend/emoji/EmojiInfo.h"
@@ -268,6 +270,101 @@ static void replaceEmojis (QString& str)
 
 }
 
+#if QT_VERSION >= QT_VERSION_CHECK(6,10,0)
+static bool hasNonImageText (const QString& text)
+{
+	for (const QChar character: text) {
+		if (!character.isSpace() && character != QChar::ObjectReplacementCharacter) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool shouldRenderImageAsBlock (const QTextImageFormat& imageFormat)
+{
+	constexpr qreal maxInlineImageSize = 64.0;
+
+	// Custom Mattermost emoji are trusted local 32x32 images and must stay inline.
+	// Keep the path check as well as the dimensions check because different Qt
+	// Markdown versions do not necessarily preserve HTML width/height attributes
+	// in exactly the same way.
+	QString imageName = imageFormat.name();
+	imageName.replace('\\', '/');
+	if (imageName.contains(QStringLiteral("/custom-emoji/"))) {
+		return false;
+	}
+
+	const qreal width = imageFormat.width();
+	const qreal height = imageFormat.height();
+	if (width > maxInlineImageSize || height > maxInlineImageSize) {
+		return true;
+	}
+
+	// A normal Markdown image usually has no explicit dimensions. Treat such
+	// images as block content. Otherwise QTextDocument puts the image on the
+	// text line, expands that line to the image height and leaves a large visual
+	// gap between the preceding text and the picture.
+	return width <= 0.0 && height <= 0.0;
+}
+
+static void separateLargeImages (QTextDocument& document)
+{
+	// Split one mixed text/image block at a time and restart the scan after each
+	// change. This avoids stale QTextFragment positions and also handles several
+	// adjacent images without creating empty paragraphs between them.
+	for (;;) {
+		bool changed = false;
+
+		for (QTextBlock block = document.begin(); block.isValid() && !changed; block = block.next()) {
+			const QString blockText = block.text();
+
+			for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+				const QTextFragment fragment = it.fragment();
+				if (!fragment.isValid() || !fragment.charFormat().isImageFormat()) {
+					continue;
+				}
+
+				const QTextImageFormat imageFormat = fragment.charFormat().toImageFormat();
+				if (!shouldRenderImageAsBlock(imageFormat)) {
+					continue;
+				}
+
+				const int offset = fragment.position() - block.position();
+				const bool hasTextBefore = hasNonImageText(blockText.left(offset));
+				const bool hasTextAfter = hasNonImageText(blockText.mid(offset + fragment.length()));
+
+				// An image-only paragraph is already exactly what we want.
+				if (!hasTextBefore && !hasTextAfter) {
+					continue;
+				}
+
+				// Insert the trailing block first so that the image's absolute
+				// position is still valid when we insert the leading block.
+				if (hasTextAfter) {
+					QTextCursor cursor(&document);
+					cursor.setPosition(fragment.position() + fragment.length());
+					cursor.insertBlock();
+				}
+
+				if (hasTextBefore) {
+					QTextCursor cursor(&document);
+					cursor.setPosition(fragment.position());
+					cursor.insertBlock();
+				}
+
+				changed = true;
+				break;
+			}
+		}
+
+		if (!changed) {
+			break;
+		}
+	}
+}
+#endif
+
 QString PostWidget::formatMessageText (const QString& str)
 {
 #if QT_VERSION >= QT_VERSION_CHECK(6,10,0)
@@ -281,6 +378,7 @@ QString PostWidget::formatMessageText (const QString& str)
 	QTextDocument document;
 	document.setDocumentMargin (0);
 	document.setMarkdown (markdown, QTextDocument::MarkdownDialectGitHub);
+	separateLargeImages (document);
 	return document.toHtml ();
 #else
 	QString ret (str.toHtmlEscaped ());
