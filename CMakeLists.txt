@@ -60,7 +60,7 @@ find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Network REQUIRED)
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS WebSockets REQUIRED)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-	find_package(Qt${QT_VERSION_MAJOR} COMPONENTS DBus REQUIRED)
+	find_package(Qt${QT_VERSION_MAJOR} COMPONENTS DBus QUIET)
 endif()
 
 include(CTest)
@@ -109,7 +109,7 @@ endif()
 
 target_link_libraries (${APPID} PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::WebSockets)
 
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(TARGET Qt${QT_VERSION_MAJOR}::DBus)
 	target_link_libraries(${APPID} PRIVATE Qt${QT_VERSION_MAJOR}::DBus)
 	target_compile_definitions(${APPID} PRIVATE MATTERMOST_QT_FREEDESKTOP_NOTIFICATIONS)
 endif()
