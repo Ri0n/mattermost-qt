@@ -58,6 +58,8 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 	ui->verticalLayout->removeWidget(ui->message);
 	ui->message->hide();
 	ui->verticalLayout->insertWidget(messageIndex, messageContent);
+	connect(messageContent, &MessageContentWidget::dimensionsChanged,
+			this, &PostWidget::dimensionsChanged);
 	messageContent->setMessage(post.message);
 	ui->time->setText (getMessageTimeString (post.create_at));
 

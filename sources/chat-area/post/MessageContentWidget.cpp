@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <optional>
+#include <utility>
 
 #include <QAbstractTextDocumentLayout>
 #include <QFontDatabase>
@@ -33,8 +35,9 @@ namespace {
 class WrappedRichText final : public QTextBrowser
 {
 public:
-    explicit WrappedRichText(QWidget* parent = nullptr)
+    explicit WrappedRichText(std::function<void()> heightChanged, QWidget* parent = nullptr)
         : QTextBrowser(parent)
+        , heightChanged(std::move(heightChanged))
     {
         setObjectName(QStringLiteral("messageRichText"));
         setReadOnly(true);
@@ -100,8 +103,13 @@ private:
         const int wantedHeight = std::max(fontMetrics().height(), documentHeight + 2 * frameWidth());
         if (height() != wantedHeight) {
             setFixedHeight(wantedHeight);
+            if (heightChanged) {
+                heightChanged();
+            }
         }
     }
+
+    std::function<void()> heightChanged;
 };
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
@@ -211,8 +219,12 @@ std::optional<SourceLanguage> sourceLanguageForName(QString language)
 class CodeBlockEdit final : public QPlainTextEdit
 {
 public:
-    CodeBlockEdit(const QString& code, const QString& language, QWidget* parent = nullptr)
+    CodeBlockEdit(const QString& code,
+                  const QString& language,
+                  std::function<void()> heightChanged,
+                  QWidget* parent = nullptr)
         : QPlainTextEdit(parent)
+        , heightChanged(std::move(heightChanged))
     {
         setObjectName(QStringLiteral("messageCodeBlock"));
         setProperty("codeLanguage", language);
@@ -277,8 +289,13 @@ private:
             fontMetrics().height(), documentHeight + 2 * frameWidth() + scrollBarHeight);
         if (height() != wantedHeight) {
             setFixedHeight(wantedHeight);
+            if (heightChanged) {
+                heightChanged();
+            }
         }
     }
+
+    std::function<void()> heightChanged;
 };
 
 bool isCodeBlock(const QTextBlock& block)
@@ -326,6 +343,7 @@ void MessageContentWidget::setMessage(const QString& message)
 
     if (message.isEmpty()) {
         setVisible(false);
+        scheduleDimensionsChanged();
         return;
     }
 
@@ -335,12 +353,14 @@ void MessageContentWidget::setMessage(const QString& message)
 #else
     addRichText(MessageFormatter::formatMessageText(message));
 #endif
+    scheduleDimensionsChanged();
 }
 
 void MessageContentWidget::clear()
 {
     clearContent();
     setVisible(false);
+    scheduleDimensionsChanged();
 }
 
 QString MessageContentWidget::selectedText() const
@@ -369,13 +389,31 @@ void MessageContentWidget::clearContent()
     }
 }
 
+void MessageContentWidget::scheduleDimensionsChanged()
+{
+    updateGeometry();
+    if (dimensionsChangePending) {
+        return;
+    }
+
+    dimensionsChangePending = true;
+    QTimer::singleShot(0, this, [this] {
+        dimensionsChangePending = false;
+        updateGeometry();
+        if (parentWidget()) {
+            parentWidget()->updateGeometry();
+        }
+        emit dimensionsChanged();
+    });
+}
+
 void MessageContentWidget::addRichText(const QString& html)
 {
     if (html.isEmpty()) {
         return;
     }
 
-    auto* richText = new WrappedRichText(this);
+    auto* richText = new WrappedRichText([this] { scheduleDimensionsChanged(); }, this);
     richText->setContentHtml(html);
     connect(richText,
             QOverload<const QUrl&>::of(&QTextBrowser::highlighted),
@@ -422,7 +460,8 @@ void MessageContentWidget::addMarkdownContent(const QString& message)
 
 void MessageContentWidget::addCodeBlock(const QString& code, const QString& language)
 {
-    contentLayout->addWidget(new CodeBlockEdit(code, language, this));
+    contentLayout->addWidget(new CodeBlockEdit(
+        code, language, [this] { scheduleDimensionsChanged(); }, this));
 }
 #endif
 

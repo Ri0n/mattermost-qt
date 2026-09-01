@@ -21,10 +21,12 @@ public:
 
 signals:
     void linkHovered(const QString& link);
+    void dimensionsChanged();
 
 private:
     void clearContent();
     void addRichText(const QString& html);
+    void scheduleDimensionsChanged();
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
     void addMarkdownContent(const QString& message);
@@ -32,6 +34,7 @@ private:
 #endif
 
     QVBoxLayout* contentLayout;
+    bool dimensionsChangePending = false;
 };
 
 } // namespace Mattermost

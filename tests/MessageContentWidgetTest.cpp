@@ -40,6 +40,7 @@ void showAndSettle(QWidget& widget, const QSize& size = QSize(240, 200))
     widget.show();
     QCoreApplication::processEvents();
     QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
 }
 
 } // namespace
@@ -61,6 +62,21 @@ private slots:
                  QTextOption::WrapAtWordBoundaryOrAnywhere);
         QVERIFY2(renderedLineCount(*richText, 120) > 1,
                  "A long unbroken normal-text token must wrap inside the message");
+    }
+
+    void wrappedTextReportsSettledHeight()
+    {
+        MessageContentWidget widget;
+        QSignalSpy geometrySpy(&widget, &MessageContentWidget::dimensionsChanged);
+        widget.setMessage(QString(1000, QLatin1Char('x')));
+        showAndSettle(widget, QSize(120, 200));
+
+        auto* richText = widget.findChild<QTextBrowser*>(QStringLiteral("messageRichText"));
+        QVERIFY(richText != nullptr);
+        QVERIFY2(richText->height() > 2 * richText->fontMetrics().height(),
+                 "Wrapped text must expand the real message widget height");
+        QVERIFY2(geometrySpy.count() > 0,
+                 "A settled text reflow must notify the containing post about its new geometry");
     }
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
