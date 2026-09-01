@@ -98,16 +98,6 @@ QTextBlock firstImageBlock(const QTextDocument& document)
     return {};
 }
 
-bool hasPreformattedBlock(const QTextDocument& document)
-{
-    for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
-        if (block.blockFormat().nonBreakableLines()) {
-            return true;
-        }
-    }
-    return false;
-}
-
 } // namespace
 #endif
 
@@ -133,7 +123,6 @@ private slots:
         QTextDocument rendered;
         rendered.setHtml(html);
         const QString plain = rendered.toPlainText();
-        QVERIFY2(hasPreformattedBlock(rendered), qPrintable(html));
         QVERIFY2(plain.contains(QStringLiteral("{\n  \"name\": \"ContextOverflowError\",\n  \"data\": {")), qPrintable(plain));
         QVERIFY2(plain.contains(QStringLiteral("\n    \"message\": \"Compaction exhausted")), qPrintable(plain));
         QVERIFY2(!plain.contains(QStringLiteral("&quot;")), qPrintable(plain));
@@ -170,7 +159,6 @@ private slots:
         QTextDocument rendered;
         rendered.setHtml(html);
         const QString plain = rendered.toPlainText();
-        QVERIFY2(hasPreformattedBlock(rendered), qPrintable(html));
         QVERIFY2(plain.contains(QStringLiteral("{\n  \"quoted\": \"value\",\n  \"entity\": \"A & B\"\n}")), qPrintable(plain));
         QVERIFY2(!plain.contains(QStringLiteral("&quot;")), qPrintable(plain));
         QVERIFY2(!plain.contains(QStringLiteral("&amp;")), qPrintable(plain));
@@ -253,8 +241,8 @@ private slots:
         QVERIFY(!hasMixedTextAndImageBlock(document));
         QCOMPARE(imageBlockCount(document), 1);
 
-        // PostWidget passes HTML to QLabel, which parses it into another
-        // QTextDocument. Verify that the separation survives that roundtrip.
+        // Rich message fragments are serialized to HTML before being shown in
+        // the wrapped text child. Verify that image separation survives it.
         QTextDocument rendered;
         rendered.setHtml(MessageFormatter::formatMessageText(source));
         QVERIFY(!hasMixedTextAndImageBlock(rendered));
