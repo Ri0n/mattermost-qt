@@ -111,8 +111,8 @@ static QMap<QString, uint32_t> categoryLookup {
 	{categoryNames[EmojiCategory::food], 		EmojiCategory::food},
 	{categoryNames[EmojiCategory::travel], 		EmojiCategory::travel},
 	{categoryNames[EmojiCategory::activities], 	EmojiCategory::activities},
-	{categoryNames[EmojiCategory::objects], 	EmojiCategory::objects},
-	{categoryNames[EmojiCategory::symbols], 	EmojiCategory::symbols},
+	{categoryNames[EmojiCategory::objects], 		EmojiCategory::objects},
+	{categoryNames[EmojiCategory::symbols], 		EmojiCategory::symbols},
 	{categoryNames[EmojiCategory::flags], 		EmojiCategory::flags},
 	{categoryNames[EmojiCategory::custom], 		EmojiCategory::custom},
 };
@@ -192,7 +192,11 @@ static QString getUnicodeFromJson (QString unicodeText)
 		vec += it.toInt(0, 16);
 	}
 
-	QString result = QString::fromUcs4 (&vec[0], vec.size());
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+	QString result = QString::fromUcs4 (reinterpret_cast<const char32_t*>(vec.constData()), vec.size());
+#else
+	QString result = QString::fromUcs4 (reinterpret_cast<const uint*>(vec.constData()), vec.size());
+#endif
 
 	if (result.size() > 0 && result[0] == '\0') {
 		result = "";
@@ -342,8 +346,10 @@ int main (int argc, char** argv)
 	}
 
 	QFile file (argv[1]);
-	file.open(QIODevice::ReadOnly);
-
+	if (!file.open(QIODevice::ReadOnly)) {
+		std::cerr << "Cannot open " << argv[1] << ": " << file.errorString().toStdString() << std::endl;
+		return 1;
+	}
 
 	QByteArray bytes = file.readAll();
 	QJsonDocument doc = QJsonDocument::fromJson(bytes);
@@ -359,7 +365,10 @@ int main (int argc, char** argv)
 	 * Open the output .cpp file and write emoji definitions to it
 	 */
 	QFile outFile ("EmojiMap.cpp");
-	outFile.open(QIODevice::ReadWrite | QIODevice::Truncate);
+	if (!outFile.open(QIODevice::ReadWrite | QIODevice::Truncate)) {
+		std::cerr << "Cannot open EmojiMap.cpp: " << outFile.errorString().toStdString() << std::endl;
+		return 1;
+	}
 	QTextStream outStream (&outFile);
 	outStream << emojiSourceFileStart;
 
