@@ -156,7 +156,7 @@ void BackendPost::addReaction (QString userName, QString emojiName)
 
 void BackendPost::removeReaction (QString userName, QString emojiName)
 {
-	EmojiID emojiId = EmojiInfo::findByName (emojiName);
+	EmojiID emojiId = EmojiInfo::findByName(emojiName);
 
 	if (!emojiId) {
 		LOG_DEBUG ("Missing emoji: " << emojiName);
