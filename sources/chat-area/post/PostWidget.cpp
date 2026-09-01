@@ -28,6 +28,7 @@
 #include "backend/types/BackendPost.h"
 #include "backend/emoji/EmojiInfo.h"
 #include "chat-area/ChatArea.h"
+#include "MessageContentWidget.h"
 #include "MessageFormatter.h"
 #include "PostQuoteFrame.h"
 #include "attachments/PostAttachmentList.h"
@@ -42,6 +43,7 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 ,post (post)
 ,threadButton(nullptr)
 ,ui(new Ui::PostWidget)
+,messageContent(nullptr)
 ,parentChatArea(chatArea)
 {
 	ui->setupUi(this);
@@ -51,9 +53,18 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 		ui->authorName->setStyleSheet("QLabel { color : blue; }");
 	}
 
-	ui->message->setText (formatMessageText (post.message));
+	messageContent = new MessageContentWidget(this);
+	const int messageIndex = ui->verticalLayout->indexOf(ui->message);
+	ui->verticalLayout->removeWidget(ui->message);
+	ui->message->hide();
+	ui->verticalLayout->insertWidget(messageIndex, messageContent);
+	messageContent->setMessage(post.message);
 	ui->time->setText (getMessageTimeString (post.create_at));
 
+	connect(messageContent, &MessageContentWidget::linkHovered, this, [this](const QString& link) {
+		qDebug() << "Link hovered: " << link;
+		hoveredLink = link;
+	});
 
 	//avatars are downloaded in background, need to redraw it when ready
 
@@ -118,11 +129,6 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 		connect (threadButton, &QPushButton::clicked, this, &PostWidget::openThreadWindow);
 		ui->verticalLayout->addWidget(threadButton);
 	}
-
-	connect (ui->message, &QLabel::linkHovered, [this] (const QString& link) {
-		qDebug() << "Link hovered: " << link;
-		hoveredLink = link;
-	});
 }
 
 PostWidget::~PostWidget()
@@ -132,7 +138,7 @@ PostWidget::~PostWidget()
 
 void PostWidget::setEdited (const QString& message)
 {
-	ui->message->setText (formatMessageText (message));
+	messageContent->setMessage(message);
 
 	/**
 	 * if (there is a poll in the post, just recreate the poll instance
@@ -209,17 +215,16 @@ void PostWidget::markAsDeleted ()
 		ui->verticalLayout->removeWidget (poll.get());
 		poll.reset (nullptr);
 
-		ui->message->setText ("(Poll deleted)");
-		ui->message->setMaximumHeight (100);
+		messageContent->setMessage(QStringLiteral("(Poll deleted)"));
 	} else {
-		ui->message->setText ("(Message deleted)");
+		messageContent->setMessage(QStringLiteral("(Message deleted)"));
 	}
 }
 
 
 QString PostWidget::getSelectedText ()
 {
-	return ui->message->selectedText();
+	return messageContent->selectedText();
 }
 
 QString PostWidget::formatMessageText (const QString& str)
@@ -259,8 +264,7 @@ QString PostWidget::formatForClipboardSelection (FormatType formatType) const
 
 void PostWidget::clearMessageText ()
 {
-	ui->message->setText ("");
-	ui->message->setMaximumHeight (0);
+	messageContent->clear();
 }
 
 } /* namespace Mattermost */
