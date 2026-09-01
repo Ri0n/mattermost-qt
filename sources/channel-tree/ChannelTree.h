@@ -24,16 +24,12 @@
 
 #pragma once
 
-#include <QVector>
+#include <QMap>
 #include <QTreeWidget>
 
+class QDropEvent;
 class QStackedWidget;
-class QListWidget;
 class QTreeWidgetItem;
-
-QT_BEGIN_NAMESPACE
-namespace Ui { class MainWindow; }
-QT_END_NAMESPACE
 
 namespace Mattermost {
 
@@ -43,6 +39,7 @@ class BackendTeam;
 class ChatArea;
 class TeamItem;
 class ChannelItem;
+struct SidebarTeamState;
 
 class ChannelTree: public QTreeWidget {
 	Q_OBJECT
@@ -53,6 +50,10 @@ public:
 	bool isChannelActive (const BackendChannel& channel);
 
 	void addTeam (Backend& backend, BackendTeam& team);
+	void populateSidebars(Backend& backend);
+
+	// Kept for source compatibility; the server-backed sidebar no longer uses
+	// separate global DM/GM lists.
 	void addDirectChannelsList (Backend& backend);
 	void addGroupChannelsList (Backend& backend);
 
@@ -61,12 +62,50 @@ public:
 
 	void openChannel (QString channelID);
 	void addChannelToItem (QString channelID, QTreeWidgetItem* item);
-	void removeChannelToItem (QString channelID);
+	void removeChannelToItem (QString channelID, QTreeWidgetItem* item = nullptr);
+
+	bool canRemoveChannelFromCategory(const ChannelItem* item) const;
+	void removeChannelFromCategory(ChannelItem* item);
+
+protected:
+	void dropEvent(QDropEvent* event) override;
+
 private:
+	enum ItemKind {
+		UnknownItem = 0,
+		TeamItemKind,
+		CategoryItemKind,
+		ChannelItemKind,
+	};
+
+	enum ItemRole {
+		ItemKindRole = Qt::UserRole + 1,
+		ItemIdRole,
+		ItemTeamIdRole,
+	};
+
 	void showContextMenu (const QPoint& pos);
+	void refreshTeamSidebar(Backend& backend, BackendTeam& team);
+	void renderTeamSidebar(Backend& backend, BackendTeam& team, TeamItem& teamItem,
+	                       const SidebarTeamState& state);
+	void clearTeamSidebar(TeamItem& teamItem);
+	QTreeWidgetItem* createCategoryItem(TeamItem& teamItem, const QString& categoryId,
+	                                    const QString& displayName, bool collapsed);
+	ChannelItem* createChannelItem(Backend& backend, TeamItem& teamItem,
+	                               QTreeWidgetItem& categoryItem, BackendChannel& channel);
+	void setCategoryCollapsed(QTreeWidgetItem* item, bool collapsed);
+	void setChannelMutedVisual(const QString& channelId, bool muted);
+	void moveChannelItem(ChannelItem* item, QTreeWidgetItem* targetCategory, int targetIndex);
+	void syncCategoryChannels(QTreeWidgetItem* firstCategory, QTreeWidgetItem* secondCategory = nullptr);
+	void syncCategoryOrder(QTreeWidgetItem* teamItem);
+	QTreeWidgetItem* findCategoryItem(QTreeWidgetItem* teamItem, const QString& categoryId) const;
+	QStringList channelIds(QTreeWidgetItem* categoryItem) const;
+
 	QStackedWidget*						chatAreaStackedWidget;
-	QMap<QString, QTreeWidgetItem*>		channelToItemMap;
+	QMap<QString, QList<QTreeWidgetItem*>>	channelToItemMap;
+	QMap<QString, TeamItem*>			teamToItemMap;
+	Backend*							backendForSidebar;
+	bool							renderingSidebar;
 };
 
 } /* namespace Mattermost */
-
