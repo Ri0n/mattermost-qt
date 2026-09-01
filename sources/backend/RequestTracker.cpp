@@ -28,7 +28,7 @@
 
 namespace Mattermost {
 
-quint32 qHash(const RequestTrackerEntry& entry)
+auto qHash(const RequestTrackerEntry& entry)
 {
 	return ::qHash (entry.type, 0) ^ ::qHash (entry.pointer1) ^ ::qHash (entry.pointer2);
 }
