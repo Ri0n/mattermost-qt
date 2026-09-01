@@ -97,6 +97,7 @@ public:
 	bool						isDeleted;
 	bool 						hidden;
 	bool						is_pinned;
+	bool						currentUserMentioned;
 	bool						has_thread;
 };
 
