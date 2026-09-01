@@ -93,6 +93,9 @@ BackendChannel::BackendChannel (Storage& storage, const QJsonObject& jsonObject)
 	last_post_at = jsonObject.value("last_post_at").toVariant().toULongLong();
 
 	total_msg_count = jsonObject.value("total_msg_count").toInt();
+	total_msg_count_root = jsonObject.contains("total_msg_count_root")
+		? jsonObject.value("total_msg_count_root").toInt()
+		: total_msg_count;
 	extra_update_at = jsonObject.value("extra_update_at").toInt();
 	creator = storage.getUserById (jsonObject.value("creator_id").toString());
 	scheme_id = jsonObject.value("scheme_id").toVariant();
