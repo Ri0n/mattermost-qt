@@ -40,7 +40,7 @@
 
 namespace Mattermost {
 
-class BackendNewPollData;
+struct BackendNewPollData;
 
 class Backend: public QObject
 {
