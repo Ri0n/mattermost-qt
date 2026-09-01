@@ -13,7 +13,6 @@
 #include "backend/NetworkRequest.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendTeam.h"
-#include "log.h"
 
 namespace Mattermost {
 
@@ -90,18 +89,24 @@ const SidebarCategory* SidebarTeamState::categoryByType(const QString& type) con
     return nullptr;
 }
 
-SidebarService::SidebarService(QObject* parent)
-    : QObject(parent)
+SidebarService& SidebarService::instance(Backend& backend)
 {
+    static QMap<Backend*, SidebarService*> instances;
+    auto it = instances.find(&backend);
+    if (it == instances.end()) {
+        it = instances.insert(&backend, new SidebarService(backend));
+    }
+    return **it;
 }
 
-void SidebarService::setBackend(Backend& newBackend)
+SidebarService::SidebarService(Backend& backend)
+    : QObject(&backend)
+    , backend(backend)
 {
-    backend = &newBackend;
     connect(&httpConnector, &HTTPConnector::onNetworkError,
-            backend, &Backend::onNetworkError, Qt::UniqueConnection);
+            &backend, &Backend::onNetworkError);
     connect(&httpConnector, &HTTPConnector::onHttpError,
-            backend, &Backend::onHttpError, Qt::UniqueConnection);
+            &backend, &Backend::onHttpError);
 }
 
 void SidebarService::clear()
@@ -113,7 +118,7 @@ void SidebarService::clear()
 
 QString SidebarService::currentUserId() const
 {
-    return backend ? backend->getLoginUser().id : QString();
+    return backend.getLoginUser().id;
 }
 
 QString SidebarService::categoriesPath(const QString& teamId) const
@@ -134,7 +139,7 @@ bool SidebarService::isChannelMuted(const QString& channelId) const
 
 void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
 {
-    if (!backend || currentUserId().isEmpty()) {
+    if (currentUserId().isEmpty()) {
         if (callback) {
             callback();
         }
@@ -160,7 +165,7 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
 void SidebarService::setChannelMuted(BackendChannel& channel, bool muted,
                                      std::function<void(bool)> callback)
 {
-    if (!backend || currentUserId().isEmpty()) {
+    if (currentUserId().isEmpty()) {
         if (callback) {
             callback(false);
         }
@@ -202,7 +207,6 @@ void SidebarService::retrieveCategories(BackendTeam& team,
             state.order.push_back(categoryId.toString());
         }
 
-        // Be defensive with older servers: append categories omitted from the order array.
         for (auto it = state.categories.cbegin(); it != state.categories.cend(); ++it) {
             if (!state.order.contains(it.key())) {
                 state.order.push_back(it.key());
