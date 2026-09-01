@@ -24,6 +24,7 @@
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendPoll.h"
 #include "backend/Storage.h"
+#include "MessageContentWidget.h"
 #include "PostWidget.h"
 
 namespace Mattermost {
@@ -31,8 +32,16 @@ namespace Mattermost {
 PostQuoteFrame::PostQuoteFrame (const BackendPost& quotedPost, const Storage& storage, PostWidget* containingPostWidget)
 :QFrame (containingPostWidget)
 ,ui (new Ui::PostQuoteFrame)
+,messageContent(nullptr)
 {
 	ui->setupUi(this);
+
+	messageContent = new MessageContentWidget(this);
+	messageContent->setFont(ui->message->font());
+	const int messageIndex = ui->verticalLayout->indexOf(ui->message);
+	ui->verticalLayout->removeWidget(ui->message);
+	ui->message->hide();
+	ui->verticalLayout->insertWidget(messageIndex, messageContent);
 
 	QString headerText;
 	const BackendPost& containingPost = containingPostWidget->post;
@@ -53,8 +62,7 @@ PostQuoteFrame::PostQuoteFrame (const BackendPost& quotedPost, const Storage& st
 
 			if (containingPost.message.startsWith (expectedText)) {
 				ui->header->setText ("The poll '" + pollTitle + "' has ended.");
-				ui->message->setText("");
-				ui->message->setMaximumHeight (0);
+				messageContent->clear();
 				containingPostWidget->clearMessageText ();
 			}
 		}
@@ -66,12 +74,12 @@ PostQuoteFrame::PostQuoteFrame (const BackendPost& quotedPost, const Storage& st
 			ui->header->setText ("Originally posted by deleted user");
 		}
 
-		QString attachmentText;
+		QString message;
 		for (auto& file: quotedPost.files) {
-			attachmentText += "[attachment] " + file.name + "\n";
+			message += "[attachment] " + file.name + "\n";
 		}
-
-		ui->message->setText (attachmentText + PostWidget::formatMessageText (quotedPost.message));
+		message += quotedPost.message;
+		messageContent->setMessage(message);
 
 	}
 
