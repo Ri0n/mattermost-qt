@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QTimer>
 
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
@@ -132,6 +133,14 @@ SidebarService::SidebarService(Backend& backend)
     });
     connect(&backend, &Backend::onAllTeamChannelsPopulated,
             this, &SidebarService::synchronizeChannelActivity);
+
+    // MainWindow clears the service immediately after acquiring the singleton.
+    // Defer these auxiliary requests by one event-loop turn so that reset
+    // cannot cancel them, while keeping the loading policy inside the service.
+    QTimer::singleShot(0, this, [this] {
+        retrieveClientConfig();
+        retrieveChannelPreferences();
+    });
 }
 
 void SidebarService::clear()
