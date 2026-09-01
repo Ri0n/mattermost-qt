@@ -116,23 +116,29 @@ jobs:
           modules: 'qtwebsockets'
           cache: true
 
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Configure
         run: >
-          cmake -S . -B build
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
           -DQT_6=ON
           -DBUILD_TESTING=ON
           -DWARNINGS_AS_ERRORS=ON
 
       - name: Build
-        run: cmake --build build --config Release --parallel 4
+        run: cmake --build build --parallel 4
 
       - name: Unit tests
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: ctest --test-dir build --output-on-failure
 
       - name: Package portable ZIP
         shell: pwsh
         run: |
-          cmake --install build --config Release --prefix package
+          cmake --install build --prefix package
           windeployqt --release --no-translations --compiler-runtime package/bin/mattermost-qt.exe
           Compress-Archive -Path package/* -DestinationPath mattermost-qt-windows-x64.zip
 
