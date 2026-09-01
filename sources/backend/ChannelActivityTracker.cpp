@@ -12,6 +12,7 @@ namespace Mattermost {
 void ChannelActivityTracker::clear()
 {
     entries.clear();
+    collapsedThreadsEnabled = false;
 }
 
 void ChannelActivityTracker::setMembership(const QString& channelId, uint64_t lastViewedAt,
@@ -43,8 +44,10 @@ void ChannelActivityTracker::synchronizeChannel(const QString& channelId, uint64
                                                 uint64_t totalMessageCount,
                                                 uint64_t totalRootMessageCount,
                                                 bool hasTotalRootMessageCount,
-                                                bool collapsedThreadsEnabled)
+                                                bool useCollapsedThreads)
 {
+    collapsedThreadsEnabled = useCollapsedThreads;
+
     auto it = entries.find(channelId);
     if (it == entries.end() || !it->tracked) {
         return;
@@ -66,8 +69,7 @@ void ChannelActivityTracker::synchronizeChannel(const QString& channelId, uint64
 }
 
 void ChannelActivityTracker::recordPost(const QString& channelId, uint64_t createdAt, bool ownPost,
-                                        bool threadReply, bool mentioned,
-                                        bool collapsedThreadsEnabled)
+                                        bool threadReply, bool mentioned)
 {
     if (channelId.isEmpty()) {
         return;
