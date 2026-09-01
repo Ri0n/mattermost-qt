@@ -111,8 +111,8 @@ static QMap<QString, uint32_t> categoryLookup {
 	{categoryNames[EmojiCategory::food], 		EmojiCategory::food},
 	{categoryNames[EmojiCategory::travel], 		EmojiCategory::travel},
 	{categoryNames[EmojiCategory::activities], 	EmojiCategory::activities},
-	{categoryNames[EmojiCategory::objects], 		EmojiCategory::objects},
-	{categoryNames[EmojiCategory::symbols], 		EmojiCategory::symbols},
+	{categoryNames[EmojiCategory::objects], 	EmojiCategory::objects},
+	{categoryNames[EmojiCategory::symbols], 	EmojiCategory::symbols},
 	{categoryNames[EmojiCategory::flags], 		EmojiCategory::flags},
 	{categoryNames[EmojiCategory::custom], 		EmojiCategory::custom},
 };
