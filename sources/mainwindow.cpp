@@ -49,6 +49,8 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	ui->channelList->setFocus();
 
 	createMenu ();
+	connect (&trayIcon, &QSystemTrayIcon::messageClicked,
+	         this, &MainWindow::activateLastNotification);
 
 	const BackendUser& currentUser = backend.getLoginUser();
 
@@ -116,6 +118,7 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	});
 
 	connect (&backend, &Backend::onChannelViewed, [this] (const BackendChannel& channel) {
+		SidebarService::instance(backend).setChannelMentioned(channel.id, false);
 		if (channelsWithNewPosts.remove (&channel)) {
 			setNotificationsCountVisualization (channelsWithNewPosts.size());
 		}
@@ -251,6 +254,7 @@ void MainWindow::changeEvent (QEvent* event)
 			ChatArea* currentPage = ui->channelList->getCurrentPage();
 
 			if (currentPage) {
+				SidebarService::instance(backend).setChannelMentioned(currentPage->getChannel().id, false);
 				currentPage->onMainWindowActivate ();
 
 				if (channelsWithNewPosts.remove (&currentPage->getChannel())) {
@@ -296,41 +300,124 @@ void MainWindow::initializationComplete ()
 	}
 }
 
-void MainWindow::messageNotify (const BackendChannel& channel, const BackendPost& post)
+void MainWindow::messageNotify (BackendChannel& channel, const BackendPost& post)
 {
 	//do not receive notifications for your own messages ;)
 	if (post.author && post.author->id == backend.getLoginUser().id) {
 		return;
 	}
 
+	auto& sidebar = SidebarService::instance(backend);
+	if (post.currentUserMentioned) {
+		sidebar.setChannelMentioned(channel.id, true);
+	}
+
 	// Mattermost mute disables all desktop/email/push notifications for the channel.
-	if (SidebarService::instance(backend).isChannelMuted(channel)) {
+	if (sidebar.isChannelMuted(channel)) {
 		return;
 	}
 
-	/**
-	 * If the Mattermost window is active (has focus) and the current channel is active,
-	 * do not add notifications. We assume that the user is watching the chat window
-	 */
-	if (isActiveWindow() && ui->channelList->isChannelActive (channel)) {
+	// Replies in a thread are intentionally quiet unless Mattermost marked this
+	// websocket event as a mention for the current user. Following a thread is
+	// server-side state, but it must not turn every followed reply into a popup.
+	if (!post.root_id.isEmpty() && !post.currentUserMentioned) {
 		return;
+	}
+
+	if (post.root_id.isEmpty()) {
+		/**
+		 * If the Mattermost window is active (has focus) and the current channel is active,
+		 * do not add notifications. We assume that the user is watching the chat window.
+		 */
+		if (isActiveWindow() && ui->channelList->isChannelActive (channel)) {
+			sidebar.setChannelMentioned(channel.id, false);
+			backend.markChannelAsViewed(channel);
+			return;
+		}
+	} else {
+		// A thread is a separate top-level window. Do not notify if that exact
+		// thread is already visible and focused.
+		ChatArea* parentArea = ui->channelList->getCurrentPage();
+		if (parentArea && &parentArea->getChannel() == &channel) {
+			for (ChatArea* threadArea : parentArea->threadsAreas) {
+				if (threadArea && threadArea->root_id == post.root_id && threadArea->isActiveWindow()) {
+					sidebar.setChannelMentioned(channel.id, false);
+					backend.markChannelAsViewed(channel);
+					return;
+				}
+			}
+		}
 	}
 
 	//Add a desktop notification
 	QString title;
 
-	if (channel.type == BackendChannel::directChannel) {
+	if (!post.root_id.isEmpty()) {
+		title = post.getDisplayAuthorName () + " mentioned you in a thread";
+	} else if (channel.type == BackendChannel::directChannel) {
 		title = post.getDisplayAuthorName () + " messaged you";
 	} else {
 		title = post.getDisplayAuthorName () + " posted in '" + channel.display_name + "'";
 	}
 
+	lastNotificationChannelId = channel.id;
+	lastNotificationPostId = post.id;
+	lastNotificationRootId = post.root_id;
 	trayIcon.showMessage (title, post.message, QSystemTrayIcon::Information);
 	qApp->alert (nullptr, 0);
 
 	//update the count of new channels in the taskbar and tray icon
 	channelsWithNewPosts.insert(&channel);
 	setNotificationsCountVisualization (channelsWithNewPosts.size());
+}
+
+void MainWindow::activateLastNotification ()
+{
+	if (lastNotificationChannelId.isEmpty() || lastNotificationPostId.isEmpty()) {
+		return;
+	}
+
+	if (isMinimized()) {
+		showNormal();
+	} else {
+		show();
+	}
+	raise();
+	activateWindow();
+
+	BackendChannel* channel = backend.getStorage().getChannelById(lastNotificationChannelId);
+	if (!channel) {
+		return;
+	}
+
+	ui->channelList->openChannel(lastNotificationChannelId);
+	ChatArea* parentArea = ui->channelList->getCurrentPage();
+	if (!parentArea || &parentArea->getChannel() != channel) {
+		return;
+	}
+
+	if (lastNotificationRootId.isEmpty()) {
+		parentArea->goToPost(lastNotificationPostId);
+		return;
+	}
+
+	ChatArea* threadArea = nullptr;
+	for (ChatArea* area : parentArea->threadsAreas) {
+		if (area && area->root_id == lastNotificationRootId) {
+			threadArea = area;
+			break;
+		}
+	}
+
+	if (!threadArea) {
+		threadArea = new ChatArea(backend, *channel, lastNotificationRootId, parentArea);
+		parentArea->threadsAreas.insert(threadArea);
+	}
+
+	threadArea->show();
+	threadArea->raise();
+	threadArea->activateWindow();
+	threadArea->goToPost(lastNotificationPostId);
 }
 
 void MainWindow::unreadMessagesNotify (const BackendChannel& channel)
