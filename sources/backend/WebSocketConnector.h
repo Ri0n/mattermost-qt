@@ -1,11 +1,16 @@
-/*
+/**
+ * @file WebSocketConnector.h
+ * @brief
+ * @author Lyubomir Filipov
+ * @date Dec 28, 2021
+ *
  * Copyright 2021, 2022 Lyubomir Filipov
  *
  * This file is part of Mattermost-QT.
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -54,3 +59,4 @@ private:
 };
 
 } /* namespace Mattermost */
+
