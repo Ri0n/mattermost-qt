@@ -19,10 +19,16 @@
 
 #include "mainwindow.h"
 
+#include <algorithm>
+
 #include <QCloseEvent>
 #include <QMessageBox>
+#include <QSettings>
+#include <QSplitter>
 #include <QSystemTrayIcon>
 #include <QTabWidget>
+#include <QTimer>
+#include <QTreeWidgetItem>
 #include <QVBoxLayout>
 #include <QWindow>
 
@@ -74,6 +80,26 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	        this, &MainWindow::refreshChannelQuickLists);
 	connect(&sidebar, &SidebarService::categoriesChanged, this,
 	        [this](const QString&) { refreshChannelQuickLists(); });
+
+	// Do not wait for the server's channel_viewed websocket echo to update the
+	// local Recent/Unreads indexes. A channel becomes viewed as soon as the user
+	// selects it. Defer the update by one event-loop turn so a quick-list refresh
+	// cannot delete the item while its selection signal is still being handled.
+	connect(ui->channelList, &QTreeWidget::currentItemChanged, this,
+	        [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
+		if (!current || current->data(0, ChannelTree::ItemKindRole).toInt() != ChannelTree::ChannelItemKind) {
+			return;
+		}
+		const QString channelId = current->data(0, ChannelTree::ItemIdRole).toString();
+		if (channelId.isEmpty()) {
+			return;
+		}
+		QTimer::singleShot(0, this, [this, channelId] {
+			if (BackendChannel* channel = backend.getStorage().getChannelById(channelId)) {
+				SidebarService::instance(backend).markChannelViewedLocally(*channel);
+			}
+		});
+	});
 
 	recentChannels->initialize(backend, ChannelQuickList::Recent);
 	unreadChannels->initialize(backend, ChannelQuickList::Unreads);
@@ -155,9 +181,15 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 
 	LOG_DEBUG ("MainWindow signal register finish");
 
-	//Restore saved window position and dimensions
+	//Restore saved window position, dimensions and the user-selected sidebar width.
 	QSettings settings;
-	restoreGeometry (settings.value( "geometry", saveGeometry()).toByteArray());
+	restoreGeometry (settings.value("geometry", saveGeometry()).toByteArray());
+	const QByteArray splitterState = settings.value("sidebar_splitter_state").toByteArray();
+	if (sidebarSplitter && !splitterState.isEmpty()) {
+		sidebarSplitter->restoreState(splitterState);
+	} else if (sidebarSplitter) {
+		sidebarSplitter->setSizes({280, std::max(360, width() - 280)});
+	}
 
 	connect (qApp, &QApplication::aboutToQuit, this, &MainWindow::saveState);
 	LOG_DEBUG ("MainWindow create finish");
@@ -188,7 +220,9 @@ along with Mattermost-QT. if not, see <a href='https://www.gnu.org/licenses/'>ht
 
 void MainWindow::setupChannelTabs ()
 {
+	ui->gridLayout_2->removeWidget(ui->lefttop_frame);
 	ui->gridLayout_2->removeWidget(ui->channelList);
+	ui->gridLayout_2->removeWidget(ui->chatAreaStackedWidget);
 
 	channelTabs = new QTabWidget(ui->centralwidget);
 	channelTabs->setDocumentMode(true);
@@ -207,7 +241,27 @@ void MainWindow::setupChannelTabs ()
 	channelTabs->addTab(channelsPage, QStringLiteral("Channels"));
 	channelTabs->addTab(recentChannels, QStringLiteral("Recent"));
 	channelTabs->addTab(unreadChannels, QStringLiteral("Unreads"));
-	ui->gridLayout_2->addWidget(channelTabs, 1, 0);
+
+	auto* leftSidebar = new QWidget(ui->centralwidget);
+	auto* leftLayout = new QVBoxLayout(leftSidebar);
+	leftLayout->setContentsMargins(0, 0, 0, 0);
+	leftLayout->setSpacing(0);
+	leftLayout->addWidget(ui->lefttop_frame);
+	leftLayout->addWidget(channelTabs, 1);
+
+	sidebarSplitter = new QSplitter(Qt::Horizontal, ui->centralwidget);
+	sidebarSplitter->setChildrenCollapsible(false);
+	sidebarSplitter->setHandleWidth(4);
+	sidebarSplitter->setOpaqueResize(true);
+	sidebarSplitter->addWidget(leftSidebar);
+	sidebarSplitter->addWidget(ui->chatAreaStackedWidget);
+	sidebarSplitter->setStretchFactor(0, 0);
+	sidebarSplitter->setStretchFactor(1, 1);
+
+	ui->gridLayout_2->addWidget(sidebarSplitter, 0, 0, 2, 2);
+	ui->gridLayout_2->setRowStretch(0, 1);
+	ui->gridLayout_2->setRowStretch(1, 0);
+	ui->gridLayout_2->setColumnStretch(0, 1);
 
 	connect(recentChannels, &ChannelQuickList::channelSelected,
 	        ui->channelList, &ChannelTree::openChannel);
@@ -310,7 +364,9 @@ void MainWindow::changeEvent (QEvent* event)
 			ChatArea* currentPage = ui->channelList->getCurrentPage();
 
 			if (currentPage) {
-				SidebarService::instance(backend).setChannelMentioned(currentPage->getChannel().id, false);
+				auto& sidebar = SidebarService::instance(backend);
+				sidebar.setChannelMentioned(currentPage->getChannel().id, false);
+				sidebar.markChannelViewedLocally(currentPage->getChannel());
 				currentPage->onMainWindowActivate ();
 
 				if (channelsWithNewPosts.remove (&currentPage->getChannel())) {
@@ -387,6 +443,7 @@ void MainWindow::messageNotify (BackendChannel& channel, const BackendPost& post
 		 */
 		if (isActiveWindow() && ui->channelList->isChannelActive (channel)) {
 			sidebar.setChannelMentioned(channel.id, false);
+			sidebar.markChannelViewedLocally(channel);
 			backend.markChannelAsViewed(channel);
 			return;
 		}
@@ -398,6 +455,7 @@ void MainWindow::messageNotify (BackendChannel& channel, const BackendPost& post
 			for (ChatArea* threadArea : parentArea->threadsAreas) {
 				if (threadArea && threadArea->root_id == post.root_id && threadArea->isActiveWindow()) {
 					sidebar.setChannelMentioned(channel.id, false);
+					sidebar.markChannelViewedLocally(channel);
 					backend.markChannelAsViewed(channel);
 					return;
 				}
@@ -505,6 +563,9 @@ void MainWindow::saveState ()
 	LOG_DEBUG ("MainWindow saveState");
 	QSettings settings;
 	settings.setValue ("geometry", saveGeometry());
+	if (sidebarSplitter) {
+		settings.setValue("sidebar_splitter_state", sidebarSplitter->saveState());
+	}
 //	settings.setValue ("current_team", channelList.getCurrentTeamId());
 //	if (currentPage) {
 //		settings.setValue ("current_channel", currentPage->getChannel().id);
@@ -512,5 +573,4 @@ void MainWindow::saveState ()
 }
 
 } /* namespace Mattermost */
-
 
