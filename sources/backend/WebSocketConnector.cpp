@@ -119,14 +119,14 @@ WebSocketConnector::WebSocketConnector (WebSocketEventHandler& eventHandler)
 
 WebSocketConnector::~WebSocketConnector () = default;
 
-void WebSocketConnector::open (const QString& urlString, const QString& token)
+void WebSocketConnector::open (const QString& urlString, const QString& authToken)
 {
 	QUrl url (urlString + "websocket");
 	url.setScheme("wss");
 
-	//qDebug() << "WebSocket open: " << url << " " << token;
+	//qDebug() << "WebSocket open: " << url << " " << authToken;
 
-	this->token = token;
+	token = authToken;
 	webSocket.open (url);
 }
 
