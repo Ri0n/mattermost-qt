@@ -27,6 +27,7 @@
 #include "chat-area/ChatArea.h"
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
+#include "notifications/NotificationManager.h"
 #include "SettingsWindow.h"
 #include "build-config.h"
 #include "log.h"
@@ -37,6 +38,7 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 :QMainWindow(parent)
 ,ui (std::make_unique<Ui::MainWindow>())
 ,trayIcon (trayIcon)
+,notificationManager (std::make_unique<NotificationManager>(trayIcon))
 ,chooseEmojiDialog (this)
 ,backend (_backend)
 ,currentTeamRestoredFromSettings (false)
@@ -49,8 +51,8 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	ui->channelList->setFocus();
 
 	createMenu ();
-	connect (&trayIcon, &QSystemTrayIcon::messageClicked,
-	         this, &MainWindow::activateLastNotification);
+	connect (notificationManager.get(), &NotificationManager::activated,
+	         this, &MainWindow::activateNotification);
 
 	const BackendUser& currentUser = backend.getLoginUser();
 
@@ -360,10 +362,8 @@ void MainWindow::messageNotify (BackendChannel& channel, const BackendPost& post
 		title = post.getDisplayAuthorName () + " posted in '" + channel.display_name + "'";
 	}
 
-	lastNotificationChannelId = channel.id;
-	lastNotificationPostId = post.id;
-	lastNotificationRootId = post.root_id;
-	trayIcon.showMessage (title, post.message, QSystemTrayIcon::Information);
+	notificationManager->show(title, post.message,
+	                          NotificationTarget {channel.id, post.id, post.root_id});
 	qApp->alert (nullptr, 0);
 
 	//update the count of new channels in the taskbar and tray icon
@@ -371,9 +371,9 @@ void MainWindow::messageNotify (BackendChannel& channel, const BackendPost& post
 	setNotificationsCountVisualization (channelsWithNewPosts.size());
 }
 
-void MainWindow::activateLastNotification ()
+void MainWindow::activateNotification (const NotificationTarget& target)
 {
-	if (lastNotificationChannelId.isEmpty() || lastNotificationPostId.isEmpty()) {
+	if (!target.isValid()) {
 		return;
 	}
 
@@ -385,39 +385,39 @@ void MainWindow::activateLastNotification ()
 	raise();
 	activateWindow();
 
-	BackendChannel* channel = backend.getStorage().getChannelById(lastNotificationChannelId);
+	BackendChannel* channel = backend.getStorage().getChannelById(target.channelId);
 	if (!channel) {
 		return;
 	}
 
-	ui->channelList->openChannel(lastNotificationChannelId);
+	ui->channelList->openChannel(target.channelId);
 	ChatArea* parentArea = ui->channelList->getCurrentPage();
 	if (!parentArea || &parentArea->getChannel() != channel) {
 		return;
 	}
 
-	if (lastNotificationRootId.isEmpty()) {
-		parentArea->goToPost(lastNotificationPostId);
+	if (target.rootId.isEmpty()) {
+		parentArea->goToPost(target.postId);
 		return;
 	}
 
 	ChatArea* threadArea = nullptr;
 	for (ChatArea* area : parentArea->threadsAreas) {
-		if (area && area->root_id == lastNotificationRootId) {
+		if (area && area->root_id == target.rootId) {
 			threadArea = area;
 			break;
 		}
 	}
 
 	if (!threadArea) {
-		threadArea = new ChatArea(backend, *channel, lastNotificationRootId, parentArea);
+		threadArea = new ChatArea(backend, *channel, target.rootId, parentArea);
 		parentArea->threadsAreas.insert(threadArea);
 	}
 
 	threadArea->show();
 	threadArea->raise();
 	threadArea->activateWindow();
-	threadArea->goToPost(lastNotificationPostId);
+	threadArea->goToPost(target.postId);
 }
 
 void MainWindow::unreadMessagesNotify (const BackendChannel& channel)
@@ -458,7 +458,6 @@ void MainWindow::saveState ()
 }
 
 } /* namespace Mattermost */
-
 
 
 
