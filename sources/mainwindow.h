@@ -67,7 +67,7 @@ public:
 	 * @param channel channel
 	 * @param post post
 	 */
-	void messageNotify (const BackendChannel& channel, const BackendPost& post);
+	void messageNotify (BackendChannel& channel, const BackendPost& post);
 
 	/**
 	 * Called on Mattermost client startup, when there were new posts, while the client was not open
@@ -81,6 +81,7 @@ public:
 private:
 	void createMenu ();
 	void reload ();
+	void activateLastNotification ();
 private:
 	std::unique_ptr<Ui::MainWindow>		ui;
 	QSystemTrayIcon&					trayIcon;
@@ -91,6 +92,9 @@ private:
 	QMenu*								mainMenu;
 	SettingsWindow*						settingsWindow;
 	bool								doDeinit;
+	QString							lastNotificationChannelId;
+	QString							lastNotificationPostId;
+	QString							lastNotificationRootId;
 };
 
 } /* namespace Mattermost */
