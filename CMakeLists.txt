@@ -23,10 +23,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 		add_compile_options(-Werror -Wno-error=cpp)
 	endif()
 elseif(MSVC)
-	# C4458 (-Wshadow) and C4267 (-Wconversion) have no equivalent enabled in
-	# the GCC/Clang jobs. Keep /W4, but do not make Windows enforce a stricter
-	# warning set than the rest of the CI matrix.
-	add_compile_options(/W4 /wd4458 /wd4267)
+	add_compile_options(/W4)
 	if(WARNINGS_AS_ERRORS)
 		add_compile_options(/WX)
 	endif()
