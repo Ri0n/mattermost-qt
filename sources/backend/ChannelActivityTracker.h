@@ -5,9 +5,10 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include <QHash>
 #include <QString>
-#include <QtGlobal>
 
 namespace Mattermost {
 
@@ -15,9 +16,9 @@ class ChannelActivityTracker
 {
 public:
     struct Entry {
-        quint64 lastViewedAt = 0;
-        quint64 lastActivityAt = 0;
-        quint64 readMessageCount = 0;
+        uint64_t lastViewedAt = 0;
+        uint64_t lastActivityAt = 0;
+        uint64_t readMessageCount = 0;
         bool hasUnreadActivity = false;
         bool mentioned = false;
         bool muted = false;
@@ -26,20 +27,20 @@ public:
 
     void clear();
 
-    void setMembership(const QString& channelId, quint64 lastViewedAt,
-                       quint64 readMessageCount, bool mentioned, bool muted);
-    void synchronizeChannel(const QString& channelId, quint64 lastPostAt,
-                            quint64 totalMessageCount);
-    void recordPost(const QString& channelId, quint64 createdAt, bool ownPost,
+    void setMembership(const QString& channelId, uint64_t lastViewedAt,
+                       uint64_t readMessageCount, bool mentioned, bool muted);
+    void synchronizeChannel(const QString& channelId, uint64_t lastPostAt,
+                            uint64_t totalMessageCount);
+    void recordPost(const QString& channelId, uint64_t createdAt, bool ownPost,
                     bool threadReply, bool mentioned);
-    void recordViewed(const QString& channelId, quint64 viewedAt,
-                      quint64 totalMessageCount);
+    void recordViewed(const QString& channelId, uint64_t viewedAt,
+                      uint64_t totalMessageCount);
     void setMentioned(const QString& channelId, bool mentioned);
     void setMuted(const QString& channelId, bool muted);
 
     bool isTracked(const QString& channelId) const;
     bool isUnread(const QString& channelId) const;
-    quint64 activityTime(const QString& channelId) const;
+    uint64_t activityTime(const QString& channelId) const;
 
 private:
     QHash<QString, Entry> entries;
