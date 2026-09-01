@@ -15,7 +15,7 @@ void ChannelActivityTracker::clear()
 }
 
 void ChannelActivityTracker::setMembership(const QString& channelId, uint64_t lastViewedAt,
-                                           uint64_t readMessageCount, bool mentioned, bool muted)
+                                           uint64_t readRootMessageCount, bool mentioned, bool muted)
 {
     if (channelId.isEmpty()) {
         return;
@@ -23,14 +23,14 @@ void ChannelActivityTracker::setMembership(const QString& channelId, uint64_t la
 
     Entry& entry = entries[channelId];
     entry.lastViewedAt = std::max(entry.lastViewedAt, lastViewedAt);
-    entry.readMessageCount = std::max(entry.readMessageCount, readMessageCount);
+    entry.readRootMessageCount = std::max(entry.readRootMessageCount, readRootMessageCount);
     entry.mentioned = entry.mentioned || mentioned;
     entry.muted = muted;
     entry.tracked = true;
 }
 
 void ChannelActivityTracker::synchronizeChannel(const QString& channelId, uint64_t lastPostAt,
-                                                uint64_t totalMessageCount)
+                                                uint64_t totalRootMessageCount)
 {
     auto it = entries.find(channelId);
     if (it == entries.end() || !it->tracked) {
@@ -40,11 +40,11 @@ void ChannelActivityTracker::synchronizeChannel(const QString& channelId, uint64
     Entry& entry = it.value();
     entry.lastActivityAt = std::max(entry.lastActivityAt, lastPostAt);
 
-    // ChannelMember.msg_count is the authoritative count at the last view.
-    // Do not infer unread state from last_post_at: thread replies may advance
-    // the channel activity timestamp without making the parent channel unread.
+    // Mattermost keeps root-post counts separately from replies. Use the root
+    // count to decide whether the parent channel has unread activity, while
+    // last_post_at still makes thread replies affect Recent ordering.
     entry.hasUnreadActivity = entry.hasUnreadActivity
-        || totalMessageCount > entry.readMessageCount;
+        || totalRootMessageCount > entry.readRootMessageCount;
 }
 
 void ChannelActivityTracker::recordPost(const QString& channelId, uint64_t createdAt, bool ownPost,
@@ -75,7 +75,7 @@ void ChannelActivityTracker::recordPost(const QString& channelId, uint64_t creat
 }
 
 void ChannelActivityTracker::recordViewed(const QString& channelId, uint64_t viewedAt,
-                                          uint64_t totalMessageCount)
+                                          uint64_t totalRootMessageCount)
 {
     if (channelId.isEmpty()) {
         return;
@@ -84,7 +84,7 @@ void ChannelActivityTracker::recordViewed(const QString& channelId, uint64_t vie
     Entry& entry = entries[channelId];
     entry.tracked = true;
     entry.lastViewedAt = std::max(entry.lastViewedAt, viewedAt);
-    entry.readMessageCount = std::max(entry.readMessageCount, totalMessageCount);
+    entry.readRootMessageCount = std::max(entry.readRootMessageCount, totalRootMessageCount);
     entry.hasUnreadActivity = false;
     entry.mentioned = false;
 }
