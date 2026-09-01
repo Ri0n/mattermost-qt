@@ -25,6 +25,7 @@
 #pragma once
 
 #include <QMap>
+#include <QSet>
 #include <QTreeWidget>
 
 class QDropEvent;
@@ -106,6 +107,7 @@ private:
 	QStackedWidget*						chatAreaStackedWidget;
 	QMap<QString, QList<QTreeWidgetItem*>>	channelToItemMap;
 	QMap<QString, TeamItem*>			teamToItemMap;
+	QSet<QString>						connectedSidebarUsers;
 	Backend*							backendForSidebar;
 	bool							renderingSidebar;
 };
