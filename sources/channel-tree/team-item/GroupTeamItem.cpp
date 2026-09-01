@@ -32,9 +32,9 @@
 
 namespace Mattermost {
 
-ChannelItem* GroupTeamItem::createChannelItem (Backend& backend, ChannelItemWidget* itemWidget)
+ChannelItem* GroupTeamItem::createChannelItem (Backend& backendRef, ChannelItemWidget* itemWidget)
 {
-	return new GroupChannelItem (backend, itemWidget);
+	return new GroupChannelItem (backendRef, itemWidget);
 }
 
 void GroupTeamItem::showContextMenu (const QPoint& pos)
