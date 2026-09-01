@@ -51,9 +51,8 @@ struct SidebarTeamState {
 class SidebarService : public QObject {
     Q_OBJECT
 public:
-    explicit SidebarService(QObject* parent = nullptr);
+    static SidebarService& instance(Backend& backend);
 
-    void setBackend(Backend& backend);
     void clear();
 
     bool isChannelMuted(const BackendChannel& channel) const;
@@ -80,10 +79,12 @@ signals:
     void categoriesChanged(const QString& teamId);
 
 private:
+    explicit SidebarService(Backend& backend);
+
     QString currentUserId() const;
     QString categoriesPath(const QString& teamId) const;
 
-    Backend* backend = nullptr;
+    Backend& backend;
     HTTPConnector httpConnector;
     QSet<QString> mutedChannelIds;
     QMap<QString, SidebarTeamState> sidebarByTeam;
