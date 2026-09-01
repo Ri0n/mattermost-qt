@@ -34,6 +34,11 @@ PostEvent::PostEvent (const QJsonObject& data, const QJsonObject& broadcast)
 ,postObject (QJsonDocument::fromJson (data.value ("post").toString().toUtf8()).object())
 ,set_online (data.value("set_online").toBool())
 {
+    // Mattermost adds `mentions` to a posted websocket event only for a
+    // recipient who was actually mentioned. Keep that recipient-specific bit
+    // on the local post so notification/UI code does not need to parse text.
+    postObject.insert(QStringLiteral("_mmqt_current_user_mentioned"),
+                      !data.value(QStringLiteral("mentions")).toString().isEmpty());
 }
 
 PostEvent::~PostEvent () = default;
