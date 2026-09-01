@@ -46,7 +46,7 @@ public:
                             uint64_t totalMessageCount, uint64_t totalRootMessageCount,
                             bool hasTotalRootMessageCount, bool collapsedThreadsEnabled);
     void recordPost(const QString& channelId, uint64_t createdAt, bool ownPost,
-                    bool threadReply, bool mentioned);
+                    bool threadReply, bool mentioned, bool collapsedThreadsEnabled);
     void recordViewed(const QString& channelId, uint64_t viewedAt,
                       uint64_t totalMessageCount, uint64_t totalRootMessageCount,
                       bool hasTotalRootMessageCount);
