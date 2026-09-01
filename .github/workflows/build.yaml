@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - master
+      - feature/sidebar-categories-mute
   pull_request:
   workflow_dispatch:
 
@@ -11,6 +12,36 @@ permissions:
   contents: read
 
 jobs:
+  vendor-qsourcehighlite:
+    name: Vendor QSourceHighlite
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/sidebar-categories-mute'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: feature/sidebar-categories-mute
+          fetch-depth: 0
+
+      - name: Import pinned upstream sources
+        run: |
+          if test -f third_party/QSourceHighlite/UPSTREAM_COMMIT; then
+            exit 0
+          fi
+          upstream_commit=d78f0d4171580a18646b15425c449db3f2bb240a
+          git clone --filter=blob:none https://github.com/Waqar144/QSourceHighlite.git /tmp/QSourceHighlite
+          git -C /tmp/QSourceHighlite checkout "$upstream_commit"
+          mkdir -p third_party/QSourceHighlite
+          cp /tmp/QSourceHighlite/{LICENSE,languagedata.cpp,languagedata.h,qsourcehighliter.cpp,qsourcehighliter.h,qsourcehighliterthemes.cpp,qsourcehighliterthemes.h} third_party/QSourceHighlite/
+          printf '%s\n' "$upstream_commit" > third_party/QSourceHighlite/UPSTREAM_COMMIT
+          git add third_party/QSourceHighlite
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'Vendor QSourceHighlite'
+          git push origin HEAD:feature/sidebar-categories-mute
+
   qt6:
     name: Qt 6.10 / Ubuntu
     runs-on: ubuntu-24.04
