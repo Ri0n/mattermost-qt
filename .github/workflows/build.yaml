@@ -35,7 +35,7 @@ jobs:
           -DWARNINGS_AS_ERRORS=ON
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel 3
 
       - name: Unit tests
         run: ctest --test-dir build --output-on-failure
