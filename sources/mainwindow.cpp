@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -19,18 +19,22 @@
 
 #include "mainwindow.h"
 
-#include <QWindow>
 #include <QCloseEvent>
 #include <QMessageBox>
 #include <QSystemTrayIcon>
+#include <QTabWidget>
+#include <QVBoxLayout>
+#include <QWindow>
+
 #include "./ui_mainwindow.h"
-#include "chat-area/ChatArea.h"
+#include "SettingsWindow.h"
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
-#include "notifications/NotificationManager.h"
-#include "SettingsWindow.h"
 #include "build-config.h"
+#include "channel-tree/ChannelQuickList.h"
+#include "chat-area/ChatArea.h"
 #include "log.h"
+#include "notifications/NotificationManager.h"
 
 namespace Mattermost {
 
@@ -47,6 +51,7 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	LOG_DEBUG ("MainWindow create start");
 
 	ui->setupUi(this);
+	setupChannelTabs ();
 	ui->channelList->setChatAreaStackedWidget (ui->chatAreaStackedWidget);
 	ui->channelList->setFocus();
 
@@ -63,6 +68,16 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	}
 
 	auto& sidebar = SidebarService::instance(backend);
+	connect(&sidebar, &SidebarService::channelActivityChanged, this,
+	        [this](const QString&) { refreshChannelQuickLists(); });
+	connect(&sidebar, &SidebarService::channelActivityReset,
+	        this, &MainWindow::refreshChannelQuickLists);
+	connect(&sidebar, &SidebarService::categoriesChanged, this,
+	        [this](const QString&) { refreshChannelQuickLists(); });
+
+	recentChannels->initialize(backend, ChannelQuickList::Recent);
+	unreadChannels->initialize(backend, ChannelQuickList::Unreads);
+
 	sidebar.clear();
 	sidebar.retrieveChannelMemberships();
 
@@ -170,6 +185,45 @@ GNU Lesser General Public License for more details.<br/>
 You should have received a copy of the GNU Lesser General Public License
 along with Mattermost-QT. if not, see <a href='https://www.gnu.org/licenses/'>https://www.gnu.org/licenses/</a>.<br/>
 )");
+
+void MainWindow::setupChannelTabs ()
+{
+	ui->gridLayout_2->removeWidget(ui->channelList);
+
+	channelTabs = new QTabWidget(ui->centralwidget);
+	channelTabs->setDocumentMode(true);
+	channelTabs->setSizePolicy(ui->channelList->sizePolicy());
+	channelTabs->setStyleSheet(QStringLiteral("QTabWidget::pane { border: 0; }"));
+
+	auto* channelsPage = new QWidget(channelTabs);
+	auto* channelsLayout = new QVBoxLayout(channelsPage);
+	channelsLayout->setContentsMargins(0, 0, 0, 0);
+	channelsLayout->setSpacing(0);
+	channelsLayout->addWidget(ui->channelList);
+
+	recentChannels = new ChannelQuickList(channelTabs);
+	unreadChannels = new ChannelQuickList(channelTabs);
+
+	channelTabs->addTab(channelsPage, QStringLiteral("Channels"));
+	channelTabs->addTab(recentChannels, QStringLiteral("Recent"));
+	channelTabs->addTab(unreadChannels, QStringLiteral("Unreads"));
+	ui->gridLayout_2->addWidget(channelTabs, 1, 0);
+
+	connect(recentChannels, &ChannelQuickList::channelSelected,
+	        ui->channelList, &ChannelTree::openChannel);
+	connect(unreadChannels, &ChannelQuickList::channelSelected,
+	        ui->channelList, &ChannelTree::openChannel);
+}
+
+void MainWindow::refreshChannelQuickLists ()
+{
+	if (recentChannels) {
+		recentChannels->refresh();
+	}
+	if (unreadChannels) {
+		unreadChannels->refresh();
+	}
+}
 
 void MainWindow::createMenu ()
 {
@@ -458,6 +512,5 @@ void MainWindow::saveState ()
 }
 
 } /* namespace Mattermost */
-
 
 
