@@ -96,3 +96,22 @@ target_link_libraries(resizable-list-widget-test
 
 add_test(NAME resizable-list-widget-test COMMAND resizable-list-widget-test)
 set_tests_properties(resizable-list-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(channel-activity-tracker-test
+    ChannelActivityTrackerTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/backend/ChannelActivityTracker.cpp"
+)
+
+target_include_directories(channel-activity-tracker-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(channel-activity-tracker-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+add_test(NAME channel-activity-tracker-test COMMAND channel-activity-tracker-test)
+set_tests_properties(channel-activity-tracker-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
