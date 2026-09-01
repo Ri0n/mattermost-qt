@@ -35,6 +35,7 @@ namespace Mattermost {
 BackendPost::BackendPost (const QJsonObject& jsonObject, const Storage& storage)
 :rootPost (nullptr)
 ,isDeleted (false)
+,currentUserMentioned(jsonObject.value(QStringLiteral("_mmqt_current_user_mentioned")).toBool())
 ,has_thread(false)
 {
 	id = jsonObject.value("id").toString();
@@ -155,7 +156,7 @@ void BackendPost::addReaction (QString userName, QString emojiName)
 
 void BackendPost::removeReaction (QString userName, QString emojiName)
 {
-	EmojiID emojiId = EmojiInfo::findByName(emojiName);
+	EmojiID emojiId = EmojiInfo::findByName (emojiName);
 
 	if (!emojiId) {
 		LOG_DEBUG ("Missing emoji: " << emojiName);
