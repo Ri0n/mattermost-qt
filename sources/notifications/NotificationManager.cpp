@@ -44,22 +44,30 @@ NotificationManager::NotificationManager(QSystemTrayIcon& trayIcon, QObject* par
     }
 
     const QDBusReply<QStringList> capabilities = notifications.call(QStringLiteral("GetCapabilities"));
-    freedesktopActionsSupported = capabilities.isValid()
-        && capabilities.value().contains(QStringLiteral("actions"));
-    if (!freedesktopActionsSupported) {
+    if (!capabilities.isValid()
+        || !capabilities.value().contains(QStringLiteral("actions"))) {
         return;
     }
 
-    bus.connect(QStringLiteral("org.freedesktop.Notifications"),
-                QStringLiteral("/org/freedesktop/Notifications"),
-                QStringLiteral("org.freedesktop.Notifications"),
-                QStringLiteral("ActionInvoked"),
-                this, SLOT(onActionInvoked(uint,QString)));
+    const bool actionConnected = bus.connect(
+        QStringLiteral("org.freedesktop.Notifications"),
+        QStringLiteral("/org/freedesktop/Notifications"),
+        QStringLiteral("org.freedesktop.Notifications"),
+        QStringLiteral("ActionInvoked"),
+        this, SLOT(onActionInvoked(uint,QString)));
+    if (!actionConnected) {
+        return;
+    }
+
+    // NotificationClosed is only used for cleanup. A failure to subscribe to
+    // it must not disable exact click handling; the remaining entries are tiny
+    // and live only for this process lifetime.
     bus.connect(QStringLiteral("org.freedesktop.Notifications"),
                 QStringLiteral("/org/freedesktop/Notifications"),
                 QStringLiteral("org.freedesktop.Notifications"),
                 QStringLiteral("NotificationClosed"),
                 this, SLOT(onNotificationClosed(uint,uint)));
+    freedesktopActionsSupported = true;
 #endif
 }
 
