@@ -533,8 +533,9 @@ void ChannelTree::removeChannelFromCategory(ChannelItem* item)
 
 void ChannelTree::dropEvent(QDropEvent* event)
 {
+    const QPoint eventPosition = dropEventPosition(event);
     QTreeWidgetItem* source = currentItem();
-    QTreeWidgetItem* target = itemAt(dropEventPosition(event));
+    QTreeWidgetItem* target = itemAt(eventPosition);
     if (!source || !target || source == target) {
         event->ignore();
         return;
@@ -551,35 +552,42 @@ void ChannelTree::dropEvent(QDropEvent* event)
             return;
         }
 
-        // A category can only be reordered among sibling categories. In particular,
-        // never reinterpret a drop on a channel as a drop on that channel's parent:
-        // QTreeWidget would then use the original cursor geometry and could nest the
-        // dragged category inside another category.
-        if (targetKind == ChannelItemKind) {
+        // Categories always remain direct children of their team. Treat a drop on
+        // another category row as before/after based on the cursor's vertical half,
+        // so the user does not have to hit the tiny gap between adjacent rows. A
+        // drop on one of that category's channels means "after this category".
+        QTreeWidgetItem* anchorCategory = nullptr;
+        bool insertAfter = false;
+
+        if (targetKind == CategoryItemKind) {
+            anchorCategory = target;
+            const QRect targetRect = visualItemRect(target);
+            insertAfter = eventPosition.y() >= targetRect.center().y();
+        } else if (targetKind == ChannelItemKind) {
+            anchorCategory = target->parent();
+            insertAfter = true;
+        } else if (targetKind == TeamItemKind) {
+            if (target != sourceTeam) {
+                event->ignore();
+                return;
+            }
+        } else {
             event->ignore();
             return;
         }
 
         int insertIndex = -1;
-        if (targetKind == CategoryItemKind) {
-            if (target->parent() != sourceTeam || indicator == QAbstractItemView::OnItem) {
+        if (anchorCategory) {
+            if (anchorCategory == source || anchorCategory->parent() != sourceTeam) {
                 event->ignore();
                 return;
             }
-
-            insertIndex = sourceTeam->indexOfChild(target);
-            if (indicator == QAbstractItemView::BelowItem) {
+            insertIndex = sourceTeam->indexOfChild(anchorCategory);
+            if (insertAfter) {
                 ++insertIndex;
             }
-        } else if (targetKind == TeamItemKind) {
-            if (target != sourceTeam || indicator != QAbstractItemView::OnItem) {
-                event->ignore();
-                return;
-            }
-            insertIndex = sourceTeam->childCount();
         } else {
-            event->ignore();
-            return;
+            insertIndex = sourceTeam->childCount();
         }
 
         const int sourceIndex = sourceTeam->indexOfChild(source);
