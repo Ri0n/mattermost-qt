@@ -35,7 +35,7 @@ jobs:
           -DWARNINGS_AS_ERRORS=ON
 
       - name: Build
-        run: cmake --build build --parallel 3
+        run: cmake --build build --parallel 4
 
       - name: Unit tests
         run: ctest --test-dir build --output-on-failure
@@ -62,7 +62,7 @@ jobs:
           -DWARNINGS_AS_ERRORS=ON
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel 4
 
       - name: Unit tests
         run: ctest --test-dir build --output-on-failure
@@ -96,7 +96,90 @@ jobs:
               -DQT_6=OFF \
               -DBUILD_TESTING=ON \
               -DWARNINGS_AS_ERRORS=ON
-          RUN cmake --build build --parallel
+          RUN cmake --build build --parallel 4
           RUN ctest --test-dir build --output-on-failure
           EOF
           podman build --tag mattermost-qt-fedora -f Containerfile
+
+  qt6-windows:
+    name: Qt 6.10 / Windows
+    runs-on: windows-2025
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.3'
+          modules: 'qtwebsockets'
+          cache: true
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DQT_6=ON
+          -DBUILD_TESTING=ON
+          -DWARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Unit tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          cmake --install build --config Release --prefix package
+          windeployqt --release --no-translations --compiler-runtime package/bin/mattermost-qt.exe
+          Compress-Archive -Path package/* -DestinationPath mattermost-qt-windows-x64.zip
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: mattermost-qt-windows-x64
+          path: mattermost-qt-windows-x64.zip
+          if-no-files-found: error
+
+  ubuntu-2604-package:
+    name: Ubuntu 26.04 package
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            dpkg-dev \
+            qt6-base-dev \
+            qt6-websockets-dev
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DQT_6=ON
+          -DBUILD_TESTING=ON
+          -DWARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Build DEB
+        run: cpack --config build/CPackConfig.cmake -G DEB -B package
+
+      - name: Upload Ubuntu package
+        uses: actions/upload-artifact@v4
+        with:
+          name: mattermost-qt-ubuntu-26.04-amd64
+          path: package/*.deb
+          if-no-files-found: error
