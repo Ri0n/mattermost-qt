@@ -86,7 +86,7 @@ private:
 
 	void showContextMenu (const QPoint& pos);
 	void refreshTeamSidebar(Backend& backend, BackendTeam& team);
-	void renderTeamSidebar(Backend& backend, BackendTeam& team, TeamItem& teamItem,
+	void renderTeamSidebar(Backend& backend, TeamItem& teamItem,
 	                       const SidebarTeamState& state);
 	void clearTeamSidebar(TeamItem& teamItem);
 	QTreeWidgetItem* createCategoryItem(TeamItem& teamItem, const QString& categoryId,
@@ -95,6 +95,7 @@ private:
 	                               QTreeWidgetItem& categoryItem, BackendChannel& channel);
 	void setCategoryCollapsed(QTreeWidgetItem* item, bool collapsed);
 	void setChannelMutedVisual(const QString& channelId, bool muted);
+	void setChannelMentionedVisual(const QString& channelId, bool mentioned);
 	void syncCategoryChannels(QTreeWidgetItem* firstCategory, QTreeWidgetItem* secondCategory = nullptr);
 	void syncCategoryOrder(QTreeWidgetItem* teamItem);
 	QStringList channelIds(QTreeWidgetItem* categoryItem) const;
