@@ -26,6 +26,7 @@
 
 #include <QObject>
 #include <QTimer>
+#include <QUrl>
 #include <QtWebSockets/QWebSocket>
 
 namespace Mattermost {
@@ -47,16 +48,29 @@ signals:
 	void onDisconnect ();
 private:
 	void onNewPacket (const QString& string);
-	void doReconnect ();
+	void scheduleReconnect ();
+	void openSocket ();
+	void startHeartbeat ();
+	void stopHeartbeat ();
+	void sendPing ();
+	QUrl socketUrl () const;
 public:
 	WebSocketEventHandler	&eventHandler;
 private:
 	QWebSocket 				webSocket;
 	QString					token;
-	QTimer					pingTimer;
-	QTimer					pongTimer;
+	QUrl					endpointUrl;
+	QTimer					heartbeatTimer;
+	QTimer					reconnectTimer;
+	QString					connectionId;
+	int						responseSequence;
+	int						serverSequence;
+	int						pendingPingSequence;
+	int						reconnectAttempt;
+	bool					waitingForPong;
 	bool					hasReconnect;
+	bool					helloReceived;
+	bool					suppressReconnect;
 };
 
 } /* namespace Mattermost */
-
