@@ -29,12 +29,38 @@
 #include <QFileDialog>
 #include <QLayout>
 #include <QMenu>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPixmap>
 #include <QPointer>
 #include <QSettings>
 #include "backend/types/BackendFile.h"
 #include "backend/Backend.h"
 #include "Settings.h"
+
+namespace {
+
+QPixmap roundedPixmap(const QPixmap& source, qreal radius)
+{
+    if (source.isNull() || radius <= 0) {
+        return source;
+    }
+
+    QPixmap rounded(source.size());
+    rounded.fill(Qt::transparent);
+
+    QPainter painter(&rounded);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QPainterPath path;
+    path.addRoundedRect(QRectF(0, 0, source.width(), source.height()), radius, radius);
+    painter.setClipPath(path);
+    painter.drawPixmap(0, 0, source);
+
+    return rounded;
+}
+
+} // namespace
 
 namespace Mattermost {
 
@@ -47,30 +73,16 @@ AttachedImageFile::AttachedImageFile (Backend& backend, const BackendFile& file,
 ,backend(backend)
 {
     ui->setupUi(this);
-    ui->imageName->setText(file.name);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 
-    // The .ui file has only a designer-time geometry. Do not let that initial
-    // 400x300 rectangle leak into QListWidgetItem::sizeHint() while the image
-    // is still being downloaded. Also cap a very long filename to the same
-    // width limit used by the actual image preview.
-    QSettings settings;
-    const int maxPreviewWidth = std::max(
-        1, settings.value(DOWNLOAD_IMAGE_MAX_WIDTH, 500).toInt());
+    setToolTip(file.name);
+    ui->imagePreview->setToolTip(file.name);
     ui->imagePreview->clear();
-    ui->imagePreview->setStyleSheet(QString());
     ui->imagePreview->hide();
 
-    const int initialWidth = std::max(
-        1, std::min(maxPreviewWidth, ui->imageName->sizeHint().width()));
-    ui->imageName->setFixedWidth(initialWidth);
-    int initialHeight = ui->imageName->heightForWidth(initialWidth);
-    if (initialHeight <= 0) {
-        initialHeight = ui->imageName->sizeHint().height();
-    }
-    initialHeight = std::max(1, initialHeight);
-    ui->imageName->setFixedHeight(initialHeight);
-    setFixedSize(initialWidth, initialHeight);
+    // Do not let the designer-time 400x300 geometry participate in the list
+    // item's initial size while the image is still being downloaded.
+    setFixedSize(1, 1);
 
     const QString fileId = file.id;
     const QString fileName = file.name;
@@ -134,28 +146,19 @@ void AttachedImageFile::setPreviewPixmap(QPixmap pixmap)
             QSize(maxWidth, maxHeight), Qt::KeepAspectRatio, Qt::SmoothTransformation);
     }
 
+    pixmap = roundedPixmap(pixmap, 5.0);
+
     ui->imagePreview->setPixmap(pixmap);
     ui->imagePreview->setFixedSize(pixmap.size());
     ui->imagePreview->show();
 
-    // Keep the card exactly as wide as its actual content. In particular, do
-    // not retain the 400px designer geometry after a narrow image is loaded.
-    const int naturalNameWidth = ui->imageName->sizeHint().width();
-    const int contentWidth = std::max(pixmap.width(), std::min(maxWidth, naturalNameWidth));
-    ui->imageName->setFixedWidth(std::max(1, contentWidth));
-
-    int nameHeight = ui->imageName->heightForWidth(contentWidth);
-    if (nameHeight <= 0) {
-        nameHeight = ui->imageName->sizeHint().height();
-    }
-    nameHeight = std::max(1, nameHeight);
-    ui->imageName->setFixedHeight(nameHeight);
-
-    const QSize contentSize(std::max(1, contentWidth), nameHeight + pixmap.height());
-    setFixedSize(contentSize);
     if (layout()) {
         layout()->activate();
+        setFixedSize(layout()->sizeHint().expandedTo(QSize(1, 1)));
+    } else {
+        setFixedSize(pixmap.size().expandedTo(QSize(1, 1)));
     }
+
     updateGeometry();
     emit dimensionsChanged();
 }
