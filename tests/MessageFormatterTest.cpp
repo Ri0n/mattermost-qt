@@ -1,8 +1,12 @@
 #include <QtTest>
 
+#include <QAbstractTextDocumentLayout>
+#include <QFontMetrics>
+#include <QImage>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextFragment>
+#include <QTextLayout>
 
 #include "backend/emoji/EmojiInfo.h"
 #include "chat-area/post/MessageFormatter.h"
@@ -69,6 +73,26 @@ QString firstAnchorHref(const QTextDocument& document)
             if (fragment.isValid() && fragment.charFormat().isAnchor()) {
                 return fragment.charFormat().anchorHref();
             }
+        }
+    }
+    return {};
+}
+
+QTextBlock firstTextBlock(const QTextDocument& document)
+{
+    for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+        if (blockHasText(block)) {
+            return block;
+        }
+    }
+    return {};
+}
+
+QTextBlock firstImageBlock(const QTextDocument& document)
+{
+    for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+        if (blockHasImage(block)) {
+            return block;
         }
     }
     return {};
@@ -218,8 +242,49 @@ private slots:
         QSKIP("Qt Markdown renderer is enabled starting with Qt 6.10");
 #endif
     }
+
+    void largeMarkdownImageDoesNotInflateTextLine()
+    {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+        const QUrl imageUrl(QStringLiteral("https://example.com/large.png"));
+        const QString source = QStringLiteral("last line of text ![large image](https://example.com/large.png)");
+
+        QTextDocument rendered;
+        rendered.setHtml(MessageFormatter::formatMessageText(source));
+        rendered.addResource(QTextDocument::ImageResource, imageUrl, QImage(320, 240, QImage::Format_ARGB32));
+        rendered.setTextWidth(640);
+        rendered.documentLayout()->documentSize();
+
+        const QTextBlock textBlock = firstTextBlock(rendered);
+        const QTextBlock imageBlock = firstImageBlock(rendered);
+        QVERIFY(textBlock.isValid());
+        QVERIFY(imageBlock.isValid());
+        QVERIFY(textBlock != imageBlock);
+        QCOMPARE(textBlock.blockFormat().topMargin(), 0.0);
+        QCOMPARE(textBlock.blockFormat().bottomMargin(), 0.0);
+        QCOMPARE(imageBlock.blockFormat().topMargin(), 0.0);
+        QCOMPARE(imageBlock.blockFormat().bottomMargin(), 0.0);
+
+        const QTextLayout* textLayout = textBlock.layout();
+        QVERIFY(textLayout != nullptr);
+        QVERIFY(textLayout->lineCount() > 0);
+
+        const qreal normalLineHeight = QFontMetrics(rendered.defaultFont()).height();
+        const qreal actualLineHeight = textLayout->lineAt(0).height();
+        QVERIFY2(actualLineHeight <= normalLineHeight * 1.5,
+                 qPrintable(QStringLiteral("text line height %1, normal %2").arg(actualLineHeight).arg(normalLineHeight)));
+
+        const QRectF textRect = rendered.documentLayout()->blockBoundingRect(textBlock);
+        const QRectF imageRect = rendered.documentLayout()->blockBoundingRect(imageBlock);
+        const qreal gap = imageRect.top() - textRect.bottom();
+        QVERIFY2(gap <= normalLineHeight,
+                 qPrintable(QStringLiteral("unexpected text/image gap %1, line height %2").arg(gap).arg(normalLineHeight)));
+#else
+        QSKIP("Qt Markdown renderer is enabled starting with Qt 6.10");
+#endif
+    }
 };
 
-QTEST_APPLESS_MAIN(MessageFormatterTest)
+QTEST_MAIN(MessageFormatterTest)
 
 #include "MessageFormatterTest.moc"
