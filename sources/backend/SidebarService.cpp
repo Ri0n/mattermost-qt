@@ -7,7 +7,6 @@
 
 #include <algorithm>
 
-#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -21,6 +20,15 @@
 #include "backend/types/BackendTeam.h"
 
 namespace Mattermost {
+
+namespace {
+
+const QString channelOpenTimeCategory = QStringLiteral("channel_open_time");
+const QString channelApproximateViewTimeCategory = QStringLiteral("channel_approximate_view_time");
+const QString displaySettingsCategory = QStringLiteral("display_settings");
+const QString collapsedReplyThreadsName = QStringLiteral("collapsed_reply_threads");
+
+} // namespace
 
 SidebarCategory SidebarCategory::fromJson(const QJsonObject& object)
 {
@@ -130,9 +138,12 @@ void SidebarService::clear()
 {
     httpConnector.reset();
     mutedChannelIds.clear();
-    mentionedChannelIds.clear();
     sidebarByTeam.clear();
     activityTracker.clear();
+    collapsedThreadsConfig.clear();
+    hasCollapsedThreadsPreference = false;
+    collapsedThreadsPreference = false;
+    collapsedThreadsEnabled = false;
     emit channelActivityReset();
 }
 
@@ -159,7 +170,7 @@ bool SidebarService::isChannelMuted(const QString& channelId) const
 
 bool SidebarService::hasUnreadMention(const QString& channelId) const
 {
-    return mentionedChannelIds.contains(channelId);
+    return activityTracker.hasMention(channelId);
 }
 
 void SidebarService::setChannelMentioned(const QString& channelId, bool mentioned)
@@ -168,20 +179,14 @@ void SidebarService::setChannelMentioned(const QString& channelId, bool mentione
         return;
     }
 
-    const bool changed = mentioned
-        ? !mentionedChannelIds.contains(channelId)
-        : mentionedChannelIds.contains(channelId);
-    if (!changed) {
+    const bool wasMentioned = activityTracker.hasMention(channelId);
+    activityTracker.setMentioned(channelId, mentioned);
+    const bool isMentioned = activityTracker.hasMention(channelId);
+    if (wasMentioned == isMentioned) {
         return;
     }
 
-    if (mentioned) {
-        mentionedChannelIds.insert(channelId);
-    } else {
-        mentionedChannelIds.remove(channelId);
-    }
-    activityTracker.setMentioned(channelId, mentioned);
-    emit channelMentionedChanged(channelId, mentioned);
+    emit channelMentionedChanged(channelId, isMentioned);
     emit channelActivityChanged(channelId);
 }
 
@@ -216,9 +221,9 @@ uint64_t SidebarService::channelActivityTime(const BackendChannel& channel) cons
     return std::max(activityTracker.activityTime(channel.id), channel.last_post_at);
 }
 
-uint64_t SidebarService::channelLastViewedTime(const BackendChannel& channel) const
+uint64_t SidebarService::channelRecentTime(const BackendChannel& channel) const
 {
-    return activityTracker.lastViewedTime(channel.id);
+    return activityTracker.recentTime(channel.id);
 }
 
 void SidebarService::markChannelViewedLocally(const BackendChannel& channel)
@@ -239,7 +244,8 @@ void SidebarService::synchronizeChannelActivity()
             channel->last_post_at,
             static_cast<uint64_t>(std::max(0, channel->total_msg_count)),
             static_cast<uint64_t>(std::max(0, channel->total_msg_count_root)),
-            channel->has_total_msg_count_root);
+            channel->has_total_msg_count_root,
+            collapsedThreadsEnabled);
     }
     emit channelActivityReset();
 }
@@ -253,16 +259,19 @@ void SidebarService::recordChannelPost(BackendChannel& channel, const BackendPos
 
 void SidebarService::recordChannelViewed(const BackendChannel& channel)
 {
-    const uint64_t viewedAt = std::max<uint64_t>(
-        static_cast<uint64_t>(QDateTime::currentMSecsSinceEpoch()), channel.last_post_at);
+    const bool wasMentioned = activityTracker.hasMention(channel.id);
+
+    // Mattermost's server-side last_viewed_at is tied to channel content, not
+    // wall-clock click history. Reopening an already-read channel therefore
+    // leaves its Recent ordering unchanged until newer content is consumed.
     activityTracker.recordViewed(
         channel.id,
-        viewedAt,
+        channel.last_post_at,
         static_cast<uint64_t>(std::max(0, channel.total_msg_count)),
         static_cast<uint64_t>(std::max(0, channel.total_msg_count_root)),
         channel.has_total_msg_count_root);
 
-    if (mentionedChannelIds.remove(channel.id)) {
+    if (wasMentioned) {
         emit channelMentionedChanged(channel.id, false);
     }
     emit channelActivityChanged(channel.id);
@@ -280,31 +289,32 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
     NetworkRequest request(QStringLiteral("users/") + currentUserId() + QStringLiteral("/channel_members"));
     httpConnector.get(request, HttpResponseCallback([this, callback](const QJsonDocument& doc) {
         mutedChannelIds.clear();
-        mentionedChannelIds.clear();
 
-        // clear() is called before this request starts. Do not clear the tracker
-        // here: a websocket post may have arrived while the membership request
-        // was in flight, and setMembership() deliberately preserves that runtime
-        // activity while adding the authoritative server read state.
+        // Do not clear the tracker here. A websocket post may have arrived while
+        // this membership request was in flight. Server-derived and runtime
+        // unread state are kept separately so this response can refresh one
+        // without destroying the other.
         for (const auto& value : doc.array()) {
             const auto object = value.toObject();
             const QString channelId = object.value(QStringLiteral("channel_id")).toString();
             const auto notifyProps = object.value(QStringLiteral("notify_props")).toObject();
             const bool muted = notifyProps.value(QStringLiteral("mark_unread")).toString()
                 == QStringLiteral("mention");
-            const bool mentioned = object.value(QStringLiteral("mention_count")).toInt() > 0;
             const uint64_t readMessageCount = object.value(QStringLiteral("msg_count"))
                 .toVariant().toULongLong();
             const bool hasReadRootMessageCount = object.contains(QStringLiteral("msg_count_root"));
             const uint64_t readRootMessageCount = hasReadRootMessageCount
                 ? object.value(QStringLiteral("msg_count_root")).toVariant().toULongLong()
                 : 0;
+            const uint64_t mentionCount = object.value(QStringLiteral("mention_count"))
+                .toVariant().toULongLong();
+            const bool hasRootMentionCount = object.contains(QStringLiteral("mention_count_root"));
+            const uint64_t rootMentionCount = hasRootMentionCount
+                ? object.value(QStringLiteral("mention_count_root")).toVariant().toULongLong()
+                : 0;
 
             if (muted) {
                 mutedChannelIds.insert(channelId);
-            }
-            if (mentioned) {
-                mentionedChannelIds.insert(channelId);
             }
 
             activityTracker.setMembership(
@@ -313,7 +323,9 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
                 readMessageCount,
                 readRootMessageCount,
                 hasReadRootMessageCount,
-                mentioned,
+                mentionCount,
+                rootMentionCount,
+                hasRootMentionCount,
                 muted);
         }
 
@@ -322,6 +334,92 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
             callback();
         }
     }));
+}
+
+void SidebarService::retrieveChannelPreferences(std::function<void()> callback)
+{
+    if (currentUserId().isEmpty()) {
+        if (callback) {
+            callback();
+        }
+        return;
+    }
+
+    NetworkRequest request(QStringLiteral("users/") + currentUserId() + QStringLiteral("/preferences"));
+    httpConnector.get(request, HttpResponseCallback([this, callback](const QJsonDocument& doc) {
+        QMap<QString, uint64_t> approximateViewTimes;
+        QMap<QString, uint64_t> openTimes;
+        hasCollapsedThreadsPreference = false;
+
+        for (const auto& value : doc.array()) {
+            const QJsonObject object = value.toObject();
+            const QString category = object.value(QStringLiteral("category")).toString();
+            const QString name = object.value(QStringLiteral("name")).toString();
+            const QString preferenceValue = object.value(QStringLiteral("value")).toString();
+
+            if (category == channelApproximateViewTimeCategory) {
+                approximateViewTimes.insert(name, preferenceValue.toULongLong());
+            } else if (category == channelOpenTimeCategory) {
+                openTimes.insert(name, preferenceValue.toULongLong());
+            } else if (category == displaySettingsCategory && name == collapsedReplyThreadsName) {
+                hasCollapsedThreadsPreference = true;
+                collapsedThreadsPreference = preferenceValue == QStringLiteral("on");
+            }
+        }
+
+        QSet<QString> channelIds;
+        for (auto it = approximateViewTimes.cbegin(); it != approximateViewTimes.cend(); ++it) {
+            channelIds.insert(it.key());
+        }
+        for (auto it = openTimes.cbegin(); it != openTimes.cend(); ++it) {
+            channelIds.insert(it.key());
+        }
+        for (const QString& channelId : channelIds) {
+            activityTracker.setRecencyTimes(
+                channelId,
+                approximateViewTimes.value(channelId, 0),
+                openTimes.value(channelId, 0));
+        }
+
+        updateCollapsedThreadsMode();
+        emit channelActivityReset();
+        if (callback) {
+            callback();
+        }
+    }));
+}
+
+void SidebarService::retrieveClientConfig(std::function<void()> callback)
+{
+    NetworkRequest request(QStringLiteral("config/client?format=old"));
+    httpConnector.get(request, HttpResponseCallback([this, callback](const QJsonDocument& doc) {
+        collapsedThreadsConfig = doc.object().value(QStringLiteral("CollapsedThreads")).toString();
+        updateCollapsedThreadsMode();
+        if (callback) {
+            callback();
+        }
+    }));
+}
+
+void SidebarService::updateCollapsedThreadsMode()
+{
+    bool enabled = false;
+    if (collapsedThreadsConfig == QStringLiteral("always_on")) {
+        enabled = true;
+    } else if (collapsedThreadsConfig == QStringLiteral("disabled")) {
+        enabled = false;
+    } else if (hasCollapsedThreadsPreference) {
+        enabled = collapsedThreadsPreference;
+    } else {
+        enabled = collapsedThreadsConfig == QStringLiteral("default_on");
+    }
+
+    if (collapsedThreadsEnabled == enabled) {
+        return;
+    }
+
+    collapsedThreadsEnabled = enabled;
+    synchronizeChannelActivity();
 }
 
 void SidebarService::setChannelMuted(BackendChannel& channel, bool muted,
