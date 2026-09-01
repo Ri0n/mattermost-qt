@@ -27,14 +27,13 @@
 #include <QDropEvent>
 #include <QHeaderView>
 #include <QStackedWidget>
-#include <QTimer>
 
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
 #include "backend/types/BackendTeam.h"
 #include "chat-area/ChatArea.h"
 #include "channel-tree/ChannelItem.h"
-#include "channel-tree/ChannelItemWidget.h"
+#include "channel-tree/ChannelItemDelegate.h"
 #include "channel-tree/channel-item/DirectChannelItem.h"
 #include "channel-tree/team-item/GroupTeamItem.h"
 #include "log.h"
@@ -113,6 +112,8 @@ ChannelTree::ChannelTree (QWidget* parent)
         }
     });
 
+    setItemDelegate(new ChannelItemDelegate(this));
+    setMouseTracking(true);
     setDragEnabled(true);
     setAcceptDrops(true);
     viewport()->setAcceptDrops(true);
@@ -223,16 +224,6 @@ void ChannelTree::renderTeamSidebar(Backend& backend, TeamItem& teamItem,
 
     teamItem.setExpanded(true);
     renderingSidebar = false;
-
-    // setItemWidget() can leave QTreeView's cached row geometry stale while a
-    // whole sidebar is rebuilt. A vertical window resize happens to repair it,
-    // which used to make channel rows occasionally overlap by a few pixels.
-    // Re-run the layout after all embedded widgets have been polished.
-    QTimer::singleShot(0, this, [this] {
-        doItemsLayout();
-        updateGeometries();
-        viewport()->update();
-    });
 }
 
 void ChannelTree::clearTeamSidebar(TeamItem& teamItem)
@@ -277,15 +268,11 @@ QTreeWidgetItem* ChannelTree::createCategoryItem(TeamItem& teamItem, const QStri
 ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem,
                                             QTreeWidgetItem& categoryItem, BackendChannel& channel)
 {
-    auto* itemWidget = new ChannelItemWidget(this);
-    itemWidget->setLabel(channel.display_name);
-    itemWidget->ensurePolished();
-
     ChannelItem* item = nullptr;
     if (channel.type == BackendChannel::directChannel || channel.type == BackendChannel::groupChannel) {
-        item = new DirectChannelItem(backend, itemWidget);
+        item = new DirectChannelItem(backend, nullptr);
     } else {
-        item = teamItem.createChannelItem(backend, itemWidget);
+        item = teamItem.createChannelItem(backend, nullptr);
     }
 
     categoryItem.addChild(item);
@@ -293,15 +280,57 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
     item->setData(0, ItemIdRole, channel.id);
     item->setData(0, ItemTeamIdRole, teamItem.teamId);
     item->setFlags((item->flags() | Qt::ItemIsDragEnabled) & ~Qt::ItemIsDropEnabled);
+    item->setLabel(channel.display_name);
 
-    const int rowHeight = qMax(30, qMax(itemWidget->sizeHint().height(),
-                                        itemWidget->minimumSizeHint().height()));
-    item->setSizeHint(0, QSize(0, rowHeight));
+    if (channel.type == BackendChannel::directChannel) {
+        BackendUser* user = backend.getStorage().getUserById(channel.name);
+        if (user) {
+            item->setStatus(user->status);
+            if (!user->avatar.isNull()) {
+                item->setIcon(QIcon(user->avatar));
+            }
+
+            if (!connectedSidebarUsers.contains(user->id)) {
+                connectedSidebarUsers.insert(user->id);
+
+                connect(user, &BackendUser::onStatusChanged, this, [this, user] {
+                    if (!backendForSidebar) {
+                        return;
+                    }
+                    BackendChannel* directChannel = backendForSidebar->getStorage().getDirectChannelByUserId(user->id);
+                    if (!directChannel) {
+                        return;
+                    }
+                    const auto items = channelToItemMap.value(directChannel->id);
+                    for (QTreeWidgetItem* row : items) {
+                        if (row && row->data(0, ItemKindRole).toInt() == ChannelItemKind) {
+                            static_cast<ChannelItem*>(row)->setStatus(user->status);
+                        }
+                    }
+                });
+
+                connect(user, &BackendUser::onAvatarChanged, this, [this, user] {
+                    if (!backendForSidebar) {
+                        return;
+                    }
+                    BackendChannel* directChannel = backendForSidebar->getStorage().getDirectChannelByUserId(user->id);
+                    if (!directChannel) {
+                        return;
+                    }
+                    const auto items = channelToItemMap.value(directChannel->id);
+                    for (QTreeWidgetItem* row : items) {
+                        if (row && row->data(0, ItemKindRole).toInt() == ChannelItemKind) {
+                            static_cast<ChannelItem*>(row)->setIcon(QIcon(user->avatar));
+                        }
+                    }
+                });
+            }
+        }
+    }
 
     ChatArea* chatArea = new ChatArea(backend, channel, item, chatAreaStackedWidget, false);
     chatAreaStackedWidget->addWidget(chatArea);
     item->setData(0, Qt::UserRole, QVariant::fromValue(chatArea));
-    setItemWidget(item, 0, itemWidget);
 
     QObject::connect(&channel, &BackendChannel::onLeave, chatArea,
                      [this, &channel, item, chatArea] {
