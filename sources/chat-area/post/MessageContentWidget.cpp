@@ -377,9 +377,12 @@ void MessageContentWidget::addRichText(const QString& html)
 
     auto* richText = new WrappedRichText(this);
     richText->setContentHtml(html);
-    connect(richText, &QTextBrowser::highlighted, this, [this](const QUrl& url) {
-        emit linkHovered(url.toString());
-    });
+    connect(richText,
+            QOverload<const QUrl&>::of(&QTextBrowser::highlighted),
+            this,
+            [this](const QUrl& url) {
+                emit linkHovered(url.toString());
+            });
     contentLayout->addWidget(richText);
 }
 

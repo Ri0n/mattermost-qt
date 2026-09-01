@@ -22,112 +22,124 @@
 
 #include <QDebug>
 #include <QFileDialog>
-#include <QSettings>
 #include <QMenu>
-#include "backend/types/BackendFile.h"
+#include <QPointer>
+#include <QSettings>
+
 #include "backend/Backend.h"
+#include "backend/types/BackendFile.h"
 #include "Settings.h"
 
 namespace Mattermost {
 
-std::map <const QWidget*, FilePreview*> AttachedImageFile::currentlyOpenFiles;
+std::map<const QWidget*, FilePreview*> AttachedImageFile::currentlyOpenFiles;
 
-AttachedImageFile::AttachedImageFile (Backend& backend, const BackendFile& file, const QString& authorName, QWidget *parent)
-:QWidget(parent)
-,ui(new Ui::AttachedImageFile)
-,file(file)
-,backend(backend)
+AttachedImageFile::AttachedImageFile(Backend& backend, const BackendFile& file, const QString&, QWidget* parent)
+    : QWidget(parent)
+    , ui(new Ui::AttachedImageFile)
+    , file(file)
+    , backend(backend)
 {
     ui->setupUi(this);
+    ui->imageName->setText(file.name);
 
-    ui->imageName->setText (file.name);
+    const QString fileId = file.id;
+    const QString fileName = file.name;
+    QPointer<AttachedImageFile> self(this);
 
-    backend.retrieveFile (file.id, [&file, authorName, this] (const QByteArray& fileContents){
+    backend.retrieveFile(fileId, [self](const QByteArray& fileContents) {
+        if (!self) {
+            return;
+        }
 
-		QSettings settings;
+        QSettings settings;
+        const int maxWidth = settings.value(DOWNLOAD_IMAGE_MAX_WIDTH, 500).toInt();
+        const int maxHeight = settings.value(DOWNLOAD_IMAGE_MAX_HEIGHT, 500).toInt();
 
-		int maxWidth = settings.value(DOWNLOAD_IMAGE_MAX_WIDTH, 500).toInt();
-		int maxHeight = settings.value(DOWNLOAD_IMAGE_MAX_HEIGHT, 500).toInt();
+        QPixmap pixmap;
+        pixmap.loadFromData(fileContents);
+        if (pixmap.width() > maxWidth) {
+            pixmap = pixmap.scaledToWidth(maxWidth, Qt::SmoothTransformation);
+        }
+        if (pixmap.height() > maxHeight) {
+            pixmap = pixmap.scaledToHeight(maxHeight, Qt::SmoothTransformation);
+        }
 
-		QPixmap pixmap;
-		pixmap.loadFromData (fileContents);
-		if (pixmap.width() > maxWidth) {
-			pixmap = pixmap.scaledToWidth (maxWidth, Qt::SmoothTransformation);
-		}
+        self->ui->imagePreview->setPixmap(pixmap);
+        self->ui->imagePreview->adjustSize();
+        self->adjustSize();
+        emit self->dimensionsChanged();
+    });
 
-		if (pixmap.height() > maxHeight) {
-			pixmap = pixmap.scaledToHeight (maxHeight, Qt::SmoothTransformation);
-		}
+    connect(this, &QWidget::customContextMenuRequested, this,
+            [this, fileId, fileName](const QPoint& pos) {
+        QMenu menu(this);
 
-		ui->imagePreview->setPixmap (pixmap);
-		ui->imagePreview->adjustSize();
+        menu.addAction("Save image", this, [this, fileId, fileName] {
+            QSettings settings;
+            const QDir downloadDir = settings.value(DOWNLOAD_LOCATION, QDir::currentPath()).toString();
+            const QString saveFileDestination = QFileDialog::getSaveFileName(
+                this, "Save image as... - Mattermost", downloadDir.filePath(fileName));
 
-		adjustSize();
+            if (saveFileDestination.isEmpty()) {
+                return;
+            }
 
-		emit dimensionsChanged ();
-		//parentWidget()->adjustSize();
-	});
+            backend.retrieveFile(fileId, [saveFileDestination](const QByteArray& fileContents) {
+                QFile destFile(saveFileDestination);
+                if (!destFile.open(QIODevice::WriteOnly)) {
+                    qWarning() << "Cannot save image to" << saveFileDestination << ":" << destFile.errorString();
+                    return;
+                }
+                destFile.write(fileContents);
+            });
+        });
 
-	connect (this, &QWidget::customContextMenuRequested, [this, &backend, &file] (const QPoint& pos) {
-		QMenu menu (this);
-
-		menu.addAction("Save image", [this, &backend, &file] {
-			QSettings settings;
-			QDir downloadDir = settings.value(DOWNLOAD_LOCATION, QDir::currentPath()).toString();
-			QString saveFileDestination = QFileDialog::getSaveFileName (this, "Save image as... - Mattermost", downloadDir.filePath(file.name));
-
-			//the user has pressed the cancel button
-			if (saveFileDestination.isEmpty()) {
-				return;
-			}
-
-			backend.retrieveFile (file.id, [saveFileDestination] (const QByteArray& fileContents) {
-				QFile destFile (saveFileDestination);
-				if (!destFile.open (QIODevice::WriteOnly)) {
-					qWarning() << "Cannot save image to" << saveFileDestination << ":" << destFile.errorString();
-					return;
-				}
-				destFile.write (fileContents);
-				destFile.close ();
-			});
-
-		});
-
-		menu.exec (mapToGlobal(pos) + QPoint (10, 0));
-	});
+        menu.exec(mapToGlobal(pos) + QPoint(10, 0));
+    });
 }
 
 AttachedImageFile::~AttachedImageFile()
 {
+    currentlyOpenFiles.erase(this);
     delete ui;
 }
 
-void AttachedImageFile::mouseReleaseEvent (QMouseEvent*)
+void AttachedImageFile::mouseReleaseEvent(QMouseEvent*)
 {
-	qDebug() << "mouseRelease";
-	backend.retrieveFile (file.id, [this] (const QByteArray& fileContents) {
-				auto openFile = currentlyOpenFiles.find (this);
-				FilePreview * filePreview;
-				/*
-				 * If the file's Preview window is currently open, show it.
-	 			* Otherwise, open a new Preview eindow
-				 */
-				FilePreviewData filePreviewData{fileContents, "",  ""};
-				if (openFile == currentlyOpenFiles.end()) {
-				auto it = currentlyOpenFiles.emplace (this, new FilePreview (filePreviewData, nullptr));
-						filePreview = it.first->second;
-						filePreview->setAttribute (Qt::WA_DeleteOnClose);
-						filePreview->show ();
+    qDebug() << "mouseRelease";
 
-						connect (filePreview, &QDialog::rejected, [this] {
-						qDebug() << "Rejected";
-						currentlyOpenFiles.erase (this);
-					});
-				} else {
-					filePreview = openFile->second;
-					filePreview->raise ();
-				}
-			});
+    const QString fileId = file.id;
+    QPointer<AttachedImageFile> self(this);
+    backend.retrieveFile(fileId, [self](const QByteArray& fileContents) {
+        if (!self) {
+            return;
+        }
+
+        const QWidget* const key = self.data();
+        auto openFile = currentlyOpenFiles.find(key);
+        FilePreview* filePreview = nullptr;
+
+        if (openFile == currentlyOpenFiles.end()) {
+            FilePreviewData previewData { fileContents, "", "" };
+            filePreview = new FilePreview(previewData, nullptr);
+            currentlyOpenFiles.emplace(key, filePreview);
+            filePreview->setAttribute(Qt::WA_DeleteOnClose);
+            filePreview->show();
+
+            connect(filePreview, &QDialog::rejected, filePreview, [key, filePreview] {
+                qDebug() << "Rejected";
+                auto it = AttachedImageFile::currentlyOpenFiles.find(key);
+                if (it != AttachedImageFile::currentlyOpenFiles.end() && it->second == filePreview) {
+                    AttachedImageFile::currentlyOpenFiles.erase(it);
+                }
+            });
+        } else {
+            filePreview = openFile->second;
+            filePreview->raise();
+            filePreview->activateWindow();
+        }
+    });
 }
 
 } /* namespace Mattermost */

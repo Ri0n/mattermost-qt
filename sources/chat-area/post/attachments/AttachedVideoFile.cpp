@@ -22,30 +22,31 @@
 #if BUILD_MULTIMEDIA
 
 #include "AttachedVideoFile.h"
+
 #include <QBuffer>
+#include <QPointer>
+
 #include "ui_AttachedVideoFile.h"
-#include "backend/types/BackendFile.h"
 #include "backend/Backend.h"
+#include "backend/types/BackendFile.h"
 
 namespace Mattermost {
 
-AttachedVideoFile::AttachedVideoFile (Backend& backend, BackendFile& file, QWidget *parent)
-:QWidget (parent)
-,ui (new Ui::AttachedVideoFile)
-,backend (backend)
-,file (file)
-,init (true)
+AttachedVideoFile::AttachedVideoFile(Backend& backend, BackendFile& file, QWidget* parent)
+    : QWidget(parent)
+    , ui(new Ui::AttachedVideoFile)
+    , backend(backend)
+    , file(file)
+    , init(true)
 {
     ui->setupUi(this);
-    videoWidget = new QVideoWidget (parent);
-    mediaPlayer = new QMediaPlayer ();
+    videoWidget = new QVideoWidget(parent);
+    mediaPlayer = new QMediaPlayer();
 
-	ui->videoName->setText (file.name);
-	ui->verticalLayout->addWidget (videoWidget);
-	mediaPlayer->setVideoOutput (videoWidget);
-	videoWidget->show ();
-
-	//sudo apt install gstreamer1.0-libav
+    ui->videoName->setText(file.name);
+    ui->verticalLayout->addWidget(videoWidget);
+    mediaPlayer->setVideoOutput(videoWidget);
+    videoWidget->show();
 }
 
 AttachedVideoFile::~AttachedVideoFile()
@@ -53,18 +54,24 @@ AttachedVideoFile::~AttachedVideoFile()
     delete ui;
 }
 
-void AttachedVideoFile::mousePressEvent (QMouseEvent* event)
+void AttachedVideoFile::mousePressEvent(QMouseEvent*)
 {
-	backend.retrieveFile (file.id, [this] (const QByteArray& data) {
-		qDebug() << "=====================PLAY VIDEO!!==============";
-		QByteArray* fileContentsCopy = new QByteArray (data);
-		QBuffer* mediaStream = new QBuffer (fileContentsCopy);
-		mediaStream->open(QIODevice::ReadOnly);
-		mediaPlayer->setMedia (QMediaContent(), mediaStream);
-		mediaPlayer->play();
-	});
+    const QString fileId = file.id;
+    QPointer<AttachedVideoFile> self(this);
+    backend.retrieveFile(fileId, [self](const QByteArray& data) {
+        if (!self) {
+            return;
+        }
+
+        qDebug() << "=====================PLAY VIDEO!!==============";
+        QByteArray* fileContentsCopy = new QByteArray(data);
+        QBuffer* mediaStream = new QBuffer(fileContentsCopy);
+        mediaStream->open(QIODevice::ReadOnly);
+        self->mediaPlayer->setMedia(QMediaContent(), mediaStream);
+        self->mediaPlayer->play();
+    });
 }
 
 } /* namespace Mattermost */
 
-#endif //BUILD_MULTIMEDIA
+#endif // BUILD_MULTIMEDIA
