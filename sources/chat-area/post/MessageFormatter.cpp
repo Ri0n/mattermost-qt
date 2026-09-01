@@ -17,6 +17,7 @@
 namespace Mattermost {
 namespace MessageFormatter {
 
+#if QT_VERSION < QT_VERSION_CHECK(6, 10, 0)
 static void replaceEmojis(QString& text)
 {
     int emojiStart = 0;
@@ -53,6 +54,7 @@ static void replaceEmojis(QString& text)
         emojiEnd = emojiStart + emoji.unicodeString.size();
     } while (emojiStart != -1);
 }
+#endif
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
 namespace {
@@ -100,8 +102,8 @@ void replaceEmojisInDocument(QTextDocument& document)
             }
 
             replacements.push_back(EmojiReplacement {
-                block.position() + match.capturedStart(0),
-                match.capturedLength(0),
+                block.position() + static_cast<int>(match.capturedStart(0)),
+                static_cast<int>(match.capturedLength(0)),
                 EmojiInfo::getEmoji(emojiID),
             });
         }
@@ -236,8 +238,8 @@ void buildMarkdownDocument(QTextDocument& document, const QString& text)
     // quotes or ampersands before parsing: entities inside code spans are not
     // decoded by CommonMark, which used to turn a literal `"` into &quot;.
     // Raw HTML is disabled at the parser level instead.
-    const QTextDocument::MarkdownFeatures features =
-        QTextDocument::MarkdownDialectGitHub | QTextDocument::MarkdownNoHTML;
+    QTextDocument::MarkdownFeatures features(QTextDocument::MarkdownDialectGitHub);
+    features.setFlag(QTextDocument::MarkdownNoHTML);
     document.setMarkdown(text, features);
 
     // Emoji are applied after Markdown parsing. Custom emoji are inserted as
