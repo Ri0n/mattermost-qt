@@ -1,6 +1,6 @@
 /**
  * @file SidebarService.cpp
- * @brief Mattermost sidebar categories and per-channel mute state.
+ * @brief Mattermost sidebar categories and per-channel notification state.
  */
 
 #include "SidebarService.h"
@@ -11,6 +11,7 @@
 
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
+#include "backend/QByteArrayCreator.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendTeam.h"
 
@@ -113,6 +114,7 @@ void SidebarService::clear()
 {
     httpConnector.reset();
     mutedChannelIds.clear();
+    mentionedChannelIds.clear();
     sidebarByTeam.clear();
 }
 
@@ -137,6 +139,32 @@ bool SidebarService::isChannelMuted(const QString& channelId) const
     return mutedChannelIds.contains(channelId);
 }
 
+bool SidebarService::hasUnreadMention(const QString& channelId) const
+{
+    return mentionedChannelIds.contains(channelId);
+}
+
+void SidebarService::setChannelMentioned(const QString& channelId, bool mentioned)
+{
+    if (channelId.isEmpty()) {
+        return;
+    }
+
+    const bool changed = mentioned
+        ? !mentionedChannelIds.contains(channelId)
+        : mentionedChannelIds.contains(channelId);
+    if (!changed) {
+        return;
+    }
+
+    if (mentioned) {
+        mentionedChannelIds.insert(channelId);
+    } else {
+        mentionedChannelIds.remove(channelId);
+    }
+    emit channelMentionedChanged(channelId, mentioned);
+}
+
 void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
 {
     if (currentUserId().isEmpty()) {
@@ -149,11 +177,16 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
     NetworkRequest request(QStringLiteral("users/") + currentUserId() + QStringLiteral("/channel_members"));
     httpConnector.get(request, HttpResponseCallback([this, callback](const QJsonDocument& doc) {
         mutedChannelIds.clear();
+        mentionedChannelIds.clear();
         for (const auto& value : doc.array()) {
             const auto object = value.toObject();
+            const QString channelId = object.value(QStringLiteral("channel_id")).toString();
             const auto notifyProps = object.value(QStringLiteral("notify_props")).toObject();
             if (notifyProps.value(QStringLiteral("mark_unread")).toString() == QStringLiteral("mention")) {
-                mutedChannelIds.insert(object.value(QStringLiteral("channel_id")).toString());
+                mutedChannelIds.insert(channelId);
+            }
+            if (object.value(QStringLiteral("mention_count")).toInt() > 0) {
+                mentionedChannelIds.insert(channelId);
             }
         }
         if (callback) {
@@ -178,7 +211,8 @@ void SidebarService::setChannelMuted(BackendChannel& channel, bool muted,
         {QStringLiteral("mark_unread"), muted ? QStringLiteral("mention") : QStringLiteral("all")},
     };
 
-    httpConnector.put(request, props, HttpResponseCallback([this, channelId = channel.id, muted, callback](const QJsonDocument&) {
+    httpConnector.put(request, QByteArrayCreator(props),
+                      HttpResponseCallback([this, channelId = channel.id, muted, callback](const QJsonDocument&) {
         if (muted) {
             mutedChannelIds.insert(channelId);
         } else {
@@ -237,7 +271,8 @@ void SidebarService::updateCategory(const SidebarCategory& category,
                                     std::function<void(const SidebarCategory&)> callback)
 {
     NetworkRequest request(categoriesPath(category.teamId) + QLatin1Char('/') + category.id);
-    httpConnector.put(request, category.toJson(), HttpResponseCallback([this, teamId = category.teamId, callback](const QJsonDocument& doc) {
+    httpConnector.put(request, QByteArrayCreator(category.toJson()),
+                      HttpResponseCallback([this, teamId = category.teamId, callback](const QJsonDocument& doc) {
         SidebarCategory updated = SidebarCategory::fromJson(doc.object());
         sidebarByTeam[teamId].categories.insert(updated.id, updated);
         emit categoriesChanged(teamId);
@@ -256,7 +291,8 @@ void SidebarService::updateCategories(const QString& teamId, const QVector<Sideb
     }
 
     NetworkRequest request(categoriesPath(teamId));
-    httpConnector.put(request, payload, HttpResponseCallback([this, teamId, callback](const QJsonDocument& doc) {
+    httpConnector.put(request, QByteArrayCreator(payload),
+                      HttpResponseCallback([this, teamId, callback](const QJsonDocument& doc) {
         for (const auto& value : doc.array()) {
             SidebarCategory updated = SidebarCategory::fromJson(value.toObject());
             sidebarByTeam[teamId].categories.insert(updated.id, std::move(updated));
@@ -277,7 +313,8 @@ void SidebarService::updateCategoryOrder(const QString& teamId, const QStringLis
     }
 
     NetworkRequest request(categoriesPath(teamId) + QStringLiteral("/order"));
-    httpConnector.put(request, payload, HttpResponseCallback([this, teamId, callback](const QJsonDocument& doc) {
+    httpConnector.put(request, QByteArrayCreator(payload),
+                      HttpResponseCallback([this, teamId, callback](const QJsonDocument& doc) {
         QStringList updatedOrder;
         for (const auto& value : doc.array()) {
             updatedOrder.push_back(value.toString());
