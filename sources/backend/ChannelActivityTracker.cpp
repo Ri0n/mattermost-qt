@@ -16,7 +16,9 @@ void ChannelActivityTracker::clear()
 
 void ChannelActivityTracker::setMembership(const QString& channelId, uint64_t lastViewedAt,
                                            uint64_t readMessageCount, uint64_t readRootMessageCount,
-                                           bool hasReadRootMessageCount, bool mentioned, bool muted)
+                                           bool hasReadRootMessageCount, uint64_t mentionCount,
+                                           uint64_t rootMentionCount, bool hasRootMentionCount,
+                                           bool muted)
 {
     if (channelId.isEmpty()) {
         return;
@@ -29,14 +31,19 @@ void ChannelActivityTracker::setMembership(const QString& channelId, uint64_t la
         entry.readRootMessageCount = std::max(entry.readRootMessageCount, readRootMessageCount);
         entry.hasReadRootMessageCount = true;
     }
-    entry.mentioned = entry.mentioned || mentioned;
+
+    entry.mentionCount = mentionCount;
+    entry.rootMentionCount = rootMentionCount;
+    entry.hasRootMentionCount = hasRootMentionCount;
     entry.muted = muted;
     entry.tracked = true;
 }
 
 void ChannelActivityTracker::synchronizeChannel(const QString& channelId, uint64_t lastPostAt,
-                                                uint64_t totalMessageCount, uint64_t totalRootMessageCount,
-                                                bool hasTotalRootMessageCount)
+                                                uint64_t totalMessageCount,
+                                                uint64_t totalRootMessageCount,
+                                                bool hasTotalRootMessageCount,
+                                                bool collapsedThreadsEnabled)
 {
     auto it = entries.find(channelId);
     if (it == entries.end() || !it->tracked) {
@@ -46,20 +53,16 @@ void ChannelActivityTracker::synchronizeChannel(const QString& channelId, uint64
     Entry& entry = it.value();
     entry.lastActivityAt = std::max(entry.lastActivityAt, lastPostAt);
 
-    // Mattermost compares counters from the same domain. Root counters are only
-    // usable when both the membership and the channel response provide them;
-    // otherwise fall back to the ordinary total/msg_count pair. Mixing a root
-    // membership counter with a non-root channel total creates false unreads on
-    // servers that only expose one side of the CRT fields.
-    const bool useRootCounts = entry.hasReadRootMessageCount && hasTotalRootMessageCount;
+    const bool useRootCounts = collapsedThreadsEnabled
+        && entry.hasReadRootMessageCount
+        && hasTotalRootMessageCount;
     const uint64_t readCount = useRootCounts ? entry.readRootMessageCount : entry.readMessageCount;
     const uint64_t totalCount = useRootCounts ? totalRootMessageCount : totalMessageCount;
 
-    // The timestamp guard suppresses stale/inconsistent counters after a view.
-    // A genuinely unread root post must also be newer than last_viewed_at.
-    const bool unreadByCount = totalCount > readCount;
-    const bool unreadByTime = lastPostAt > entry.lastViewedAt;
-    entry.hasUnreadActivity = entry.hasUnreadActivity || (unreadByCount && unreadByTime);
+    entry.serverUnreadActivity = totalCount > readCount;
+    entry.serverMentioned = collapsedThreadsEnabled && entry.hasRootMentionCount
+        ? entry.rootMentionCount > 0
+        : entry.mentionCount > 0;
 }
 
 void ChannelActivityTracker::recordPost(const QString& channelId, uint64_t createdAt, bool ownPost,
@@ -74,23 +77,24 @@ void ChannelActivityTracker::recordPost(const QString& channelId, uint64_t creat
     entry.lastActivityAt = std::max(entry.lastActivityAt, createdAt);
 
     if (mentioned) {
-        entry.mentioned = true;
+        entry.runtimeMentioned = true;
     }
 
     if (ownPost) {
         return;
     }
 
-    // Thread replies are not rendered in the parent channel. Match the existing
-    // notification policy and only make the parent conversation require
-    // attention when such a reply explicitly mentions the current user.
+    // Collapsed Reply Threads removes ordinary thread replies from the parent
+    // channel unread count. Until the next authoritative membership sync, only
+    // an explicit mention makes such a reply require attention here.
     if (!threadReply || mentioned) {
-        entry.hasUnreadActivity = true;
+        entry.runtimeUnreadActivity = true;
     }
 }
 
 void ChannelActivityTracker::recordViewed(const QString& channelId, uint64_t viewedAt,
-                                          uint64_t totalMessageCount, uint64_t totalRootMessageCount,
+                                          uint64_t totalMessageCount,
+                                          uint64_t totalRootMessageCount,
                                           bool hasTotalRootMessageCount)
 {
     if (channelId.isEmpty()) {
@@ -105,8 +109,33 @@ void ChannelActivityTracker::recordViewed(const QString& channelId, uint64_t vie
         entry.readRootMessageCount = std::max(entry.readRootMessageCount, totalRootMessageCount);
         entry.hasReadRootMessageCount = true;
     }
-    entry.hasUnreadActivity = false;
-    entry.mentioned = false;
+
+    entry.mentionCount = 0;
+    entry.rootMentionCount = 0;
+    entry.serverUnreadActivity = false;
+    entry.runtimeUnreadActivity = false;
+    entry.serverMentioned = false;
+    entry.runtimeMentioned = false;
+}
+
+void ChannelActivityTracker::setRecencyTimes(const QString& channelId, uint64_t approximateViewAt,
+                                             uint64_t openTimeAt)
+{
+    if (channelId.isEmpty()) {
+        return;
+    }
+
+    Entry& entry = entries[channelId];
+    entry.approximateViewAt = std::max(entry.approximateViewAt, approximateViewAt);
+    entry.openTimeAt = std::max(entry.openTimeAt, openTimeAt);
+}
+
+void ChannelActivityTracker::setOpenTime(const QString& channelId, uint64_t openTimeAt)
+{
+    if (channelId.isEmpty()) {
+        return;
+    }
+    entries[channelId].openTimeAt = std::max(entries[channelId].openTimeAt, openTimeAt);
 }
 
 void ChannelActivityTracker::setMentioned(const QString& channelId, bool mentioned)
@@ -115,7 +144,15 @@ void ChannelActivityTracker::setMentioned(const QString& channelId, bool mention
     if (it == entries.end()) {
         return;
     }
-    it->mentioned = mentioned;
+
+    if (mentioned) {
+        it->runtimeMentioned = true;
+    } else {
+        it->mentionCount = 0;
+        it->rootMentionCount = 0;
+        it->serverMentioned = false;
+        it->runtimeMentioned = false;
+    }
 }
 
 void ChannelActivityTracker::setMuted(const QString& channelId, bool muted)
@@ -141,7 +178,15 @@ bool ChannelActivityTracker::isUnread(const QString& channelId) const
     }
 
     const Entry& entry = it.value();
-    return entry.mentioned || (!entry.muted && entry.hasUnreadActivity);
+    const bool mentioned = entry.serverMentioned || entry.runtimeMentioned;
+    const bool unreadActivity = entry.serverUnreadActivity || entry.runtimeUnreadActivity;
+    return mentioned || (!entry.muted && unreadActivity);
+}
+
+bool ChannelActivityTracker::hasMention(const QString& channelId) const
+{
+    const auto it = entries.constFind(channelId);
+    return it != entries.cend() && (it->serverMentioned || it->runtimeMentioned);
 }
 
 uint64_t ChannelActivityTracker::activityTime(const QString& channelId) const
@@ -162,6 +207,16 @@ uint64_t ChannelActivityTracker::lastViewedTime(const QString& channelId) const
     }
 
     return it->lastViewedAt;
+}
+
+uint64_t ChannelActivityTracker::recentTime(const QString& channelId) const
+{
+    const auto it = entries.constFind(channelId);
+    if (it == entries.cend() || !it->tracked) {
+        return 0;
+    }
+
+    return std::max({it->lastViewedAt, it->approximateViewAt, it->openTimeAt});
 }
 
 } // namespace Mattermost
