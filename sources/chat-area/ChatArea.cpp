@@ -129,13 +129,13 @@ void ChatArea::init() {
 
 	signalConnections.push_back( connect (&channel, &BackendChannel::onPinnedPostsReceived,this, [this] () {
 		ui->pinnedPostsButton->show();
-		uint32_t pinnedPostCount = this->channel.pinnedPosts.size();
+		const auto pinnedPostCount = this->channel.pinnedPosts.size();
 		const char* pinnedPostsString[2] = {
 			" pinned post",
 			" pinned posts"
 		};
 
-		ui->pinnedPostsButton->setText (QString::number (pinnedPostCount) + pinnedPostsString[pinnedPostCount > 1]);
+		ui->pinnedPostsButton->setText (QString::number (static_cast<qulonglong>(pinnedPostCount)) + pinnedPostsString[pinnedPostCount > 1]);
 	})
 	);
 
@@ -170,7 +170,6 @@ void ChatArea::init() {
 
 	signalConnections.push_back( connect (&channel, &BackendChannel::onPostDeleted,this, [this] (const QString& postId) {
 		PostWidget* postWidget = ui->listWidget->findPost (postId);
-
 		if (postWidget) {
 			postWidget->markAsDeleted ();
 			ui->listWidget->adjustSize();
