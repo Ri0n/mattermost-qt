@@ -40,6 +40,7 @@ public:
     void setIcon (const QIcon &icon);
     void setLabel (const QString& label);
     void setMuted (bool muted);
+    void setMentioned (bool mentioned);
 
 private:
     Ui::ChannelItemWidget *ui;
