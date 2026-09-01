@@ -100,10 +100,12 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 	//Add previews for files, if any
 	if (!post.files.empty()) {
 		attachments = std::make_unique<PostAttachmentList> (backend, this);
+		connect(attachments.get(), &PostAttachmentList::dimensionsChanged,
+				this, &PostWidget::dimensionsChanged);
+		ui->verticalLayout->addWidget (attachments.get(), 0, Qt::AlignLeft);
 		for (const BackendFile& file: post.files) {
 			attachments->addFile (file, post.getDisplayAuthorName());
 		}
-		ui->verticalLayout->addWidget (attachments.get(), 0, Qt::AlignLeft);
 	}
 
 	//Add reactions, if any

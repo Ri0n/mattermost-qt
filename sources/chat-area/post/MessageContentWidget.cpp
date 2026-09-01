@@ -281,12 +281,17 @@ private:
 
     void updateDocumentHeight()
     {
-        const int documentHeight = static_cast<int>(std::ceil(document()->size().height()));
-        const int scrollBarHeight = horizontalScrollBar()->maximum() > 0
+        const int lineHeight = fontMetrics().lineSpacing();
+        const int lineCount = std::max(1, document()->blockCount());
+        const int documentMargins =
+            static_cast<int>(std::ceil(document()->documentMargin() * 2.0));
+        const int scrollBarHeight = horizontalScrollBar()->maximum() > horizontalScrollBar()->minimum()
             ? horizontalScrollBar()->sizeHint().height()
             : 0;
-        const int wantedHeight = std::max(
-            fontMetrics().height(), documentHeight + 2 * frameWidth() + scrollBarHeight);
+        const QMargins widgetMargins = contentsMargins();
+        const int wantedHeight = lineCount * lineHeight + documentMargins
+            + widgetMargins.top() + widgetMargins.bottom()
+            + 2 * frameWidth() + scrollBarHeight;
         if (height() != wantedHeight) {
             setFixedHeight(wantedHeight);
             if (heightChanged) {

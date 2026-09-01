@@ -120,6 +120,29 @@ private slots:
                  "Code content must not impose its unwrapped width on the parent message");
     }
 
+    void multilineCodeKeepsAllLinesVisibleAboveScrollbar()
+    {
+        MessageContentWidget widget;
+        const QString longLine(800, QLatin1Char('x'));
+        widget.setMessage(QStringLiteral("```cpp\nline one\n") + longLine
+                          + QStringLiteral("\nline three\nline four\nline five\n```"));
+        showAndSettle(widget, QSize(220, 300));
+
+        auto* codeBlock = widget.findChild<QPlainTextEdit*>(QStringLiteral("messageCodeBlock"));
+        QVERIFY(codeBlock != nullptr);
+        codeBlock->resize(180, codeBlock->height());
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+
+        QCOMPARE(codeBlock->document()->blockCount(), 5);
+        QVERIFY2(codeBlock->horizontalScrollBar()->maximum() > 0,
+                 "The long code line must produce a local horizontal scrollbar");
+        const int textHeight = codeBlock->document()->blockCount()
+            * codeBlock->fontMetrics().lineSpacing();
+        QVERIFY2(codeBlock->viewport()->height() >= textHeight,
+                 "The code viewport must be tall enough to show every code line, not only the scrollbar");
+    }
+
     void fencedJsonSelectsJsonHighlighter()
     {
         MessageContentWidget widget;

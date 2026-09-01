@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -22,36 +22,30 @@
  * along with Mattermost-QT. if not, see https://www.gnu.org/licenses/.
  */
 
-#include <QDebug>
-#include "PostAttachmentListWidget.h"
+#include <algorithm>
 
-#define ATTACHMENT_LIST_MAX_SIZE 1000
+#include "PostAttachmentListWidget.h"
 
 namespace Mattermost {
 
 QSize PostAttachmentListWidget::sizeHint () const
 {
-	QSize size (0,0);
+    int width = 0;
+    int height = 0;
 
-	for (int i = 0; i < count(); ++i) {
-		QListWidgetItem* item = this->item(i);
-		QSize itemSize (item->sizeHint());
-		//itemSize += QSize (5, 0);
+    for (int i = 0; i < count(); ++i) {
+        const QListWidgetItem* listItem = item(i);
+        const QSize itemSize = listItem->sizeHint();
+        width = std::max(width, itemSize.width());
+        height += itemSize.height();
+    }
 
-		if (itemSize.width() > size.width()) {
-			size.setWidth (itemSize.width());
-		}
+    if (count() > 1) {
+        height += spacing() * (count() - 1);
+    }
 
-		size.setHeight (size.height() + itemSize.height());
-
-//		if (size.height() > ATTACHMENT_LIST_MAX_SIZE) {
-//			size.setHeight (ATTACHMENT_LIST_MAX_SIZE);
-//			break;
-//		}
-	}
-
-	size += QSize (1,6);
-	return size;
+    const int frame = 2 * frameWidth();
+    return QSize(width + frame, height + frame);
 }
 
 } /* namespace Mattermost */

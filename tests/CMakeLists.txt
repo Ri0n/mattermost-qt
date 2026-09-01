@@ -58,3 +58,22 @@ target_link_libraries(message-content-widget-test
 
 add_test(NAME message-content-widget-test COMMAND message-content-widget-test)
 set_tests_properties(message-content-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(post-attachment-list-widget-test
+    PostAttachmentListWidgetTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/chat-area/post/attachments/PostAttachmentListWidget.cpp"
+)
+
+target_include_directories(post-attachment-list-widget-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(post-attachment-list-widget-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+add_test(NAME post-attachment-list-widget-test COMMAND post-attachment-list-widget-test)
+set_tests_properties(post-attachment-list-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
