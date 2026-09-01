@@ -20,8 +20,8 @@
 #include "PostAttachmentList.h"
 #include "ui_PostAttachmentList.h"
 
-#include <QLabel>
 #include <QDebug>
+#include <QLabel>
 #include <QListWidgetItem>
 #include "AttachedBinaryFile.h"
 #include "AttachedImageFile.h"
@@ -41,8 +41,6 @@ PostAttachmentList::PostAttachmentList (Backend& backend, QWidget *parent)
     ui->listWidget->setSpacing(10);
     ui->listWidget->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     ui->listWidget->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    ui->listWidget->setStyleSheet(QStringLiteral(
-        "QListWidget::item { border: 1px solid black; }"));
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
 }
 
