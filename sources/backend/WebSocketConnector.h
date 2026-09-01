@@ -24,10 +24,11 @@
 
 #pragma once
 
+#include <memory>
 #include <QObject>
-#include <QTimer>
-#include <QUrl>
-#include <QtWebSockets/QWebSocket>
+
+class QString;
+class QUrl;
 
 namespace Mattermost {
 
@@ -37,7 +38,7 @@ class WebSocketConnector: public QObject {
 	Q_OBJECT
 public:
 	WebSocketConnector (WebSocketEventHandler& eventHandler);
-	virtual ~WebSocketConnector ();
+	~WebSocketConnector () override;
 public:
 	void open (const QString& urlString, const QString& authToken);
 	void close ();
@@ -55,22 +56,10 @@ private:
 	void sendPing ();
 	QUrl socketUrl () const;
 public:
-	WebSocketEventHandler	&eventHandler;
+	WebSocketEventHandler& eventHandler;
 private:
-	QWebSocket 				webSocket;
-	QString					token;
-	QUrl					endpointUrl;
-	QTimer					heartbeatTimer;
-	QTimer					reconnectTimer;
-	QString					connectionId;
-	int						responseSequence;
-	int						serverSequence;
-	int						pendingPingSequence;
-	int						reconnectAttempt;
-	bool					waitingForPong;
-	bool					hasReconnect;
-	bool					helloReceived;
-	bool					suppressReconnect;
+	struct Private;
+	std::unique_ptr<Private> d;
 };
 
 } /* namespace Mattermost */
