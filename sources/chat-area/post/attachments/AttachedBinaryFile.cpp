@@ -85,7 +85,11 @@ AttachedBinaryFile::AttachedBinaryFile (Backend& backend, const BackendFile& fil
 			QString fileDestination (downloadDir.filePath(file.name));
 
 			QFile destFile (fileDestination);
-			destFile.open (QIODevice::WriteOnly);
+			if (!destFile.open (QIODevice::WriteOnly)) {
+				ui->downloadedLabel->setText ("Failed to save file: " + destFile.errorString());
+				ui->openButton->setDisabled (false);
+				return;
+			}
 			destFile.write (data);
 			destFile.close ();
 			ui->downloadedLabel->setText ("File downloaded to '" + downloadDir.absolutePath() + "'");
