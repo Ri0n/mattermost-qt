@@ -33,10 +33,10 @@
 
 namespace Mattermost {
 
-ChannelItem::ChannelItem (Backend& backend, ChannelItemWidget* widget)
+ChannelItem::ChannelItem (Backend& backend, ChannelItemWidget* itemWidget)
 :ChannelTreeItem ()
 ,backend (backend)
-,widget (widget)
+,widget (itemWidget)
 {
 	QFont font1;
 	font1.setBold (true);
@@ -62,9 +62,9 @@ void ChannelItem::setLabel (const QString& label)
 	}
 }
 
-void ChannelItem::setWidget (ChannelItemWidget* widget)
+void ChannelItem::setWidget (ChannelItemWidget* itemWidget)
 {
-	this->widget = widget;
+	widget = itemWidget;
 }
 
 void ChannelItem::setMuted(bool muted)
