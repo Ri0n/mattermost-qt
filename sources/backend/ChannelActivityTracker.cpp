@@ -22,9 +22,9 @@ void ChannelActivityTracker::setMembership(const QString& channelId, uint64_t la
     }
 
     Entry& entry = entries[channelId];
-    entry.lastViewedAt = lastViewedAt;
-    entry.readMessageCount = readMessageCount;
-    entry.mentioned = mentioned;
+    entry.lastViewedAt = std::max(entry.lastViewedAt, lastViewedAt);
+    entry.readMessageCount = std::max(entry.readMessageCount, readMessageCount);
+    entry.mentioned = entry.mentioned || mentioned;
     entry.muted = muted;
     entry.tracked = true;
 }
@@ -40,9 +40,11 @@ void ChannelActivityTracker::synchronizeChannel(const QString& channelId, uint64
     Entry& entry = it.value();
     entry.lastActivityAt = std::max(entry.lastActivityAt, lastPostAt);
 
-    const bool newerMessageCount = totalMessageCount > entry.readMessageCount;
-    const bool newerTimestamp = lastPostAt > entry.lastViewedAt;
-    entry.hasUnreadActivity = entry.hasUnreadActivity || newerMessageCount || newerTimestamp;
+    // ChannelMember.msg_count is the authoritative count at the last view.
+    // Do not infer unread state from last_post_at: thread replies may advance
+    // the channel activity timestamp without making the parent channel unread.
+    entry.hasUnreadActivity = entry.hasUnreadActivity
+        || totalMessageCount > entry.readMessageCount;
 }
 
 void ChannelActivityTracker::recordPost(const QString& channelId, uint64_t createdAt, bool ownPost,
