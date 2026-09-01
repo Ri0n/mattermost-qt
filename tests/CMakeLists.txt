@@ -77,3 +77,22 @@ target_link_libraries(post-attachment-list-widget-test
 
 add_test(NAME post-attachment-list-widget-test COMMAND post-attachment-list-widget-test)
 set_tests_properties(post-attachment-list-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(resizable-list-widget-test
+    ResizableListWidgetTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/chat-area/ResizableListWidget.cpp"
+)
+
+target_include_directories(resizable-list-widget-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(resizable-list-widget-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+add_test(NAME resizable-list-widget-test COMMAND resizable-list-widget-test)
+set_tests_properties(resizable-list-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
