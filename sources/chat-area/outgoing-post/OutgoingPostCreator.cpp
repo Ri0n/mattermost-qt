@@ -60,13 +60,13 @@ OutgoingPostCreator::OutgoingPostCreator(QWidget *parent)
     ui->setupUi(this);
 }
 
-void OutgoingPostCreator::init (Backend& backend, BackendChannel& channel, OutgoingPostPanel& panel, PostsListWidget& postsListWidget, QBoxLayout* attachmentParent)
+void OutgoingPostCreator::init (Backend& backendInstance, BackendChannel& channelInstance, OutgoingPostPanel& panelInstance, PostsListWidget& postsListWidget, QBoxLayout* attachmentParentLayout)
 {
-	this->backend = &backend;
-	this->channel = &channel;
-	this->panel = &panel;
+	backend = &backendInstance;
+	channel = &channelInstance;
+	panel = &panelInstance;
+	attachmentParent = attachmentParentLayout;
 
-	this->attachmentParent = attachmentParent;
 	/**
 	 * the escape key erases currently entered text or cancels a message edit
 	 */
@@ -101,12 +101,12 @@ void OutgoingPostCreator::init (Backend& backend, BackendChannel& channel, Outgo
 	/*
 	 * Send new post after pressing enter or clicking the 'Send' button
 	 */
-	connect (&panel.sendButton(), &QPushButton::clicked, this, &OutgoingPostCreator::sendPostButtonAction);
+	connect (&panelInstance.sendButton(), &QPushButton::clicked, this, &OutgoingPostCreator::sendPostButtonAction);
 	connect (ui->textEdit, &MessageTextEditWidget::enterPressed, this, &OutgoingPostCreator::sendPostButtonAction);
 
-	connect (&panel.attachButton(), &QPushButton::clicked, this, &OutgoingPostCreator::onAttachButtonClick);
+	connect (&panelInstance.attachButton(), &QPushButton::clicked, this, &OutgoingPostCreator::onAttachButtonClick);
 
-	connect (&panel.addEmojiButton(), &QPushButton::clicked, [this] {
+	connect (&panelInstance.addEmojiButton(), &QPushButton::clicked, [this] {
 		showEmojiDialog ([this] (Emoji emoji){
 
 			auto* textEdit = ui->textEdit;
@@ -117,12 +117,12 @@ void OutgoingPostCreator::init (Backend& backend, BackendChannel& channel, Outgo
 
 	updateSendButtonState();
 
-	connectLambda (&backend, &Backend::onWebSocketConnect, [this] {
+	connectLambda (&backendInstance, &Backend::onWebSocketConnect, [this] {
 		isConnected = true;
 		updateSendButtonState();
 	});
 
-	connectLambda (&backend, &Backend::onWebSocketDisconnect, [this] {
+	connectLambda (&backendInstance, &Backend::onWebSocketDisconnect, [this] {
 		isConnected = false;
 		updateSendButtonState();
 	});
