@@ -66,7 +66,8 @@ void ChannelActivityTracker::synchronizeChannel(const QString& channelId, uint64
 }
 
 void ChannelActivityTracker::recordPost(const QString& channelId, uint64_t createdAt, bool ownPost,
-                                        bool threadReply, bool mentioned)
+                                        bool threadReply, bool mentioned,
+                                        bool collapsedThreadsEnabled)
 {
     if (channelId.isEmpty()) {
         return;
@@ -76,7 +77,11 @@ void ChannelActivityTracker::recordPost(const QString& channelId, uint64_t creat
     entry.tracked = true;
     entry.lastActivityAt = std::max(entry.lastActivityAt, createdAt);
 
-    if (mentioned) {
+    // With CRT enabled, reply activity and mentions belong to the followed
+    // thread model, not to the parent channel's root counters. With CRT off,
+    // replies are ordinary channel activity and use the normal counters.
+    const bool belongsToParentChannel = !threadReply || !collapsedThreadsEnabled;
+    if (mentioned && belongsToParentChannel) {
         entry.runtimeMentioned = true;
     }
 
@@ -84,10 +89,7 @@ void ChannelActivityTracker::recordPost(const QString& channelId, uint64_t creat
         return;
     }
 
-    // Collapsed Reply Threads removes ordinary thread replies from the parent
-    // channel unread count. Until the next authoritative membership sync, only
-    // an explicit mention makes such a reply require attention here.
-    if (!threadReply || mentioned) {
+    if (belongsToParentChannel) {
         entry.runtimeUnreadActivity = true;
     }
 }
