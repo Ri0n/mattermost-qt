@@ -24,6 +24,7 @@
 #include <QDateTime>
 #include <QResizeEvent>
 #include <QPushButton>
+#include <QTextDocument>
 #include "backend/Backend.h"
 #include "backend/types/BackendPost.h"
 #include "backend/emoji/EmojiInfo.h"
@@ -269,6 +270,19 @@ static void replaceEmojis (QString& str)
 
 QString PostWidget::formatMessageText (const QString& str)
 {
+#if QT_VERSION >= QT_VERSION_CHECK(6,10,0)
+	// Preserve the old security model: user-provided HTML is escaped first.
+	// Emoji replacement happens afterwards because custom Mattermost emoji are
+	// represented by trusted local <img> tags. Qt's GitHub Markdown parser then
+	// handles formatting and autolinks, and QLabel keeps consuming RichText/HTML.
+	QString markdown (str.toHtmlEscaped ());
+	replaceEmojis (markdown);
+
+	QTextDocument document;
+	document.setDocumentMargin (0);
+	document.setMarkdown (markdown, QTextDocument::MarkdownDialectGitHub);
+	return document.toHtml ();
+#else
 	QString ret (str.toHtmlEscaped ());
 	ret.replace("\n", "<br>");
 
@@ -318,9 +332,8 @@ QString PostWidget::formatMessageText (const QString& str)
 		linkEnd += size + 15;
 	} while (linkStart != -1);
 
-	//std::cout << str.toStdString() << std::endl;
-	//std::cout << ret.toStdString() << std::endl;
 	return ret;
+#endif
 }
 
 QString PostWidget::getMessageTimeString (uint64_t timestamp)
@@ -360,4 +373,3 @@ void PostWidget::clearMessageText ()
 }
 
 } /* namespace Mattermost */
-
