@@ -180,6 +180,7 @@ public:
     int								type;
     uint64_t						last_post_at;
     int								total_msg_count;
+    int								total_msg_count_root;
     int								extra_update_at;
     const BackendUser*				creator;
     QMap<QString, BackendChannelMember> 		members;
