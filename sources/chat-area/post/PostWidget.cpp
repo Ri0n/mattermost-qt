@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -24,13 +24,11 @@
 #include <QDateTime>
 #include <QResizeEvent>
 #include <QPushButton>
-#include <QTextCursor>
-#include <QTextDocument>
-#include <QTextFormat>
 #include "backend/Backend.h"
 #include "backend/types/BackendPost.h"
 #include "backend/emoji/EmojiInfo.h"
 #include "chat-area/ChatArea.h"
+#include "MessageFormatter.h"
 #include "PostQuoteFrame.h"
 #include "attachments/PostAttachmentList.h"
 #include "attachments/PostPoll.h"
@@ -224,214 +222,9 @@ QString PostWidget::getSelectedText ()
 	return ui->message->selectedText();
 }
 
-static void replaceEmojis (QString& str)
-{
-	int emojiStart = 0;
-	int emojiEnd = 0;
-
-	do {
-
-		//find a substring enclosed in ':' - for example - :wave:
-		emojiStart = str.indexOf (':', emojiEnd);
-		if (emojiStart == -1) {
-			break;
-		}
-
-		emojiEnd = str.indexOf (':', emojiStart + 1);
-		if (emojiEnd == -1) {
-			break;
-		}
-
-		if (emojiEnd - emojiStart == 1) {
-			++emojiEnd;
-			continue;
-		}
-
-		int emojiNameSize = emojiEnd - emojiStart - 1;
-
-		//get the substring enclosed in ':' (without the ':'). This is the emoji name
-		QString emojiName = str.mid (emojiStart + 1, emojiNameSize);
-
-		EmojiID emojiID = EmojiInfo::findByName (emojiName);
-
-		if (!emojiID) {
-			continue;
-		}
-
-		Emoji emoji = EmojiInfo::getEmoji (emojiID);
-
-		//replace the emoji name (together with ':') with it's corresponding value
-		str.replace (emojiStart, emojiNameSize + 2, emoji.unicodeString);
-
-		emojiEnd -= emojiName.size() + 2 - emoji.unicodeString.size();
-		++emojiEnd;
-
-	} while (emojiStart != -1);
-
-}
-
-#if QT_VERSION >= QT_VERSION_CHECK(6,10,0)
-static bool hasNonImageText (const QString& text)
-{
-	for (const QChar character: text) {
-		if (!character.isSpace() && character != QChar::ObjectReplacementCharacter) {
-			return true;
-		}
-	}
-	return false;
-}
-
-static bool shouldRenderImageAsBlock (const QTextImageFormat& imageFormat)
-{
-	constexpr qreal maxInlineImageSize = 64.0;
-
-	// Custom Mattermost emoji are trusted local 32x32 images and must stay inline.
-	// Keep the path check as well as the dimensions check because different Qt
-	// Markdown versions do not necessarily preserve HTML width/height attributes
-	// in exactly the same way.
-	QString imageName = imageFormat.name();
-	imageName.replace('\\', '/');
-	if (imageName.contains(QStringLiteral("/custom-emoji/"))) {
-		return false;
-	}
-
-	const qreal width = imageFormat.width();
-	const qreal height = imageFormat.height();
-	if (width > maxInlineImageSize || height > maxInlineImageSize) {
-		return true;
-	}
-
-	// A normal Markdown image usually has no explicit dimensions. Treat such
-	// images as block content. Otherwise QTextDocument puts the image on the
-	// text line, expands that line to the image height and leaves a large visual
-	// gap between the preceding text and the picture.
-	return width <= 0.0 && height <= 0.0;
-}
-
-static void separateLargeImages (QTextDocument& document)
-{
-	// Split one mixed text/image block at a time and restart the scan after each
-	// change. This avoids stale QTextFragment positions and also handles several
-	// adjacent images without creating empty paragraphs between them.
-	for (;;) {
-		bool changed = false;
-
-		for (QTextBlock block = document.begin(); block.isValid() && !changed; block = block.next()) {
-			const QString blockText = block.text();
-
-			for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
-				const QTextFragment fragment = it.fragment();
-				if (!fragment.isValid() || !fragment.charFormat().isImageFormat()) {
-					continue;
-				}
-
-				const QTextImageFormat imageFormat = fragment.charFormat().toImageFormat();
-				if (!shouldRenderImageAsBlock(imageFormat)) {
-					continue;
-				}
-
-				const int offset = fragment.position() - block.position();
-				const bool hasTextBefore = hasNonImageText(blockText.left(offset));
-				const bool hasTextAfter = hasNonImageText(blockText.mid(offset + fragment.length()));
-
-				// An image-only paragraph is already exactly what we want.
-				if (!hasTextBefore && !hasTextAfter) {
-					continue;
-				}
-
-				// Insert the trailing block first so that the image's absolute
-				// position is still valid when we insert the leading block.
-				if (hasTextAfter) {
-					QTextCursor cursor(&document);
-					cursor.setPosition(fragment.position() + fragment.length());
-					cursor.insertBlock();
-				}
-
-				if (hasTextBefore) {
-					QTextCursor cursor(&document);
-					cursor.setPosition(fragment.position());
-					cursor.insertBlock();
-				}
-
-				changed = true;
-				break;
-			}
-		}
-
-		if (!changed) {
-			break;
-		}
-	}
-}
-#endif
-
 QString PostWidget::formatMessageText (const QString& str)
 {
-#if QT_VERSION >= QT_VERSION_CHECK(6,10,0)
-	// Preserve the old security model: user-provided HTML is escaped first.
-	// Emoji replacement happens afterwards because custom Mattermost emoji are
-	// represented by trusted local <img> tags. Qt's GitHub Markdown parser then
-	// handles formatting and autolinks, and QLabel keeps consuming RichText/HTML.
-	QString markdown (str.toHtmlEscaped ());
-	replaceEmojis (markdown);
-
-	QTextDocument document;
-	document.setDocumentMargin (0);
-	document.setMarkdown (markdown, QTextDocument::MarkdownDialectGitHub);
-	separateLargeImages (document);
-	return document.toHtml ();
-#else
-	QString ret (str.toHtmlEscaped ());
-	ret.replace("\n", "<br>");
-
-	int linkStart = 0;
-	int linkEnd = 0;
-
-	replaceEmojis (ret);
-
-	do {
-
-		QLatin1String lookups[2] = { QLatin1String ("http://"), QLatin1String ("https://") };
-		QLatin1String* useLookup = nullptr;
-
-		for (auto& lookup: lookups) {
-			linkStart = ret.indexOf (lookup, linkEnd);
-
-			if (linkStart != -1) {
-				useLookup = &lookup;
-				break;
-			}
-		}
-
-		if (!useLookup) {
-			break;
-		}
-
-		//poor man's find_first_of - there is no such thing in QT, and std::string is not aware of multibyte characters
-		for (linkEnd = linkStart + useLookup->size(); linkEnd < ret.size(); ++linkEnd) {
-			if (ret.at (linkEnd) == ' ' || ret.at (linkEnd) == '<') {
-				break;
-			}
-		}
-
-		if (linkEnd == -1) {
-			linkEnd = ret.size();
-		}
-
-		size_t size = linkEnd - linkStart;
-#if QT_VERSION < QT_VERSION_CHECK(6,0,0)
-		ret.insert (linkEnd, "\">" + QStringRef (&ret, linkStart,  size) + "</a>");
-#else
-		QStringView strView(ret);
-		ret.insert (linkEnd, "\">" + strView.sliced(linkStart,  size).toString() + "</a>");
-#endif
-		ret.insert (linkStart, "<a href=\"");
-
-		linkEnd += size + 15;
-	} while (linkStart != -1);
-
-	return ret;
-#endif
+	return MessageFormatter::formatMessageText(str);
 }
 
 QString PostWidget::getMessageTimeString (uint64_t timestamp)
