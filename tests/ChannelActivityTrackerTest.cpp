@@ -17,7 +17,7 @@ private slots:
 
         QVERIFY(tracker.isTracked(QStringLiteral("channel")));
         QVERIFY(tracker.isUnread(QStringLiteral("channel")));
-        QCOMPARE(tracker.activityTime(QStringLiteral("channel")), quint64(2000));
+        QCOMPARE(tracker.activityTime(QStringLiteral("channel")), uint64_t(2000));
     }
 
     void viewingChannelClearsUnreadAndMakesItRecent()
@@ -28,7 +28,7 @@ private slots:
         tracker.recordViewed(QStringLiteral("channel"), 3000, 7);
 
         QVERIFY(!tracker.isUnread(QStringLiteral("channel")));
-        QCOMPARE(tracker.activityTime(QStringLiteral("channel")), quint64(3000));
+        QCOMPARE(tracker.activityTime(QStringLiteral("channel")), uint64_t(3000));
     }
 
     void mutedChannelOnlyRequiresAttentionForMention()
@@ -57,7 +57,7 @@ private slots:
 
         tracker.recordPost(QStringLiteral("channel"), 2000, false, true, false);
         QVERIFY(!tracker.isUnread(QStringLiteral("channel")));
-        QCOMPARE(tracker.activityTime(QStringLiteral("channel")), quint64(2000));
+        QCOMPARE(tracker.activityTime(QStringLiteral("channel")), uint64_t(2000));
 
         tracker.recordPost(QStringLiteral("channel"), 2100, false, true, true);
         QVERIFY(tracker.isUnread(QStringLiteral("channel")));
@@ -72,7 +72,7 @@ private slots:
         tracker.recordPost(QStringLiteral("channel"), 2500, true, false, false);
 
         QVERIFY(!tracker.isUnread(QStringLiteral("channel")));
-        QCOMPARE(tracker.activityTime(QStringLiteral("channel")), quint64(2500));
+        QCOMPARE(tracker.activityTime(QStringLiteral("channel")), uint64_t(2500));
     }
 };
 
