@@ -40,8 +40,14 @@ QSize PostAttachmentListWidget::sizeHint () const
         height += itemSize.height();
     }
 
-    if (count() > 1) {
-        height += spacing() * (count() - 1);
+    // QListView::spacing() is layout spacing around the items, not only the
+    // gap between adjacent rows. The first item starts one spacing unit from
+    // the top/left edge and the last item needs the same room on the
+    // bottom/right edge. Omitting those outer gaps makes the viewport clip
+    // exactly spacing() pixels from the right and bottom of an image preview.
+    if (count() > 0) {
+        width += 2 * spacing();
+        height += spacing() * (count() + 1);
     }
 
     const int frame = 2 * frameWidth();
