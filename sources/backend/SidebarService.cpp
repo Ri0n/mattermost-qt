@@ -216,6 +216,16 @@ uint64_t SidebarService::channelActivityTime(const BackendChannel& channel) cons
     return std::max(activityTracker.activityTime(channel.id), channel.last_post_at);
 }
 
+uint64_t SidebarService::channelLastViewedTime(const BackendChannel& channel) const
+{
+    return activityTracker.lastViewedTime(channel.id);
+}
+
+void SidebarService::markChannelViewedLocally(const BackendChannel& channel)
+{
+    recordChannelViewed(channel);
+}
+
 void SidebarService::synchronizeChannelActivity()
 {
     const auto& channels = backend.getStorage().channels;
@@ -227,7 +237,9 @@ void SidebarService::synchronizeChannelActivity()
         activityTracker.synchronizeChannel(
             channel->id,
             channel->last_post_at,
-            static_cast<uint64_t>(std::max(0, channel->total_msg_count_root)));
+            static_cast<uint64_t>(std::max(0, channel->total_msg_count)),
+            static_cast<uint64_t>(std::max(0, channel->total_msg_count_root)),
+            channel->has_total_msg_count_root);
     }
     emit channelActivityReset();
 }
@@ -246,7 +258,9 @@ void SidebarService::recordChannelViewed(const BackendChannel& channel)
     activityTracker.recordViewed(
         channel.id,
         viewedAt,
-        static_cast<uint64_t>(std::max(0, channel.total_msg_count_root)));
+        static_cast<uint64_t>(std::max(0, channel.total_msg_count)),
+        static_cast<uint64_t>(std::max(0, channel.total_msg_count_root)),
+        channel.has_total_msg_count_root);
 
     if (mentionedChannelIds.remove(channel.id)) {
         emit channelMentionedChanged(channel.id, false);
@@ -279,9 +293,12 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
             const bool muted = notifyProps.value(QStringLiteral("mark_unread")).toString()
                 == QStringLiteral("mention");
             const bool mentioned = object.value(QStringLiteral("mention_count")).toInt() > 0;
-            const uint64_t readRootMessageCount = object.contains(QStringLiteral("msg_count_root"))
+            const uint64_t readMessageCount = object.value(QStringLiteral("msg_count"))
+                .toVariant().toULongLong();
+            const bool hasReadRootMessageCount = object.contains(QStringLiteral("msg_count_root"));
+            const uint64_t readRootMessageCount = hasReadRootMessageCount
                 ? object.value(QStringLiteral("msg_count_root")).toVariant().toULongLong()
-                : object.value(QStringLiteral("msg_count")).toVariant().toULongLong();
+                : 0;
 
             if (muted) {
                 mutedChannelIds.insert(channelId);
@@ -293,7 +310,9 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
             activityTracker.setMembership(
                 channelId,
                 object.value(QStringLiteral("last_viewed_at")).toVariant().toULongLong(),
+                readMessageCount,
                 readRootMessageCount,
+                hasReadRootMessageCount,
                 mentioned,
                 muted);
         }
