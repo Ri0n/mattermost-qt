@@ -65,11 +65,13 @@ public:
     bool isChannelTracked(const QString& channelId) const;
     bool isChannelUnread(const BackendChannel& channel) const;
     uint64_t channelActivityTime(const BackendChannel& channel) const;
-    uint64_t channelLastViewedTime(const BackendChannel& channel) const;
+    uint64_t channelRecentTime(const BackendChannel& channel) const;
     void markChannelViewedLocally(const BackendChannel& channel);
     void synchronizeChannelActivity();
 
     void retrieveChannelMemberships(std::function<void()> callback = {});
+    void retrieveChannelPreferences(std::function<void()> callback = {});
+    void retrieveClientConfig(std::function<void()> callback = {});
     void setChannelMuted(BackendChannel& channel, bool muted,
                          std::function<void(bool)> callback = {});
 
@@ -99,13 +101,18 @@ private:
     QString categoriesPath(const QString& teamId) const;
     void recordChannelPost(BackendChannel& channel, const BackendPost& post);
     void recordChannelViewed(const BackendChannel& channel);
+    void updateCollapsedThreadsMode();
 
     Backend& backend;
     HTTPConnector httpConnector;
     QSet<QString> mutedChannelIds;
-    QSet<QString> mentionedChannelIds;
     QMap<QString, SidebarTeamState> sidebarByTeam;
     ChannelActivityTracker activityTracker;
+
+    QString collapsedThreadsConfig;
+    bool hasCollapsedThreadsPreference = false;
+    bool collapsedThreadsPreference = false;
+    bool collapsedThreadsEnabled = false;
 };
 
 } // namespace Mattermost
