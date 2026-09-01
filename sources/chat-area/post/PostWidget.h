@@ -20,8 +20,6 @@
 #pragma once
 
 #include <QPushButton>
-#include <QTextBlock>
-#include <QTextFragment>
 #include <memory>
 
 namespace Ui {
@@ -37,6 +35,7 @@ class PostAttachmentList;
 class PostReactionList;
 class PostPoll;
 class ChatArea;
+class MessageContentWidget;
 
 class PostWidget: public QWidget
 {
@@ -83,6 +82,7 @@ private:
     std::unique_ptr<PostAttachmentList>	attachments;
     std::unique_ptr<PostPoll>			poll;
     std::unique_ptr<PostReactionList>	reactions;
+    MessageContentWidget*				messageContent;
     ChatArea*				parentChatArea;
 };
 
