@@ -101,8 +101,6 @@ private:
 	void setCategoryCollapsed(QTreeWidgetItem* item, bool collapsed);
 	void setChannelMutedVisual(const QString& channelId, bool muted);
 	void setChannelMentionedVisual(const QString& channelId, bool mentioned);
-	void setChannelUnreadVisual(const QString& channelId);
-	void refreshChannelUnreadVisuals();
 	void syncCategoryChannels(QTreeWidgetItem* firstCategory, QTreeWidgetItem* secondCategory = nullptr);
 	void syncCategoryOrder(QTreeWidgetItem* teamItem);
 	QStringList channelIds(QTreeWidgetItem* categoryItem) const;
