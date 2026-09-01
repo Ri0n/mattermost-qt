@@ -244,7 +244,7 @@ void SidebarService::recordChannelViewed(const BackendChannel& channel)
     activityTracker.recordViewed(channel.id, viewedAt,
                                  static_cast<uint64_t>(std::max(0, channel.total_msg_count)));
 
-    if (mentionedChannelIds.remove(channel.id) > 0) {
+    if (mentionedChannelIds.remove(channel.id)) {
         emit channelMentionedChanged(channel.id, false);
     }
     emit channelActivityChanged(channel.id);
