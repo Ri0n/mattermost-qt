@@ -6,6 +6,7 @@
 #include "ChannelQuickList.h"
 
 #include <algorithm>
+#include <cstdint>
 
 #include <QHeaderView>
 #include <QIcon>
@@ -61,7 +62,7 @@ void ChannelQuickList::refresh()
 
     struct Candidate {
         BackendChannel* channel = nullptr;
-        quint64 activity = 0;
+        uint64_t sortTime = 0;
         bool unread = false;
     };
 
@@ -81,16 +82,26 @@ void ChannelQuickList::refresh()
             continue;
         }
 
+        // "Recent" means recently viewed by this user, not channels with the
+        // newest global traffic. Using last_post_at here made busy channels
+        // appear at the top even when the user had not opened them recently.
+        const uint64_t sortTime = mode == Recent
+            ? sidebar.channelLastViewedTime(*channel)
+            : sidebar.channelActivityTime(*channel);
+        if (mode == Recent && sortTime == 0) {
+            continue;
+        }
+
         candidates.push_back(Candidate {
             channel,
-            sidebar.channelActivityTime(*channel),
+            sortTime,
             unread,
         });
     }
 
     std::sort(candidates.begin(), candidates.end(), [](const Candidate& lhs, const Candidate& rhs) {
-        if (lhs.activity != rhs.activity) {
-            return lhs.activity > rhs.activity;
+        if (lhs.sortTime != rhs.sortTime) {
+            return lhs.sortTime > rhs.sortTime;
         }
         return QString::localeAwareCompare(lhs.channel->display_name,
                                            rhs.channel->display_name) < 0;
