@@ -44,6 +44,22 @@ struct SidebarTeamState;
 class ChannelTree: public QTreeWidget {
 	Q_OBJECT
 public:
+	enum ItemKind {
+		UnknownItem = 0,
+		TeamItemKind,
+		CategoryItemKind,
+		ChannelItemKind,
+	};
+
+	enum ItemRole {
+		ItemKindRole = Qt::UserRole + 1,
+		ItemIdRole,
+		ItemTeamIdRole,
+		ItemMutedRole,
+		ItemMentionedRole,
+		ItemStatusRole,
+	};
+
 	ChannelTree (QWidget* parent = nullptr);
 	virtual ~ChannelTree ();
 public:
@@ -71,19 +87,6 @@ protected:
 	void dropEvent(QDropEvent* event) override;
 
 private:
-	enum ItemKind {
-		UnknownItem = 0,
-		TeamItemKind,
-		CategoryItemKind,
-		ChannelItemKind,
-	};
-
-	enum ItemRole {
-		ItemKindRole = Qt::UserRole + 1,
-		ItemIdRole,
-		ItemTeamIdRole,
-	};
-
 	void showContextMenu (const QPoint& pos);
 	void refreshTeamSidebar(Backend& backend, BackendTeam& team);
 	void renderTeamSidebar(Backend& backend, TeamItem& teamItem,
