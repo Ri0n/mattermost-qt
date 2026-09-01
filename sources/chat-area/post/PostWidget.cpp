@@ -39,9 +39,9 @@ namespace Mattermost {
 PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, ChatArea* chatArea, BackendPost* lastRootPost)
 :QWidget(parent)
 ,post (post)
+,threadButton(nullptr)
 ,ui(new Ui::PostWidget)
 ,parentChatArea(chatArea)
-,threadButton(nullptr)
 {
 	ui->setupUi(this);
 	ui->authorName->setText (post.getDisplayAuthorName ());
@@ -182,7 +182,7 @@ void PostWidget::openThreadWindow () {
 		area->show();	
 	} else {
 		auto it = parentChatArea->threadsAreas.begin(), end = parentChatArea->threadsAreas.end();
-		for (it; it != end; ++it){
+		for (; it != end; ++it){
 			if ((*it)->root_id == post.id) {
 				(*it)->activateWindow();
 				qDebug() << "exists";
