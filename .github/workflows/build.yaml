@@ -1,56 +1,101 @@
 name: CI
+
 on:
   push:
     branches:
       - master
   pull_request:
-  
+
+permissions:
+  contents: read
+
 jobs:
-  test-fedora:
-    name: fedora
-    runs-on: ubuntu-latest
-    
+  qt6:
+    name: Qt 6.10 / Ubuntu
+    runs-on: ubuntu-24.04
+
     steps:
-      - name: Setup Podman
-        run: |
-          sudo apt update
-          sudo apt-get -y install podman
-          podman pull fedora:latest
-      - name: Get source
-        uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
         with:
-          path: 'mattermost-qt'
-      - name: Create container and build
-        run: |
-          {
-              echo 'FROM fedora:latest'
-              echo 'RUN dnf -y update'
-              echo 'RUN dnf -y install cmake gcc-c++ make'
-              echo 'RUN dnf -y install qt5-qtbase-devel qt5-qtwebsockets-devel'
-              echo 'RUN dnf clean all'
-              echo 'COPY mattermost-qt mattermost-qt'
-              echo 'WORKDIR /mattermost-qt/build'
-              echo 'RUN cmake ..'
-              echo 'RUN make' 
-          } > podmanfile
-          podman build --tag fedoralatest -f ./podmanfile
-  test-ubuntu:        
-    name: ubuntu
-    runs-on: ubuntu-latest
-    
+          version: '6.10.3'
+          modules: 'qtwebsockets'
+          cache: true
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DQT_6=ON
+          -DBUILD_TESTING=ON
+          -DWARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+
+  qt5-ubuntu:
+    name: Qt 5 / Ubuntu
+    runs-on: ubuntu-24.04
+
     steps:
-      - name: Setup dependencies
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
         run: |
-          sudo apt update
-          sudo apt-get -y install cmake g++ libqt5websockets5-dev make qtbase5-dev
-      - name: Get source
-        uses: actions/checkout@v3
+          sudo apt-get update
+          sudo apt-get install -y qtbase5-dev libqt5websockets5-dev
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DQT_6=OFF
+          -DBUILD_TESTING=ON
+          -DWARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+
+  qt5-fedora:
+    name: Qt 5 / Fedora
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          path: 'mattermost-qt'
-      - name: Create build directory, setup and build
-        run : |
-           cd mattermost-qt
-           mkdir build
-           cd build
-           cmake ..
-           make
+          path: mattermost-qt
+
+      - name: Build and test in Fedora
+        run: |
+          cat > Containerfile <<'EOF'
+          FROM fedora:latest
+          RUN dnf -y update \
+              && dnf -y install cmake gcc-c++ make qt5-qtbase-devel qt5-qtwebsockets-devel \
+              && dnf clean all
+          COPY mattermost-qt /mattermost-qt
+          WORKDIR /mattermost-qt
+          RUN cmake -S . -B build \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DQT_6=OFF \
+              -DBUILD_TESTING=ON \
+              -DWARNINGS_AS_ERRORS=ON
+          RUN cmake --build build --parallel
+          RUN ctest --test-dir build --output-on-failure
+          EOF
+          podman build --tag mattermost-qt-fedora -f Containerfile

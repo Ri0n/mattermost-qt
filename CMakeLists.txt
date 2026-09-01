@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.16)
 
 file(READ .version version)
 project(qmattermost VERSION ${version} LANGUAGES CXX)
@@ -10,20 +10,33 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -Wall -Wextra -g -ggdb")
+option(WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+	add_compile_options(-Wall -Wextra)
+	if(WARNINGS_AS_ERRORS)
+		# Keep intentional preprocessor #warning diagnostics visible, but non-fatal.
+		add_compile_options(-Werror -Wno-error=cpp)
+	endif()
+elseif(MSVC)
+	add_compile_options(/W4)
+	if(WARNINGS_AS_ERRORS)
+		add_compile_options(/WX)
+	endif()
+endif()
 
 set(APPID "mattermost-qt")
 
 option(QT_6 "Prefer Qt6" ON)
 
-find_package(Qt6 COMPONENTS Core)
+find_package(Qt6 COMPONENTS Core QUIET)
 if(Qt6_FOUND AND QT_6)
-    set(CMAKE_CXX_STANDARD 17)
     set(QT_VERSION_MAJOR 6)
 else()
-    set(CMAKE_CXX_STANDARD 14)
     set(QT_VERSION_MAJOR 5)
 endif()
 
@@ -45,6 +58,11 @@ option(BUILD_MULTIMEDIA "Enable Multimedia" OFF)
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Widgets REQUIRED)
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Network REQUIRED)
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS WebSockets REQUIRED)
+
+include(CTest)
+if(BUILD_TESTING)
+	find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Test REQUIRED)
+endif()
 
 if(BUILD_MULTIMEDIA)
 	find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Multimedia REQUIRED)
@@ -80,6 +98,10 @@ else()
 endif()
 
 add_subdirectory (tools)
+
+if(BUILD_TESTING)
+	add_subdirectory(tests)
+endif()
 
 target_link_libraries (${APPID} PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::WebSockets)
 

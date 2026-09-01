@@ -39,6 +39,7 @@ static const QIcon& getUserButtonIcon ()
 
 ChatArea::ChatArea (Backend& backend, BackendChannel& channel, ChannelItem* treeItem, QWidget *parent, bool initialize)
 :QWidget(parent)
+,parentArea(nullptr)
 ,ui(new Ui::ChatArea)
 ,backend (backend)
 ,channel (channel)
@@ -47,9 +48,8 @@ ChatArea::ChatArea (Backend& backend, BackendChannel& channel, ChannelItem* tree
 ,unreadMessagesCount (0)
 ,texteditDefaultHeight (70)
 ,gettingOlderPosts (false)
-,isThread(false)
 ,areaIsFilled(false)
-,parentArea(NULL)
+,isThread(false)
 ,postsRetrieved(false)
 ,initialized(false) {
 	//accept drag&drop attachments
@@ -211,7 +211,8 @@ void ChatArea::init() {
 
 	// dirty solution to non-scrollable window
 	signalConnections.push_back( connect (ui->loadOldPosts, &QPushButton::clicked, this,[this] {
-		if (!gettingOlderPosts) {
+		if (!gettingOlderPosts && !channel.posts.empty()) {
+			gettingOlderPosts = true;
 			backend.retrieveChannelOlderPosts (channel, 140);
 		}
 	})
@@ -259,13 +260,9 @@ void ChatArea::init() {
 
 	//elapsed days since the last post that was added from the new posts packet
 	int elapsedDaysSinceLastNewPost = INT32_MAX;
-
-	//elapsed days since the oldest post that was available before retrieving older posts
-	int elapsedDaysSinceFirstExistingPost = INT32_MAX;
 	QDate currentDate = QDateTime::currentDateTime().date();
 	if (postsRetrieved){
 		int insertPos = 0;
-		int postSeq = 0;
 		for(auto& post: channel.posts ) {
 		if (post.root_id.isEmpty()){
 
@@ -284,7 +281,6 @@ void ChatArea::init() {
 
 			ui->listWidget->insertPost (insertPos, new PostWidget (backend, post, ui->listWidget, this, nullptr));
 			++insertPos;
-			++postSeq;
 
 			if (post.id == lastReadPostId) {
 				ui->listWidget->addNewMessagesSeparator ();
@@ -315,7 +311,7 @@ void ChatArea::init() {
 
 	//when scrolling to top, get older posts
 	signalConnections.push_back( connect (ui->listWidget, &PostsListWidget::scrolledToTop, this, [this] {
-		if (!gettingOlderPosts) {
+		if (!gettingOlderPosts && !channel.posts.empty()) {
 			//do not spam requests
 			gettingOlderPosts = true;
 			backend.retrieveChannelOlderPosts (channel, 40);
@@ -331,7 +327,8 @@ void ChatArea::deinit() {
 		disconnect(it);
 	}
 	disconnect(&channel, &BackendChannel::onNewPost, this, &ChatArea::appendChannelPost);
-	scrollRatio = (double)ui->listWidget->verticalScrollBar()->value() / (double)ui->listWidget->verticalScrollBar()->maximum();
+	const int scrollMaximum = ui->listWidget->verticalScrollBar()->maximum();
+	scrollRatio = scrollMaximum == 0 ? 0.0 : (double)ui->listWidget->verticalScrollBar()->value() / (double)scrollMaximum;
 	signalConnections.clear();
 	ui->listWidget->clear();
 	lastReadPostId.clear();
@@ -340,6 +337,8 @@ void ChatArea::deinit() {
 
 ChatArea::ChatArea (Backend& backend, BackendChannel& channel, QString rootId, ChatArea* parentArea)
 :QWidget(nullptr)
+,parentArea(parentArea)
+,parentPostId(rootId)
 ,ui(new Ui::ChatArea)
 ,backend (backend)
 ,channel (channel)
@@ -348,10 +347,11 @@ ChatArea::ChatArea (Backend& backend, BackendChannel& channel, QString rootId, C
 ,unreadMessagesCount (0)
 ,texteditDefaultHeight (70)
 ,gettingOlderPosts (false)
+,areaIsFilled(false)
 ,isThread(true)
-,parentPostId(rootId)
-,parentArea(parentArea)
+,postsRetrieved(true)
 ,initialized(true)
+,root_id(rootId)
 {
 	//accept drag&drop attachments
 	setAttribute (Qt::WA_DeleteOnClose);
@@ -371,7 +371,6 @@ ChatArea::ChatArea (Backend& backend, BackendChannel& channel, QString rootId, C
 
 	ui->userAvatar->hide();
 	int insertPos = 0;
-	int postSeq = 0;
 	BackendPost* lastRootPost = nullptr;
 	QDate currentDate = QDateTime::currentDateTime().date();
 	int elapsedDaysSinceLastNewPost = INT32_MAX;
@@ -395,7 +394,6 @@ ChatArea::ChatArea (Backend& backend, BackendChannel& channel, QString rootId, C
 			ui->listWidget->insertPost (insertPos, new PostWidget (backend, post, ui->listWidget, this, lastRootPost));
 			lastRootPost = post.rootPost;
 			++insertPos;
-			++postSeq;
 
 			if (post.id == lastReadPostId) {
 				ui->listWidget->addNewMessagesSeparator ();
@@ -528,7 +526,10 @@ void ChatArea::fillChannelPosts (const ChannelNewPosts& newPosts)
 			firstPostIndex = 1;
 		}
 
-		PostWidget* firstPostWidget = static_cast<PostWidget*> (ui->listWidget->itemWidget (ui->listWidget->item(firstPostIndex)));
+		QListWidgetItem* firstPostItem = ui->listWidget->item(firstPostIndex);
+		PostWidget* firstPostWidget = PostsListWidget::isPostItem(firstPostItem)
+			? static_cast<PostWidget*> (ui->listWidget->itemWidget (firstPostItem))
+			: nullptr;
 		if (firstPostWidget)
 			elapsedDaysSinceFirstExistingPost = firstPostWidget->post.getCreationTime().date().daysTo(currentDate);
 	}

@@ -94,10 +94,14 @@ int PostsListWidget::findPostByIndex (const QString& postId, int startIndex)
 	}
 
 	while (startIndex < count()) {
+		QListWidgetItem* listItem = item (startIndex);
+		if (!isPostItem (listItem)) {
+			++startIndex;
+			continue;
+		}
 
-		PostWidget* message = static_cast <PostWidget*> (itemWidget (item (startIndex)));
-
-		if (message->post.id == postId) {
+		PostWidget* message = static_cast<PostWidget*> (itemWidget (listItem));
+		if (message && message->post.id == postId) {
 			return startIndex;
 		}
 
@@ -117,10 +121,14 @@ PostWidget* PostsListWidget::findPost (const QString& postId)
 	int startIndex = 0;
 
 	while (startIndex < count()) {
+		QListWidgetItem* listItem = item (startIndex);
+		if (!isPostItem (listItem)) {
+			++startIndex;
+			continue;
+		}
 
-		PostWidget* message = static_cast <PostWidget*> (itemWidget (item (startIndex)));
-
-		if (message->post.id == postId) {
+		PostWidget* message = static_cast<PostWidget*> (itemWidget (listItem));
+		if (message && message->post.id == postId) {
 			return message;
 		}
 
@@ -165,6 +173,7 @@ void PostsListWidget::addNewMessagesSeparator ()
 
 	PostSeparatorWidget* separator = new PostSeparatorWidget ("New messages");
 	newMessagesSeparator = new QListWidgetItem();
+	newMessagesSeparator->setData(Qt::UserRole, ItemType::separator);
 
 	addItem (newMessagesSeparator);
 	setItemWidget (newMessagesSeparator, separator);
@@ -258,9 +267,10 @@ void PostsListWidget::copySelectedItemsToClipboard (PostWidget::FormatType forma
 	QString str;
 	for (auto& item: sortedSelectedItems ()) {
 
-		if (item->data(Qt::UserRole) == ItemType::post) {
+		if (isPostItem (item)) {
 			PostWidget* post = static_cast <PostWidget*> (itemWidget (item));
-			str += post->formatForClipboardSelection (formatType);
+			if (post)
+				str += post->formatForClipboardSelection (formatType);
 		}
 	}
 
@@ -275,13 +285,16 @@ void PostsListWidget::showContextMenu (const QPoint& pos)
 
 	QListWidgetItem* pointedItem = itemAt(pos);
 
-	if (pointedItem->data(Qt::UserRole) != ItemType::post) {
+	if (!isPostItem (pointedItem)) {
 		return;
 	}
 
 	uint32_t selectedItemsCount = selectedItems().size();
 
 	PostWidget* post = static_cast <PostWidget*> (itemWidget (pointedItem));
+	if (!post) {
+		return;
+	}
 
 	if (post->post.isDeleted) {
 		return;

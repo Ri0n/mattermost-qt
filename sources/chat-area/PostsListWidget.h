@@ -50,6 +50,16 @@ public:
 	PostWidget* findPost (const QString& postId);
 	int findPostByIndex (const QString& postId, int startIndex);
 
+	static bool isPostItem (const QListWidgetItem* item)
+	{
+		if (!item) {
+			return false;
+		}
+
+		const QVariant itemType = item->data(Qt::UserRole);
+		return itemType.isValid() && itemType.toInt() == ItemType::post;
+	}
+
 	void scrollToUnreadPostsOrBottom ();
 	void addDaySeparator (int daysAgo);
 	void addDaySeparator (int insertPos, int daysAgo);
