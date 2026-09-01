@@ -66,6 +66,7 @@ public:
     bool isChannelUnread(const BackendChannel& channel) const;
     quint64 channelActivityTime(const BackendChannel& channel) const;
     void synchronizeChannelActivity();
+    void markChannelViewedLocally(const BackendChannel& channel);
 
     void retrieveChannelMemberships(std::function<void()> callback = {});
     void setChannelMuted(BackendChannel& channel, bool muted,
