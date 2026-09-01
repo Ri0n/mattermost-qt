@@ -171,6 +171,8 @@ void ChannelTree::populateSidebars(Backend& backend)
     auto& sidebar = SidebarService::instance(backend);
     connect(&sidebar, &SidebarService::channelMutedChanged,
             this, &ChannelTree::setChannelMutedVisual, Qt::UniqueConnection);
+    connect(&sidebar, &SidebarService::channelMentionedChanged,
+            this, &ChannelTree::setChannelMentionedVisual, Qt::UniqueConnection);
 
     for (auto it = teamToItemMap.cbegin(); it != teamToItemMap.cend(); ++it) {
         if (BackendTeam* team = backend.getStorage().getTeamById(it.key())) {
@@ -189,11 +191,11 @@ void ChannelTree::refreshTeamSidebar(Backend& backend, BackendTeam& team)
             if (!currentTeam || !teamItem) {
                 return;
             }
-            renderTeamSidebar(backend, *currentTeam, *teamItem, state);
+            renderTeamSidebar(backend, *teamItem, state);
         });
 }
 
-void ChannelTree::renderTeamSidebar(Backend& backend, BackendTeam& team, TeamItem& teamItem,
+void ChannelTree::renderTeamSidebar(Backend& backend, TeamItem& teamItem,
                                     const SidebarTeamState& state)
 {
     renderingSidebar = true;
@@ -298,7 +300,9 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
     });
 
     addChannelToItem(channel.id, item);
-    item->setMuted(SidebarService::instance(backend).isChannelMuted(channel));
+    auto& sidebar = SidebarService::instance(backend);
+    item->setMuted(sidebar.isChannelMuted(channel));
+    item->setMentioned(sidebar.hasUnreadMention(channel.id));
     return item;
 }
 
@@ -402,6 +406,16 @@ void ChannelTree::setChannelMutedVisual(const QString& channelId, bool muted)
     for (QTreeWidgetItem* item : items) {
         if (item && item->data(0, ItemKindRole).toInt() == ChannelItemKind) {
             static_cast<ChannelItem*>(item)->setMuted(muted);
+        }
+    }
+}
+
+void ChannelTree::setChannelMentionedVisual(const QString& channelId, bool mentioned)
+{
+    const auto items = channelToItemMap.value(channelId);
+    for (QTreeWidgetItem* item : items) {
+        if (item && item->data(0, ItemKindRole).toInt() == ChannelItemKind) {
+            static_cast<ChannelItem*>(item)->setMentioned(mentioned);
         }
     }
 }
@@ -610,21 +624,6 @@ void ChannelTree::syncCategoryOrder(QTreeWidgetItem* teamItem)
         state->order = order;
     }
     SidebarService::instance(*backendForSidebar).updateCategoryOrder(teamId, order);
-}
-
-QTreeWidgetItem* ChannelTree::findCategoryItem(QTreeWidgetItem* teamItem, const QString& categoryId) const
-{
-    if (!teamItem) {
-        return nullptr;
-    }
-    for (int i = 0; i < teamItem->childCount(); ++i) {
-        QTreeWidgetItem* item = teamItem->child(i);
-        if (item->data(0, ItemKindRole).toInt() == CategoryItemKind
-            && item->data(0, ItemIdRole).toString() == categoryId) {
-            return item;
-        }
-    }
-    return nullptr;
 }
 
 QStringList ChannelTree::channelIds(QTreeWidgetItem* categoryItem) const
