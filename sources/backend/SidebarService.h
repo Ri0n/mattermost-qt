@@ -1,6 +1,6 @@
 /**
  * @file SidebarService.h
- * @brief Mattermost sidebar categories and per-channel mute state.
+ * @brief Mattermost sidebar categories and per-channel notification state.
  */
 
 #pragma once
@@ -57,6 +57,8 @@ public:
 
     bool isChannelMuted(const BackendChannel& channel) const;
     bool isChannelMuted(const QString& channelId) const;
+    bool hasUnreadMention(const QString& channelId) const;
+    void setChannelMentioned(const QString& channelId, bool mentioned);
 
     void retrieveChannelMemberships(std::function<void()> callback = {});
     void setChannelMuted(BackendChannel& channel, bool muted,
@@ -76,6 +78,7 @@ public:
 
 signals:
     void channelMutedChanged(const QString& channelId, bool muted);
+    void channelMentionedChanged(const QString& channelId, bool mentioned);
     void categoriesChanged(const QString& teamId);
 
 private:
@@ -87,6 +90,7 @@ private:
     Backend& backend;
     HTTPConnector httpConnector;
     QSet<QString> mutedChannelIds;
+    QSet<QString> mentionedChannelIds;
     QMap<QString, SidebarTeamState> sidebarByTeam;
 };
 
