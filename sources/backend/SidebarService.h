@@ -12,12 +12,14 @@
 #include <QSet>
 #include <QStringList>
 
+#include "backend/ChannelActivityTracker.h"
 #include "backend/HTTPConnector.h"
 
 namespace Mattermost {
 
 class Backend;
 class BackendChannel;
+class BackendPost;
 class BackendTeam;
 
 struct SidebarCategory {
@@ -60,6 +62,11 @@ public:
     bool hasUnreadMention(const QString& channelId) const;
     void setChannelMentioned(const QString& channelId, bool mentioned);
 
+    bool isChannelTracked(const QString& channelId) const;
+    bool isChannelUnread(const BackendChannel& channel) const;
+    quint64 channelActivityTime(const BackendChannel& channel) const;
+    void synchronizeChannelActivity();
+
     void retrieveChannelMemberships(std::function<void()> callback = {});
     void setChannelMuted(BackendChannel& channel, bool muted,
                          std::function<void(bool)> callback = {});
@@ -79,6 +86,8 @@ public:
 signals:
     void channelMutedChanged(const QString& channelId, bool muted);
     void channelMentionedChanged(const QString& channelId, bool mentioned);
+    void channelActivityChanged(const QString& channelId);
+    void channelActivityReset();
     void categoriesChanged(const QString& teamId);
 
 private:
@@ -86,12 +95,15 @@ private:
 
     QString currentUserId() const;
     QString categoriesPath(const QString& teamId) const;
+    void recordChannelPost(BackendChannel& channel, const BackendPost& post);
+    void recordChannelViewed(const BackendChannel& channel);
 
     Backend& backend;
     HTTPConnector httpConnector;
     QSet<QString> mutedChannelIds;
     QSet<QString> mentionedChannelIds;
     QMap<QString, SidebarTeamState> sidebarByTeam;
+    ChannelActivityTracker activityTracker;
 };
 
 } // namespace Mattermost
