@@ -24,7 +24,10 @@
 
 #pragma once
 
+#include <QPersistentModelIndex>
 #include <QTimer>
+#include <QVariantAnimation>
+
 #include "ResizableListWidget.h"
 #include "post/PostWidget.h"
 
@@ -55,7 +58,49 @@ public:
 	void insertPost (PostWidget* postWidget);
 	PostWidget* findPost (const QString& postId);
 	int findPostByIndex (const QString& postId, int startIndex);
-	void highlightPost(const QString& postId);
+
+	void highlightPost(const QString& postId)
+	{
+		const int row = findPostByIndex(postId, 0);
+		if (row < 0) {
+			return;
+		}
+
+		QListWidgetItem* listItem = item(row);
+		if (!listItem) {
+			return;
+		}
+
+		const QPersistentModelIndex index = indexFromItem(listItem);
+		auto* animation = new QVariantAnimation(this);
+		animation->setDuration(1400);
+
+		QColor start = palette().color(QPalette::Highlight);
+		start.setAlpha(120);
+		QColor finish = start;
+		finish.setAlpha(0);
+		animation->setStartValue(start);
+		animation->setEndValue(finish);
+		animation->setEasingCurve(QEasingCurve::OutCubic);
+
+		connect(animation, &QVariantAnimation::valueChanged, this,
+		        [this, index](const QVariant& value) {
+			if (!index.isValid()) {
+				return;
+			}
+			if (QListWidgetItem* current = itemFromIndex(index)) {
+				current->setBackground(QBrush(value.value<QColor>()));
+			}
+		});
+		connect(animation, &QVariantAnimation::finished, this, [this, index] {
+			if (index.isValid()) {
+				if (QListWidgetItem* current = itemFromIndex(index)) {
+					current->setBackground(QBrush());
+				}
+			}
+		});
+		animation->start(QAbstractAnimation::DeleteWhenStopped);
+	}
 
 	// QListWidget::clear(), scrollToItem() and scrollToBottom() are not virtual.
 	// ChatArea uses the concrete PostsListWidget type, so hiding them here lets
