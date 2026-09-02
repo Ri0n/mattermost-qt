@@ -36,6 +36,7 @@
 #include "SettingsWindow.h"
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
+#include "backend/UserProfileService.h"
 #include "build-config.h"
 #include "channel-tree/ChannelQuickList.h"
 #include "chat-area/ChatArea.h"
@@ -74,6 +75,7 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	}
 
 	auto& sidebar = SidebarService::instance(backend);
+	auto& userProfiles = UserProfileService::instance(backend);
 	connect(&sidebar, &SidebarService::channelActivityChanged, this,
 	        [this](const QString&) { refreshChannelQuickLists(); });
 	connect(&sidebar, &SidebarService::channelActivityReset,
@@ -105,6 +107,7 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	unreadChannels->initialize(backend, ChannelQuickList::Unreads);
 
 	sidebar.clear();
+	userProfiles.clear();
 	sidebar.retrieveChannelMemberships();
 
 	connect (&currentUser, &BackendUser::onStatusChanged, [this, &currentUser] {
@@ -122,29 +125,6 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	 * Gets the LoginUser's image for the user icon
 	 */
 	//backend.retrieveUserAvatar (currentUser.id);
-
-	backend.retrieveTotalUsersCount ([this] (uint32_t) {
-		backend.retrieveKnownUsers ([this]() {
-				backend.retrieveAllUsers ();
-			}
-		);
-	});
-
-	/*
-	 * Register for signals
-	 */
-	//connect (ui->channelList, &QTreeWidget::currentItemChanged, this, &MainWindow::channelListWidget_itemClicked);
-
-	//getAllUsers is called from onShowEvent()
-	connect (&backend, &Backend::onAllUsers, [this]() {
-		/*
-		 * Adds each team in which the LoginUser participates.
-		 * The callback is called once for each team
-		 */
-		backend.retrieveOwnTeams ([this](BackendTeam& team) {
-			ui->channelList->addTeam (backend, team);
-		});
-	});
 
 	/*
 	 * The Mattermost sidebar categories are per-user and per-team. Wait until all
@@ -178,6 +158,14 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	 * On new post - set window and tray notifications
 	 */
 	connect (&backend, &Backend::onUnreadPostsAtStartup, this, &MainWindow::unreadMessagesNotify);
+
+	// The old startup path downloaded every active user on the server before it
+	// even asked for our teams. Large installations easily turn that into dozens
+	// of simultaneous /users?page=N requests. Channels contain the user IDs we
+	// actually need, so profiles are now fetched lazily in small batches.
+	backend.retrieveOwnTeams ([this](BackendTeam& team) {
+		ui->channelList->addTeam (backend, team);
+	});
 
 	LOG_DEBUG ("MainWindow signal register finish");
 
@@ -257,7 +245,6 @@ void MainWindow::setupChannelTabs ()
 	sidebarSplitter->addWidget(ui->chatAreaStackedWidget);
 	sidebarSplitter->setStretchFactor(0, 0);
 	sidebarSplitter->setStretchFactor(1, 1);
-
 	ui->gridLayout_2->addWidget(sidebarSplitter, 0, 0, 2, 2);
 	ui->gridLayout_2->setRowStretch(0, 1);
 	ui->gridLayout_2->setRowStretch(1, 0);
@@ -573,4 +560,3 @@ void MainWindow::saveState ()
 }
 
 } /* namespace Mattermost */
-
