@@ -15,12 +15,12 @@ class SidebarItemDelegateTest : public QObject
     Q_OBJECT
 
 private:
-    static QImage renderChannel(BackendChannel::type type, const QString& presence)
+    static QImage renderChannel(int channelType, const QString& presence)
     {
         QStandardItemModel model;
         auto* item = new QStandardItem(QStringLiteral("conversation"));
         item->setData(SidebarItem::Channel, SidebarItem::KindRole);
-        item->setData(type, SidebarItem::ChannelTypeRole);
+        item->setData(channelType, SidebarItem::ChannelTypeRole);
         item->setData(presence, SidebarItem::PresenceRole);
 
         QPixmap avatar(24, 24);
