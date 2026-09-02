@@ -79,6 +79,7 @@ public:
 	BackendNotifyPreps 	notify_preps;
 	BackendUserProps	props;
 	uint64_t 			last_password_update;
+	uint64_t			last_picture_update;
 	QString 			locale;
 	BackendTimeZone		timezone;
 	bool				isLoginUser;
