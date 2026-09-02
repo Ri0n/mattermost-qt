@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -70,6 +70,12 @@ PostsListWidget::PostsListWidget (QWidget* parent)
 ,currentEditedItem (nullptr)
 ,menuShown (false)
 {
+	// Scroll anchors are expressed in pixels (post bottom relative to viewport
+	// bottom), so keep the view's scrollbar in the same coordinate system on all
+	// styles/platforms instead of relying on the style-dependent ScrollPerItem
+	// default.
+	setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+
 	removeNewMessagesSeparatorTimer.setSingleShot (true);
 	connect (&removeNewMessagesSeparatorTimer, &QTimer::timeout, this, &PostsListWidget::removeNewMessagesSeparator);
 
@@ -172,8 +178,8 @@ void PostsListWidget::freezeCurrentViewportAnchor()
 		saveScrollAnchor();
 	}
 	if (savedScrollAnchor.valid) {
-		// Once the chat stops being actively viewed, "bottom" must refer to the
-		// concrete post that was visible now, not to a moving future bottom.
+		// "At bottom" is useful read-state information, but it is never a moving
+		// scroll target. Preserve the concrete post that was visible now.
 		savedScrollAnchor.atBottom = false;
 	}
 }
@@ -219,9 +225,7 @@ void PostsListWidget::clear()
 {
 	// Do not sample the scrollbar here. clear() is itself an automatic action,
 	// and the viewport may already have been displaced by an asynchronous layout
-	// just before deactivation. If the user had been at the bottom, freeze the
-	// already-saved bottom-most post so messages arriving while this chat is
-	// inactive cannot move the saved position to a newer future bottom.
+	// just before deactivation. Preserve the already committed user anchor.
 	freezeCurrentViewportAnchor();
 
 	removeNewMessagesSeparatorTimer.stop();
@@ -257,13 +261,6 @@ void PostsListWidget::scheduleSavedScrollAnchorRestore()
 void PostsListWidget::restoreSavedScrollAnchor(quint64 generation)
 {
 	if (!savedScrollAnchor.valid || generation != scrollIntentGeneration) {
-		return;
-	}
-
-	if (savedScrollAnchor.atBottom) {
-		restoringSavedScroll = true;
-		QListWidget::scrollToBottom();
-		restoringSavedScroll = false;
 		return;
 	}
 
@@ -326,7 +323,8 @@ void PostsListWidget::scrollToItem(const QListWidgetItem* listItem, QAbstractIte
 
 	// An explicit scrollToItem() is semantic navigation (go to pinned post,
 	// unread separator, quote, etc.), not a layout side effect. It becomes the
-	// new durable viewport just like a user scroll.
+	// new durable viewport just like a user scroll, but does not emit the
+	// userViewportChanged read-tracking signal.
 	++scrollIntentGeneration;
 	restoringSavedScroll = true;
 	QListWidget::scrollToItem(listItem, hint);
@@ -340,20 +338,15 @@ void PostsListWidget::scrollToItem(const QListWidgetItem* listItem, QAbstractIte
 void PostsListWidget::scrollToBottom()
 {
 	if (savedScrollAnchor.valid) {
-		// Existing chat: the persistent anchor, not the current scrollbar value,
-		// decides what automatic "scroll to bottom" requests are allowed to do.
-		if (savedScrollAnchor.atBottom) {
-			restoringSavedScroll = true;
-			QListWidget::scrollToBottom();
-			restoringSavedScroll = false;
-		} else {
-			scheduleSavedScrollAnchorRestore();
-		}
+		// This method is used by layout/population/new-post code. Once a viewport
+		// has been established, automatic calls must never advance it, even if the
+		// user happened to be at the old bottom before new content appeared.
+		scheduleSavedScrollAnchorRestore();
 		return;
 	}
 
 	// First population has no user viewport yet. The historical behaviour is to
-	// open at the bottom; make that initial position the durable anchor.
+	// open at the bottom; make that initial position the durable concrete anchor.
 	restoringSavedScroll = true;
 	QListWidget::scrollToBottom();
 	restoringSavedScroll = false;
@@ -624,7 +617,7 @@ QList<QListWidgetItem*> PostsListWidget::sortedSelectedItems () const
 	QList<QListWidgetItem*> sortedItems;
 
 	for (auto item: set) {
-		sortedItems.push_back (item);
+		set.push_back (item);
 	}
 
 	return sortedItems;
