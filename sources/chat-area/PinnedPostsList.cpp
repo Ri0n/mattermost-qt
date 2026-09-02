@@ -40,6 +40,9 @@
 #include "ui_PinnedPostsList.h"
 
 namespace Mattermost {
+namespace {
+constexpr int PinnedNavigationQuietPeriodMs = 5000;
+}
 
 PinnedPostsList::PinnedPostsList(QWidget *parent)
 :QWidget(parent)
@@ -135,7 +138,7 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
         // Keep the target authoritative before starting any asynchronous context
         // request. Sparse page materialization and image reflow may continue for
         // a while after the visible jump; they must not restore the old bottom.
-        chatArea->lockNavigationToPost(navigationId);
+        chatArea->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
 
         // Context must be fetched even when the target object is already in the
         // backend cache. A cached post is not necessarily materialized as a row
@@ -150,7 +153,7 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
                 }
                 // Restart the quiet period after the context response: this is
                 // exactly when the sparse controller may rebuild the timeline.
-                guard->lockNavigationToPost(navigationId);
+                guard->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
                 guard->ensurePostVisible(navigationId);
                 guard->goToPost(navigationId);
             },
