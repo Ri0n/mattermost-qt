@@ -41,10 +41,15 @@ void Storage::reset ()
 	teams.clear();
 
 	directChannels.channels.clear();
+	directChannels.members.clear();
+	directChannelsByUser.clear();
 	groupChannels.channels.clear();
+	groupChannels.members.clear();
 
 	channels.clear();
 	users.clear();
+	loginUser = nullptr;
+	matterpollUser = nullptr;
 	totalUsersCount = 0;
 }
 
@@ -291,15 +296,20 @@ BackendUser* Storage::addUser (const QJsonObject& json, bool isLoggedInUser)
 
 	BackendUser* user;
 
-	//user already exists. This is the case of the LoginUser - it is filled during login
 	if (it != users.end()) {
 		user = &it->second;
+		QString updatedProperties;
+		user->updateFrom(BackendUser(json), updatedProperties);
+		if (!updatedProperties.isEmpty()) {
+			LOG_DEBUG("Updated cached user " << userId << ":\n" << updatedProperties);
+		}
 	} else {
 		user = &users.emplace (userId, json).first->second;
 	}
 
 	if (isLoggedInUser) {
 		loginUser = user;
+		user->isLoginUser = true;
 	}
 
 	if (user->username == "matterpoll") {
@@ -319,7 +329,6 @@ void Storage::eraseTeam (const QString& teamID)
 
 			LOG_DEBUG ("Team Channel: " << it->id);
 			auto channelIt = channels.find (it->id);
-
 			if (channelIt != channels.end()) {
 				LOG_DEBUG ("Erase Channel: " << channelIt.key() << " " << channelIt.value() << " " << channelIt.value()->name);
 				channels.erase (channelIt);
