@@ -136,15 +136,16 @@ jobs:
 
       - name: Verify deployed runtime
         run: |
-          cmake --install build --prefix stage
+          $stage = Join-Path $env:GITHUB_WORKSPACE "stage"
+          cmake --install build --prefix "$stage"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $required = @(
-            "stage/bin/mattermost-qt.exe",
-            "stage/bin/Qt6Core.dll",
-            "stage/bin/Qt6Widgets.dll",
-            "stage/bin/Qt6Network.dll",
-            "stage/bin/Qt6WebSockets.dll",
-            "stage/bin/platforms/qwindows.dll"
+            (Join-Path $stage "bin/mattermost-qt.exe"),
+            (Join-Path $stage "bin/Qt6Core.dll"),
+            (Join-Path $stage "bin/Qt6Widgets.dll"),
+            (Join-Path $stage "bin/Qt6Network.dll"),
+            (Join-Path $stage "bin/Qt6WebSockets.dll"),
+            (Join-Path $stage "bin/platforms/qwindows.dll")
           )
           foreach ($path in $required) {
             if (-not (Test-Path $path)) {
