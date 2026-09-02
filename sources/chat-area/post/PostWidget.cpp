@@ -161,8 +161,7 @@ void PostWidget::setAuthor(Backend& backend, const BackendUser* user)
 
 	if (user->avatar.isNull()
 		|| user->avatar_picture_update != user->last_picture_update) {
-		UserProfileService::instance(backend).ensureAvatar(
-			*const_cast<BackendUser*>(user));
+		UserProfileService::instance(backend).ensureAvatar(*user);
 	} else {
 		ui->authorAvatar->setPixmap(user->avatar);
 	}
