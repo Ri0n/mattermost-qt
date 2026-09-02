@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -28,6 +28,8 @@
 #include <QMenu>
 #include <QApplication>
 #include <QClipboard>
+#include <QPersistentModelIndex>
+#include <QPointer>
 #include <QResizeEvent>
 #include "post-separator/PostDaySeparatorWidget.h"
 #include "backend/Backend.h"
@@ -75,11 +77,26 @@ void PostsListWidget::insertPost (int position, PostWidget* postWidget)
 		lastOwnPost = newItem;
 	}
 
-	connect (postWidget, &PostWidget::dimensionsChanged, [this, postWidget, newItem] {
-		QListWidgetItem* firstPost = itemAt (QPoint(0,10));
-		newItem->setSizeHint (postWidget->sizeHint());
-		scrollToItem(firstPost, QAbstractItemView::PositionAtTop);
-	});
+	// MessageContentWidget emits dimensionsChanged asynchronously after text/image
+	// reflow. A post row may have been removed by the time that queued update is
+	// delivered, so never retain a raw QListWidgetItem pointer in this callback.
+	// QPersistentModelIndex is invalidated by row removal and QPointer protects
+	// the widget side. Let ResizableListWidget coalesce the actual geometry work.
+	const QPersistentModelIndex itemIndex = indexFromItem(newItem);
+	QPointer<PostWidget> guardedPost(postWidget);
+	connect (postWidget, &PostWidget::dimensionsChanged, this,
+		[this, itemIndex, guardedPost] {
+			if (!guardedPost || !itemIndex.isValid()) {
+				return;
+			}
+
+			QListWidgetItem* currentItem = itemFromIndex(itemIndex);
+			if (!currentItem || itemWidget(currentItem) != guardedPost.data()) {
+				return;
+			}
+
+			scheduleItemResize(currentItem, guardedPost.data());
+		});
 }
 
 void PostsListWidget::insertPost (PostWidget* postWidget)
