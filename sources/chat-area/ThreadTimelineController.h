@@ -18,14 +18,11 @@
 
 #include "backend/PostTimeline.h"
 
-class QListWidgetItem;
-
 namespace Mattermost {
 
 class ChatArea;
 class ThreadTimelineController;
 
-/** Created from ChatArea's late member initializer; returns null for channels. */
 ThreadTimelineController* createThreadTimelineController(ChatArea& area);
 
 class ThreadTimelineController : public QObject
@@ -40,11 +37,13 @@ private:
     void requestSeek(int logicalIndex);
     void scheduleViewportCheck();
     void checkViewport();
+    int logicalIndexForNearbyGap(bool* viewportCenterInsideGap) const;
+
     void renderTimeline(const QString& focusPostId = QString(), bool focusAtTop = false);
     void updateGapHeights();
-    void scheduleMeasuredHeightUpdate(const QString& postId);
-    QListWidgetItem* gapAtViewportCenter() const;
-    int logicalIndexInsideGap(const QListWidgetItem* gapItem) const;
+    void scheduleMeasurementPass();
+    void measureRenderedPosts();
+    void schedulePaintResume(quint64 renderId);
 
     ChatArea& area;
     QString rootId;
@@ -52,10 +51,14 @@ private:
     uint64_t cursorCreateAt = 0;
     PostTimeline timeline;
     QTimer seekTimer;
+    QTimer measurementTimer;
     int expectedPostCount = 1;
     int nextLogicalIndex = 0;
     int initialPagesRemaining = 0;
     int pendingSeekIndex = -1;
+    int lastAppliedGapRowHeight = 96;
+    quint64 renderGeneration = 0;
+    bool initialPrefetchDone = false;
     bool requestInFlight = false;
     bool hasNext = true;
     bool viewportCheckScheduled = false;
