@@ -16,6 +16,12 @@ void PostsListWidget::lockTimelineNavigationToPost(const QString& postId,
         return;
     }
 
+    if (!timelineNavigationUserCancelConnected) {
+        timelineNavigationUserCancelConnected = true;
+        connect(this, &PostsListWidget::userViewportChanged, this,
+                [this](bool) { clearTimelineNavigationLock(); });
+    }
+
     timelineNavigationPostId = postId;
     timelineNavigationTopOffset = std::max(0, viewportTopOffset);
     timelineNavigationQuietPeriodMs = std::max(250, quietPeriodMs);
