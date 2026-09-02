@@ -101,21 +101,9 @@ AttentionList::AttentionList(QWidget* parent)
         const QString channelId = current->data(0, ChannelIdRole).toString();
         if (type == ChannelEntry) {
             if (!channelId.isEmpty()) {
+                // ChannelTree/ChatArea owns read acknowledgement. It waits until
+                // the selected conversation's newest content is actually visible.
                 emit channelSelected(channelId);
-
-                // Selecting an Attention conversation is an explicit reading
-                // action, just like selecting a thread below. In particular,
-                // the chat may already open at its newest unread message, so
-                // requiring a no-op wheel gesture before acknowledging it is
-                // artificial. This path is intentionally Attention-only;
-                // ordinary channel activation and layout-driven scrolling still
-                // cannot advance the viewed state.
-                if (backend) {
-                    if (BackendChannel* channel = backend->getStorage().getChannelById(channelId)) {
-                        SidebarService::instance(*backend).markChannelViewedLocally(*channel);
-                        backend->markChannelAsViewed(*channel);
-                    }
-                }
             }
             return;
         }
