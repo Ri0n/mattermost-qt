@@ -68,6 +68,29 @@ private slots:
         QVERIFY2(list.visualItemRect(item).height() >= row->sizeHint().height(),
                  "The actual painted row must fit text, attachment and thread button");
     }
+
+    void removedRowInvalidatesPendingResize()
+    {
+        ResizableListWidget list;
+        list.resize(520, 300);
+
+        auto* row = new QWidget;
+        auto* layout = new QVBoxLayout(row);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->addWidget(new QLabel(QStringLiteral("queued resize"), row));
+
+        auto* item = new QListWidgetItem;
+        list.addItem(item);
+        list.setItemWidget(item, row);
+
+        // setItemWidget() schedules a zero-timeout resize. Remove the model row
+        // before that callback can run. QPersistentModelIndex must invalidate it
+        // so the callback never dereferences the deleted QListWidgetItem.
+        delete list.takeItem(0);
+        settleEvents();
+
+        QCOMPARE(list.count(), 0);
+    }
 };
 
 QTEST_MAIN(ResizableListWidgetTest)
