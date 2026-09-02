@@ -84,6 +84,16 @@ void ThreadTimelineController::start()
         return;
     }
 
+    // The legacy thread ChatArea renders BackendChannel::onNewPosts/onNewPost
+    // directly. A sparse timeline must have exactly one materialization owner,
+    // otherwise every fetched page is inserted once by ChatArea and then again
+    // by this controller before the next event-loop turn. Keep the other thread
+    // connections (input completion, edits, reactions, follow state) intact.
+    QObject::disconnect(&area.channel, &BackendChannel::onNewPosts,
+                        &area, &ChatArea::fillChannelPosts);
+    QObject::disconnect(&area.channel, &BackendChannel::onNewPost,
+                        &area, &ChatArea::appendChannelPost);
+
     BackendPost* root = area.channel.postIdToPost.value(rootId, nullptr);
     expectedPostCount = expectedThreadPostCount(root, area.channel, rootId);
 
@@ -120,10 +130,11 @@ void ThreadTimelineController::start()
             ++expectedPostCount;
         }
         timeline.setTotalCount(expectedPostCount);
-        // A websocket reply is the new logical end. Keep it visible as a real
-        // row even when the middle of the thread is still represented by a gap.
+        // A websocket reply is the new logical end. Materialize it but preserve
+        // the user's current concrete anchor; merely receiving a reply is not a
+        // navigation gesture.
         timeline.placeWindow(expectedPostCount - 1, QStringList {post.id});
-        renderTimeline(post.id, false);
+        renderTimeline();
     });
     connect(&area.channel, &BackendChannel::onPostEdited, this,
             [this](BackendPost& post) {
