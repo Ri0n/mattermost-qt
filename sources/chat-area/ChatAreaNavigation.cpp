@@ -18,17 +18,12 @@ bool ChatArea::ensurePostVisible(const QString& postId)
     }
 
     PostsListWidget* list = ui->listWidget;
-
-    // Explicit semantic navigation owns a bounded context window. Do this even
-    // when the target row is already present: the surrounding cache may have
-    // just been refreshed and the controller must establish the cursor edges
-    // that subsequent user scrolling extends from.
-    if (channelTimelineController
-        && channelTimelineController->ensurePinnedPostVisible(postId)) {
+    if (list->findPost(postId)) {
         return true;
     }
 
-    if (list->findPost(postId)) {
+    if (channelTimelineController
+        && channelTimelineController->ensurePostVisible(postId)) {
         return true;
     }
 
@@ -64,6 +59,24 @@ bool ChatArea::ensurePostVisible(const QString& postId)
     list->insertPost(insertRow, new PostWidget(backend, *post, list, this, nullptr));
     list->updateGeometry();
     return list->findPost(postId) != nullptr;
+}
+
+bool ChatArea::ensurePinnedPostVisible(const QString& postId,
+                                       const QStringList& contextPostIds,
+                                       bool reachedOldest,
+                                       bool reachedNewest)
+{
+    if (isThread || postId.isEmpty() || !ui || !ui->listWidget) {
+        return false;
+    }
+
+    if (channelTimelineController
+        && channelTimelineController->ensurePinnedPostVisible(
+            postId, contextPostIds, reachedOldest, reachedNewest)) {
+        return true;
+    }
+
+    return ensurePostVisible(postId);
 }
 
 void ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
