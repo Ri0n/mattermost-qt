@@ -33,7 +33,8 @@ BackendTeamMember::BackendTeamMember (const Storage& storage, const QJsonObject&
 :delete_at (jsonObject.value("delete_at").toVariant().toULongLong())
 ,explicit_roles (jsonObject.value("explicit_roles").toString())
 ,roles (jsonObject.value("roles").toString())
-,user (storage.getUserById (jsonObject.value("user_id").toString()))
+,userId (jsonObject.value("user_id").toString())
+,user (storage.getUserById (userId))
 ,isAdmin (jsonObject.value("scheme_admin").toBool())
 {
 }
@@ -42,8 +43,7 @@ BackendTeamMember::~BackendTeamMember () = default;
 
 QString BackendTeamMember::getDisplayUsername () const
 {
-	return user ? user->getDisplayName() : "(null)";
+	return user ? user->getDisplayName() : userId;
 }
 
 } /* namespace Mattermost */
-
