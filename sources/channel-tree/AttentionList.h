@@ -8,7 +8,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -32,8 +32,6 @@
 
 #include "backend/HTTPConnector.h"
 
-class QHideEvent;
-
 namespace Mattermost {
 
 class Backend;
@@ -49,13 +47,12 @@ public:
     void initialize(Backend& backend);
     void refresh();
     void refreshThreads();
+    void releaseSelectionRetention();
 
 signals:
     void channelSelected(const QString& channelId);
     void threadSelected(const QString& channelId, const QString& rootPostId);
-
-protected:
-    void hideEvent(QHideEvent* event) override;
+    void attentionCountChanged(uint32_t count);
 
 private:
     struct ThreadEntry {
@@ -84,7 +81,6 @@ private:
     };
 
     void retainSelection(QTreeWidgetItem* item);
-    void releaseRetainedSelection();
     void notePost(BackendChannel& channel, const BackendPost& post);
     void clearSyntheticMentions(const QString& channelId);
     void scheduleThreadRefresh();
@@ -112,6 +108,7 @@ private:
     bool threadRefreshInFlight = false;
     bool threadRefreshRequested = false;
     quint64 threadRefreshGeneration = 0;
+    int lastAttentionCount = -1;
 };
 
 } // namespace Mattermost
