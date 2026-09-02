@@ -16,7 +16,10 @@ constexpr int PinnedWindowSize = 31;
 
 } // namespace
 
-bool ChannelTimelineController::ensurePinnedPostVisible(const QString& postId)
+bool ChannelTimelineController::ensurePinnedPostVisible(const QString& postId,
+                                                        const QStringList& contextPostIds,
+                                                        bool reachedOldest,
+                                                        bool reachedNewest)
 {
     if (!active || postId.isEmpty() || !area.ui || !area.ui->listWidget) {
         return false;
@@ -27,16 +30,8 @@ bool ChannelTimelineController::ensurePinnedPostVisible(const QString& postId)
         return false;
     }
 
-    QStringList chronologicalRootIds;
-    chronologicalRootIds.reserve(static_cast<int>(area.channel.posts.size()));
-    for (const BackendPost& post : area.channel.posts) {
-        if (!post.hidden && post.root_id.isEmpty()) {
-            chronologicalRootIds.push_back(post.id);
-        }
-    }
-
     const QStringList contextIds = selectPostWindow(
-        chronologicalRootIds, postId, PinnedWindowSize);
+        contextPostIds, postId, PinnedWindowSize);
     if (contextIds.isEmpty()) {
         return false;
     }
@@ -44,8 +39,12 @@ bool ChannelTimelineController::ensurePinnedPostVisible(const QString& postId)
     if (contextNavigationActive && contextNavigationPostId == postId) {
         contextOldestPostId = contextIds.first();
         contextNewestPostId = contextIds.last();
-        contextReachedOldest = contextOldestPostId == chronologicalRootIds.first();
-        contextReachedNewest = contextNewestPostId == chronologicalRootIds.last();
+        // A server edge is authoritative only when the selected 31-row window
+        // actually includes that edge of the request-local reserve.
+        contextReachedOldest = reachedOldest
+            && contextOldestPostId == contextPostIds.first();
+        contextReachedNewest = reachedNewest
+            && contextNewestPostId == contextPostIds.last();
     }
 
     const int existingTargetIndex = timeline.indexOf(postId);
