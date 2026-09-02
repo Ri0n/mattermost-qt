@@ -111,6 +111,7 @@ protected:
 
 private:
 	void showContextMenu (const QPoint& pos);
+	void handleChannelLeave();
 	void refreshTeamSidebar(Backend& backend, BackendTeam& team);
 	void renderTeamSidebar(Backend& backend, TeamItem& teamItem,
 	                       const SidebarTeamState& state);
