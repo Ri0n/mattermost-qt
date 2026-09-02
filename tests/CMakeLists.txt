@@ -174,3 +174,20 @@ target_link_libraries(post-timeline-test
 )
 
 add_test(NAME post-timeline-test COMMAND post-timeline-test)
+
+add_executable(post-window-selection-test
+    PostWindowSelectionTest.cpp
+)
+
+target_include_directories(post-window-selection-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(post-window-selection-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME post-window-selection-test COMMAND post-window-selection-test)
