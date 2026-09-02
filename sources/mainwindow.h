@@ -21,7 +21,6 @@
 
 #include <memory>
 #include <QMainWindow>
-#include <QSet>
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
 
 QT_BEGIN_NAMESPACE
@@ -98,13 +97,14 @@ private:
 	QSystemTrayIcon&					trayIcon;
 	std::unique_ptr<NotificationManager>	notificationManager;
 	ChooseEmojiDialogWrapper			chooseEmojiDialog;
-	QSet<const BackendChannel*>			channelsWithNewPosts;
 	Backend&							backend;
 	QSplitter*							sidebarSplitter = nullptr;
 	QTabWidget*							channelTabs = nullptr;
+	QWidget*							channelsPage = nullptr;
 	QToolButton*						unreadFilterButton = nullptr;
 	ChannelQuickList*					recentChannels = nullptr;
 	AttentionList*						attentionList = nullptr;
+	QString								retainedUnreadFilterChannelId;
 	bool								currentTeamRestoredFromSettings;
 	QMenu*								mainMenu;
 	SettingsWindow*						settingsWindow;
