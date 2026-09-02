@@ -19,7 +19,7 @@
 
 #include "ChatArea.h"
 
-#include <QDockWidget> 
+#include <QDockWidget>
 #include "channel-tree/ChannelItem.h"
 #include "ui_ChatArea.h"
 #include "post/PostWidget.h"
@@ -128,14 +128,7 @@ void ChatArea::init() {
 	connect (&channel, &BackendChannel::onNewPosts, this,  &ChatArea::fillChannelPosts);
 
 	signalConnections.push_back( connect (&channel, &BackendChannel::onPinnedPostsReceived,this, [this] () {
-		ui->pinnedPostsButton->show();
-		const auto pinnedPostCount = this->channel.pinnedPosts.size();
-		const char* pinnedPostsString[2] = {
-			" pinned post",
-			" pinned posts"
-		};
-
-		ui->pinnedPostsButton->setText (QString::number (static_cast<qulonglong>(pinnedPostCount)) + pinnedPostsString[pinnedPostCount > 1]);
+		updatePinnedPostsButton();
 	})
 	);
 
@@ -290,7 +283,9 @@ void ChatArea::init() {
 
 		}
 		ui->listWidget->updateGeometry();
-		ui->listWidget->verticalScrollBar()->setValue(scrollRatio*(double)ui->listWidget->verticalScrollBar()->maximum());
+		// PostsListWidget owns the durable post-id/offset anchor. Requesting a
+		// resize restoration here is intentionally independent of scrollbar ratio.
+		ui->listWidget->resizeToBottom();
 	} else {
 		// backend.retrieveChannelUnreadPost (channel, [this] (const QString& postId){
 		// 	lastReadPostId = postId;
@@ -300,8 +295,9 @@ void ChatArea::init() {
 		postsRetrieved = true;
 	}
 
-	//hide the pinned posts button by default. It will be shown if the channel has pinned posts
-	ui->pinnedPostsButton->hide();
+	// Pinned posts may have been retrieved before this lazy ChatArea existed.
+	// Never rely solely on the edge-triggered onPinnedPostsReceived signal.
+	updatePinnedPostsButton();
 
 	//hide the users button. It will be shown when the channel members list is retrieved
 	ui->usersButton->hide();
@@ -330,8 +326,6 @@ void ChatArea::deinit() {
 		disconnect(it);
 	}
 	disconnect(&channel, &BackendChannel::onNewPost, this, &ChatArea::appendChannelPost);
-	const int scrollMaximum = ui->listWidget->verticalScrollBar()->maximum();
-	scrollRatio = scrollMaximum == 0 ? 0.0 : (double)ui->listWidget->verticalScrollBar()->value() / (double)scrollMaximum;
 	signalConnections.clear();
 	ui->listWidget->clear();
 	lastReadPostId.clear();
@@ -464,7 +458,7 @@ ChatArea::ChatArea (Backend& backend, BackendChannel& channel, QString rootId, C
 		setTextEditWidgetHeight (height);
 	});
 
-	//hide the pinned posts button by default. It will be shown if the channel has pinned posts
+	//threads do not expose the channel-level pinned-posts panel
 	ui->pinnedPostsButton->hide();
 
 	//hide the users button. It will be shown when the channel members list is retrieved
@@ -499,6 +493,30 @@ Backend& ChatArea::getBackend ()
 BackendChannel& ChatArea::getChannel ()
 {
 	return channel;
+}
+
+void ChatArea::updatePinnedPostsButton ()
+{
+	if (isThread || channel.pinnedPosts.empty()) {
+		ui->pinnedPostsButton->hide();
+		return;
+	}
+
+	const auto pinnedPostCount = channel.pinnedPosts.size();
+	ui->pinnedPostsButton->setText(
+		QString::number(static_cast<qulonglong>(pinnedPostCount))
+		+ (pinnedPostCount == 1 ? QStringLiteral(" pinned post")
+		                        : QStringLiteral(" pinned posts")));
+	ui->pinnedPostsButton->show();
+}
+
+void ChatArea::markChannelViewedIfAtBottom ()
+{
+	if (isThread || !initialized || !ui->listWidget->isAtBottom()) {
+		return;
+	}
+	setUnreadMessagesCount(0);
+	backend.markChannelAsViewed(channel);
 }
 
 void ChatArea::fillChannelPosts (const ChannelNewPosts& newPosts)
@@ -753,9 +771,12 @@ void ChatArea::setUnreadMessagesCount (uint32_t count)
 
 void ChatArea::resizeEvent (QResizeEvent* event)
 {
-	if (!initialized)
+	if (!initialized) {
+		QWidget::resizeEvent(event);
 		return;
-	//if the listWidget is near bottom of the posts list, keep it at bottom
+	}
+	// PostsListWidget distinguishes this layout-driven resize from user scroll
+	// and restores its durable message anchor after the geometry settles.
 	ui->listWidget->resizeToBottom();
 	QWidget::resizeEvent (event);
 }
