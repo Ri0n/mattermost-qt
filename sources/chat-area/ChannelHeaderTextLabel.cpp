@@ -49,6 +49,22 @@ ChannelHeaderTextLabel::ChannelHeaderTextLabel(QWidget* parent)
 void ChannelHeaderTextLabel::setText(const QString& text)
 {
     sourceText = text;
+
+    // QTextDocument::toHtml() returns a complete HTML document even for an
+    // empty Markdown source. Keep QLabel::text() genuinely empty here because
+    // ChatArea uses text().isEmpty() to decide whether a DM presence string
+    // (online/offline/etc.) still needs to be installed.
+    if (text.isEmpty()) {
+        formattedText.clear();
+        QLabel::setText(QString());
+        updateCollapsedHeight();
+        hidePopover();
+        if (popover) {
+            popover->clear();
+        }
+        return;
+    }
+
     formattedText = MessageFormatter::formatMessageText(text);
     QLabel::setText(formattedText);
     updateCollapsedHeight();
