@@ -111,8 +111,6 @@ bool ChannelTimelineController::eventFilter(QObject* watched, QEvent* event)
                 return;
             }
             BackendChannel* current = guard->area.backend.getCurrentChannel();
-            // During startup QStackedWidget can hide/show pages before Backend
-            // has selected any channel. nullptr is not evidence of navigation.
             if (current && current != &guard->area.channel) {
                 guard->deactivate();
                 return;
@@ -178,20 +176,21 @@ void ChannelTimelineController::start()
     deferredExternalPostIds.clear();
     nextOlderPage = 0;
     initialRenderDone = false;
+    lastUserViewportAnchor = ViewportAnchor();
+    contextNavigationActive = false;
+    contextNavigationPostId.clear();
+    contextOldestPostId.clear();
+    contextNewestPostId.clear();
+    contextReachedOldest = false;
+    contextReachedNewest = false;
 
     totalCountExact = area.channel.has_total_msg_count_root;
     expectedPostCount = channelRootPostCount();
     timeline.reset(expectedPostCount);
     lastAppliedGapRowHeight = timeline.estimatedRowHeight();
 
-    // Sparse history is the sole bulk renderer. ChatArea keeps live onNewPost,
-    // edits, reactions and read handling, but must not materialize REST pages in
-    // parallel with this controller.
     QObject::disconnect(&area.channel, &BackendChannel::onNewPosts,
                         &area, &ChatArea::fillChannelPosts);
-
-    // Also keeps the legacy load-old callbacks inert while this controller is
-    // active; their lambdas guard on gettingOlderPosts.
     area.gettingOlderPosts = true;
 
     connect(area.ui->loadOldPosts, &QPushButton::clicked,
@@ -203,7 +202,10 @@ void ChannelTimelineController::start()
     connect(scrollBar, &QScrollBar::sliderReleased, this,
             [this] { scheduleViewportCheck(); });
     connect(area.ui->listWidget, &PostsListWidget::userViewportChanged, this,
-            [this](bool) { scheduleViewportCheck(); });
+            [this](bool) {
+        lastUserViewportAnchor = captureViewportAnchor();
+        scheduleViewportCheck();
+    });
 
     connect(&area.channel, &BackendChannel::onNewPosts, this,
             &ChannelTimelineController::absorbNewPosts);
@@ -219,11 +221,41 @@ void ChannelTimelineController::start()
         scheduleMeasurementPass();
     });
 
-    // One page is enough for roughly three screens on the current UI. Paint it
-    // immediately; additional pages are true prefetch and are requested only
-    // when the viewport approaches an unloaded gap.
     initialPageTarget = 1;
     continueInitialPrefetch();
+}
+
+void ChannelTimelineController::beginContextNavigation(const QString& postId)
+{
+    if (!active || postId.isEmpty()) {
+        return;
+    }
+
+    contextNavigationActive = true;
+    contextNavigationPostId = postId;
+    contextOldestPostId.clear();
+    contextNewestPostId.clear();
+    contextReachedOldest = false;
+    contextReachedNewest = false;
+    lastUserViewportAnchor = ViewportAnchor();
+    pendingSeekIndex = -1;
+    seekTimer.stop();
+
+    const int logicalIndex = timeline.indexOf(postId);
+    if (logicalIndex < 0) {
+        return;
+    }
+    for (const PostTimeline::Span& span : timeline.spans()) {
+        if (span.kind != PostTimeline::LoadedSpan
+            || logicalIndex < span.firstIndex
+            || logicalIndex >= span.firstIndex + span.count
+            || span.postIds.isEmpty()) {
+            continue;
+        }
+        contextOldestPostId = span.postIds.first();
+        contextNewestPostId = span.postIds.last();
+        break;
+    }
 }
 
 void ChannelTimelineController::deactivate()
@@ -239,6 +271,11 @@ void ChannelTimelineController::deactivate()
     measurementTimer.stop();
     pendingSeekIndex = -1;
     requestInFlight = false;
+    contextNavigationActive = false;
+    contextNavigationPostId.clear();
+    contextOldestPostId.clear();
+    contextNewestPostId.clear();
+    lastUserViewportAnchor = ViewportAnchor();
     area.gettingOlderPosts = false;
 
     QObject::disconnect(&area.channel, nullptr, this, nullptr);
@@ -262,6 +299,14 @@ int ChannelTimelineController::authoritativeFirstIndex(int page, int pageSize) c
     const qint64 first = static_cast<qint64>(timeline.totalCount())
         - static_cast<qint64>(page) * ChannelPageSize - pageSize;
     return static_cast<int>(std::max<qint64>(0, first));
+}
+
+ChannelTimelineController::ViewportAnchor ChannelTimelineController::stableViewportAnchor() const
+{
+    if (lastUserViewportAnchor.isValid()) {
+        return lastUserViewportAnchor;
+    }
+    return captureViewportAnchor();
 }
 
 void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
@@ -303,7 +348,7 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
                 return;
             }
 
-            const ViewportAnchor anchor = guard->captureViewportAnchor();
+            const ViewportAnchor anchor = guard->stableViewportAnchor();
             const QStringList ids = result.postIds;
             const int responseSize = static_cast<int>(ids.size());
             const int minimumKnownCount = page * ChannelPageSize + responseSize;
@@ -319,9 +364,6 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
                 discoveredCount = std::max(reportedRootCount, minimumKnownCount);
                 guard->totalCountExact = true;
             } else if (!guard->totalCountExact) {
-                // Keep one unproven older page in front of the loaded newest
-                // tail. Growing this estimate must move existing indices right,
-                // never append a phantom gap after the newest message.
                 discoveredCount = std::max(
                     guard->expectedPostCount,
                     minimumKnownCount + ChannelPageSize);
@@ -356,6 +398,134 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
         });
 }
 
+void ChannelTimelineController::requestContextBefore()
+{
+    if (!active || requestInFlight || !contextNavigationActive
+        || contextReachedOldest || contextOldestPostId.isEmpty()) {
+        return;
+    }
+
+    const QString cursorId = contextOldestPostId;
+    if (timeline.indexOf(cursorId) < 0) {
+        return;
+    }
+
+    requestInFlight = true;
+    const quint64 requestGeneration = generation;
+    QPointer<ChannelTimelineController> guard(this);
+    PostTimelineService::instance(area.backend).loadChannelBefore(
+        area.channel, cursorId, ChannelPageSize,
+        [guard, requestGeneration, cursorId](const PostTimelineService::Page& result) {
+            if (!guard || !guard->active || guard->generation != requestGeneration) {
+                return;
+            }
+            guard->requestInFlight = false;
+            if (!result.success || !guard->contextNavigationActive) {
+                guard->flushDeferredExternalPosts();
+                return;
+            }
+
+            const ViewportAnchor anchor = guard->stableViewportAnchor();
+            QStringList ids;
+            for (const QString& id : uniqueChronologicalRootIds(guard->area.channel, result.postIds)) {
+                if (!guard->timeline.contains(id)) {
+                    ids.push_back(id);
+                }
+            }
+
+            int cursorIndex = guard->timeline.indexOf(cursorId);
+            if (cursorIndex >= 0 && !ids.isEmpty()) {
+                int firstIndex = cursorIndex - static_cast<int>(ids.size());
+                if (firstIndex < 0) {
+                    const int deficit = -firstIndex;
+                    if (!guard->totalCountExact) {
+                        const int grown = guard->timeline.totalCount() + deficit;
+                        guard->timeline.setTotalCountPreservingNewest(grown);
+                        guard->expectedPostCount = grown;
+                        cursorIndex += deficit;
+                        firstIndex = 0;
+                    } else {
+                        ids = ids.mid(deficit);
+                        firstIndex = 0;
+                    }
+                }
+                if (!ids.isEmpty()) {
+                    guard->timeline.placeWindow(firstIndex, ids);
+                    guard->contextOldestPostId = ids.first();
+                }
+            }
+
+            if (result.prevPostId.isEmpty()) {
+                guard->contextReachedOldest = true;
+            }
+            guard->renderTimeline(QString(), anchor);
+            guard->flushDeferredExternalPosts();
+            guard->scheduleViewportCheck();
+        });
+}
+
+void ChannelTimelineController::requestContextAfter()
+{
+    if (!active || requestInFlight || !contextNavigationActive
+        || contextReachedNewest || contextNewestPostId.isEmpty()) {
+        return;
+    }
+
+    const QString cursorId = contextNewestPostId;
+    if (timeline.indexOf(cursorId) < 0) {
+        return;
+    }
+
+    requestInFlight = true;
+    const quint64 requestGeneration = generation;
+    QPointer<ChannelTimelineController> guard(this);
+    PostTimelineService::instance(area.backend).loadChannelAfter(
+        area.channel, cursorId, ChannelPageSize,
+        [guard, requestGeneration, cursorId](const PostTimelineService::Page& result) {
+            if (!guard || !guard->active || guard->generation != requestGeneration) {
+                return;
+            }
+            guard->requestInFlight = false;
+            if (!result.success || !guard->contextNavigationActive) {
+                guard->flushDeferredExternalPosts();
+                return;
+            }
+
+            const ViewportAnchor anchor = guard->stableViewportAnchor();
+            QStringList ids;
+            for (const QString& id : uniqueChronologicalRootIds(guard->area.channel, result.postIds)) {
+                if (!guard->timeline.contains(id)) {
+                    ids.push_back(id);
+                }
+            }
+
+            const int cursorIndex = guard->timeline.indexOf(cursorId);
+            if (cursorIndex >= 0 && !ids.isEmpty()) {
+                const int firstIndex = cursorIndex + 1;
+                const int neededTotal = firstIndex + static_cast<int>(ids.size());
+                if (neededTotal > guard->timeline.totalCount() && !guard->totalCountExact) {
+                    guard->timeline.setTotalCount(neededTotal);
+                    guard->expectedPostCount = neededTotal;
+                }
+                const int available = std::max(0, guard->timeline.totalCount() - firstIndex);
+                if (static_cast<int>(ids.size()) > available) {
+                    ids = ids.mid(0, available);
+                }
+                if (!ids.isEmpty()) {
+                    guard->timeline.placeWindow(firstIndex, ids);
+                    guard->contextNewestPostId = ids.last();
+                }
+            }
+
+            if (result.nextPostId.isEmpty()) {
+                guard->contextReachedNewest = true;
+            }
+            guard->renderTimeline(QString(), anchor);
+            guard->flushDeferredExternalPosts();
+            guard->scheduleViewportCheck();
+        });
+}
+
 void ChannelTimelineController::continueInitialPrefetch()
 {
     if (!active || requestInFlight) {
@@ -381,6 +551,10 @@ void ChannelTimelineController::requestOlderPage()
 {
     if (!active || requestInFlight || !area.ui || !area.ui->listWidget
         || area.ui->listWidget->hasTimelineNavigationLock()) {
+        return;
+    }
+    if (contextNavigationActive && !contextOldestPostId.isEmpty()) {
+        requestContextBefore();
         return;
     }
     if (totalCountExact
@@ -523,12 +697,12 @@ void ChannelTimelineController::placeApproximateWindow(const QStringList& postId
 
     if (missing.isEmpty()) {
         if (renderAfter && !focusPostId.isEmpty()) {
-            renderTimeline(focusPostId, captureViewportAnchor());
+            renderTimeline(focusPostId, stableViewportAnchor());
         }
         return;
     }
 
-    const ViewportAnchor anchor = captureViewportAnchor();
+    const ViewportAnchor anchor = stableViewportAnchor();
 
     if (timeline.totalCount() <= 0) {
         expectedPostCount = std::max(channelRootPostCount(), static_cast<int>(missing.size()));
@@ -568,7 +742,7 @@ bool ChannelTimelineController::ensurePostVisible(const QString& postId)
     }
 
     if (timeline.contains(postId)) {
-        renderTimeline(postId, captureViewportAnchor());
+        renderTimeline(postId, stableViewportAnchor());
         return area.ui->listWidget->findPost(postId) != nullptr;
     }
 
@@ -595,6 +769,11 @@ bool ChannelTimelineController::ensurePostVisible(const QString& postId)
     QStringList contextIds;
     for (int i = firstCached; i < lastCached; ++i) {
         contextIds.push_back(roots.at(i)->id);
+    }
+
+    if (contextNavigationActive && contextNavigationPostId == postId && !contextIds.isEmpty()) {
+        contextOldestPostId = contextIds.first();
+        contextNewestPostId = contextIds.last();
     }
 
     placeApproximateWindow(contextIds, postId);
@@ -791,6 +970,24 @@ void ChannelTimelineController::checkViewport()
         return;
     }
 
+    if (contextNavigationActive
+        && !contextOldestPostId.isEmpty()
+        && !contextNewestPostId.isEmpty()) {
+        const int oldestIndex = timeline.indexOf(contextOldestPostId);
+        const int newestIndex = timeline.indexOf(contextNewestPostId);
+        if (oldestIndex >= 0 && targetIndex < oldestIndex) {
+            requestContextBefore();
+            return;
+        }
+        if (newestIndex >= 0 && targetIndex > newestIndex) {
+            requestContextAfter();
+            return;
+        }
+        pendingSeekIndex = -1;
+        seekTimer.stop();
+        return;
+    }
+
     if (scrollBar->isSliderDown() && centerInsideGap) {
         pendingSeekIndex = targetIndex;
         seekTimer.start();
@@ -811,7 +1008,7 @@ void ChannelTimelineController::renderTimeline(const QString& focusPostId,
 
     ViewportAnchor anchor = requestedAnchor;
     if (!anchor.isValid() && initialRenderDone) {
-        anchor = captureViewportAnchor();
+        anchor = stableViewportAnchor();
     }
 
     rebuilding = true;
@@ -889,7 +1086,7 @@ void ChannelTimelineController::updateGapHeights()
     }
 
     PostsListWidget* list = area.ui->listWidget;
-    const ViewportAnchor anchor = captureViewportAnchor();
+    const ViewportAnchor anchor = stableViewportAnchor();
     if (anchor.kind == ViewportAnchor::Gap) {
         return;
     }
