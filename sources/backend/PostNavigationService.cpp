@@ -81,6 +81,20 @@ PostNavigationService::PostNavigationService(Backend& sourceBackend)
 
 void PostNavigationService::loadAround(BackendChannel& channel,
                                        const QString& postId,
+                                       CompletionCallback callback,
+                                       bool forceContext)
+{
+    loadAround(channel, postId,
+               ContextCallback([callback = std::move(callback)](const Context& context) mutable {
+                   if (callback) {
+                       callback(context.success);
+                   }
+               }),
+               forceContext);
+}
+
+void PostNavigationService::loadAround(BackendChannel& channel,
+                                       const QString& postId,
                                        ContextCallback callback,
                                        bool forceContext)
 {
