@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -25,18 +25,18 @@
 #include "HTTPConnector.h"
 
 #include <QAbstractNetworkCache>
-#include <QNetworkAccessManager>
-#include <QNetworkDiskCache>
 #include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QStandardPaths>
+#include <QNetworkAccessManager>
+#include <QNetworkDiskCache>
 #include <QNetworkReply>
 #include <QSettings>
+#include <QStandardPaths>
+
 #include "QByteArrayCreator.h"
-#include "log.h"
 #include "Settings.h"
-#include <QThread>
+#include "log.h"
 
 namespace Mattermost {
 
@@ -55,7 +55,7 @@ static QNetworkDiskCache* createDiskCache ()
 HTTPConnector::HTTPConnector ()
 :qnetworkManager (std::make_unique <QNetworkAccessManager> ())
 {
-	//qnetworkManager takes ownership over the disk cache
+	// qnetworkManager takes ownership over the disk cache.
 	qnetworkManager->setCache (createDiskCache ());
 	qnetworkManager->setAutoDeleteReplies(true);
 }
@@ -64,101 +64,156 @@ HTTPConnector::~HTTPConnector () = default;
 
 void HTTPConnector::reset ()
 {
-	//qnetworkManager takes ownership over the disk cache
+	// Invalidate callbacks from requests owned by the old network manager and
+	// discard work that has not started yet. This is important on websocket
+	// reconnect, where Backend deliberately resets the HTTP side.
+	++generation;
+	highPriorityRequests.clear ();
+	lowPriorityRequests.clear ();
+	activeRequests = 0;
+
+	// qnetworkManager takes ownership over the disk cache.
 	qnetworkManager.reset(new QNetworkAccessManager());
 	qnetworkManager->setCache (createDiskCache ());
+	qnetworkManager->setAutoDeleteReplies(true);
 }
 
 void HTTPConnector::get (QNetworkRequest& request, HttpResponseCallback responseHandler)
 {
-	if (request.priority() != QNetworkRequest::LowPriority)
+	if (request.priority() != QNetworkRequest::LowPriority) {
 		request.setPriority(QNetworkRequest::HighPriority);
-	//request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-	//QThread::msleep(10);
-	QNetworkReply* reply = qnetworkManager->get (request);
-	setProcessReply (reply, std::move (responseHandler));
+	}
+
+	enqueue(PendingRequest {
+		Method::Get,
+		request,
+		QByteArray(),
+		false,
+		std::move(responseHandler),
+	});
 }
 
 void HTTPConnector::post (QNetworkRequest& request, const QByteArrayCreator& data, HttpResponseCallback responseHandler)
 {
-	if (data.isJson()) {
-		request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-	}
-
-	if (request.priority() != QNetworkRequest::LowPriority)
+	if (request.priority() != QNetworkRequest::LowPriority) {
 		request.setPriority(QNetworkRequest::HighPriority);
+	}
 	request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-	//LOG_DEBUG ("POST " << request.url() << " " << request.rawHeaderList() << data);
-	QNetworkReply* reply = qnetworkManager->post (request, data);
-	setProcessReply (reply, std::move (responseHandler));
+
+	enqueue(PendingRequest {
+		Method::Post,
+		request,
+		data,
+		data.isJson(),
+		std::move(responseHandler),
+	});
 }
 
 void HTTPConnector::put (QNetworkRequest& request, const QByteArrayCreator& data, HttpResponseCallback responseHandler)
 {
-	if (request.priority() != QNetworkRequest::LowPriority)
+	if (request.priority() != QNetworkRequest::LowPriority) {
 		request.setPriority(QNetworkRequest::HighPriority);
+	}
 	request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-	QNetworkReply* reply = qnetworkManager->put (request, data);
-	setProcessReply (reply, std::move (responseHandler));
+
+	enqueue(PendingRequest {
+		Method::Put,
+		request,
+		data,
+		data.isJson(),
+		std::move(responseHandler),
+	});
 }
 
 void HTTPConnector::del (QNetworkRequest& request)
 {
-	if (request.priority() != QNetworkRequest::LowPriority)
+	if (request.priority() != QNetworkRequest::LowPriority) {
 		request.setPriority(QNetworkRequest::HighPriority);
+	}
 	request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-	QNetworkReply* reply = qnetworkManager->deleteResource (request);
-	setProcessReply (reply, [](QVariant, QByteArray, const QNetworkReply&){});
+
+	enqueue(PendingRequest {
+		Method::Delete,
+		request,
+		QByteArray(),
+		false,
+		HttpResponseCallback([](QVariant, QByteArray, const QNetworkReply&) {}),
+	});
 }
 
-void HTTPConnector::setProcessReply (QNetworkReply* reply, std::function<void (QVariant, QByteArray, const QNetworkReply&)> responseHandler)
+void HTTPConnector::enqueue(PendingRequest request)
 {
-	connect(reply, &QNetworkReply::finished, [this, reply, responseHandler]() {
+	if (request.request.priority() == QNetworkRequest::LowPriority) {
+		lowPriorityRequests.enqueue(std::move(request));
+	} else {
+		highPriorityRequests.enqueue(std::move(request));
+	}
+	processQueue();
+}
 
-		//print whether the resource is obtained from the cache
-#if 0
-		QVariant fromCache = reply->attribute(QNetworkRequest::SourceIsFromCacheAttribute);
+void HTTPConnector::processQueue()
+{
+	while (activeRequests < MaxConcurrentRequests
+	       && (!highPriorityRequests.isEmpty() || !lowPriorityRequests.isEmpty())) {
+		PendingRequest request = !highPriorityRequests.isEmpty()
+			? highPriorityRequests.dequeue()
+			: lowPriorityRequests.dequeue();
+		startRequest(std::move(request));
+	}
+}
 
-		if (fromCache.value<bool>()) {
-			qDebug () << "Reply " << reply->request().url() << " is from cache";
-		} else {
-			qDebug () << "Reply " << reply->request().url() << " is not from cache";
-		}
-#endif
+void HTTPConnector::startRequest(PendingRequest request)
+{
+	if (request.jsonData) {
+		request.request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+	}
 
-		int HTTPstatusCode = reply->attribute( QNetworkRequest::HttpStatusCodeAttribute ).toInt();
-		int statusCode = reply->error();
-		auto data = reply->readAll();
-		reply->deleteLater();
+	QNetworkReply* reply = nullptr;
+	switch (request.method) {
+	case Method::Get:
+		reply = qnetworkManager->get(request.request);
+		break;
+	case Method::Post:
+		reply = qnetworkManager->post(request.request, request.data);
+		break;
+	case Method::Put:
+		reply = qnetworkManager->put(request.request, request.data);
+		break;
+	case Method::Delete:
+		reply = qnetworkManager->deleteResource(request.request);
+		break;
+	}
 
-		//print the cache size
-#if 0
-		QAbstractNetworkCache* cache = qnetworkManager->cache();
+	++activeRequests;
+	setProcessReply(reply, std::move(request.responseHandler), generation);
+}
 
-		if (cache) {
-			qDebug () << "Cache size: " << cache->cacheSize();
-		} else {
-			qDebug () << "No Cache: ";
-		}
-#endif
+void HTTPConnector::setProcessReply (QNetworkReply* reply,
+		std::function<void (QVariant, QByteArray, const QNetworkReply&)> responseHandler,
+		quint64 requestGeneration)
+{
+	connect(reply, &QNetworkReply::finished, this,
+		[this, reply, responseHandler = std::move(responseHandler), requestGeneration]() mutable {
+			const int statusCode = reply->error();
+			auto data = reply->readAll();
 
-			return responseHandler (statusCode, qMove (data), *reply);
-		if (statusCode == QNetworkReply::NoError) {
-		}
+			// Keep the historical callback behavior: callers receive the response
+			// regardless of HTTP/network status and decide how to interpret it.
+			responseHandler(statusCode, qMove(data), *reply);
+			reply->deleteLater();
 
-		QJsonDocument doc = QJsonDocument::fromJson(data);
-		QJsonObject root = doc.object();
+			// reset() replaces the network manager and starts a new request
+			// generation. Replies from the old generation must not alter the new
+			// queue's accounting.
+			if (requestGeneration != generation) {
+				return;
+			}
 
-		BackendError error;
-		error.deserialize (root);
-
-		qCritical() << reply->url();
-		qCritical() << "network error " << statusCode << "HTTP code " << HTTPstatusCode << ", message: " << error.message;
-
-		if (statusCode != QNetworkReply::NoError) {
-			emit onHttpError (statusCode, error.message);
-		}
-	});
+			if (activeRequests > 0) {
+				--activeRequests;
+			}
+			processQueue();
+		});
 
 #if QT_VERSION <= QT_VERSION_CHECK(5,15,0)
 	connect(reply, qOverload<QNetworkReply::NetworkError>(&QNetworkReply::error),
