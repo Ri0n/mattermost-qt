@@ -63,6 +63,7 @@ void ThreadTimelineController::start()
     } else {
         expectedPostCount = std::max(1, countCachedThreadPosts(area.channel, rootId));
     }
+    timeline.reset(expectedPostCount);
 
     initialPagesRemaining = expectedPostCount > ThreadPageSize * SmallThreadPrefetchPages
         ? LargeThreadPrefetchPages
@@ -82,6 +83,7 @@ void ThreadTimelineController::start()
             [this](BackendPost& post) {
         if (post.root_id == rootId) {
             ++expectedPostCount;
+            timeline.setTotalCount(expectedPostCount);
         }
     });
     connect(&area.channel, &BackendChannel::onPostEdited, this,
@@ -89,6 +91,7 @@ void ThreadTimelineController::start()
         if (post.id == rootId) {
             expectedPostCount = std::max(
                 expectedPostCount, static_cast<int>(post.reply_count + 1));
+            timeline.setTotalCount(expectedPostCount);
         }
     });
 
@@ -130,6 +133,14 @@ void ThreadTimelineController::requestNextPage()
                 guard->hasNext = false;
                 return;
             }
+
+            const int neededCount = guard->nextLogicalIndex + page.postIds.size();
+            if (neededCount > guard->timeline.totalCount()) {
+                guard->expectedPostCount = std::max(guard->expectedPostCount, neededCount);
+                guard->timeline.setTotalCount(guard->expectedPostCount);
+            }
+            guard->timeline.placeWindow(guard->nextLogicalIndex, page.postIds);
+            guard->nextLogicalIndex += page.postIds.size();
 
             guard->cursorPostId = newCursor;
             if (BackendPost* cursorPost = guard->area.channel.postIdToPost.value(newCursor, nullptr)) {
