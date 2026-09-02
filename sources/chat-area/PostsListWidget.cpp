@@ -97,15 +97,14 @@ PostsListWidget::PostsListWidget (QWidget* parent)
 		scheduleUserScrollAnchorUpdate();
 	});
 	connect(scrollBar, &QAbstractSlider::valueChanged, this, [this] (int value) {
-		if (value == 0 && verticalScrollBar()->maximum() != 0) {
-			emit scrolledToTop ();
-		}
-
 		if (restoringSavedScroll) {
 			return;
 		}
 
 		if (isUserScrollInProgress()) {
+			if (value == 0 && verticalScrollBar()->maximum() != 0) {
+				emit scrolledToTop ();
+			}
 			scheduleUserScrollAnchorUpdate();
 		} else if (savedScrollAnchor.valid) {
 			// A scrollbar value changed without corresponding user input. This is
@@ -239,6 +238,7 @@ void PostsListWidget::clear()
 	// and the viewport may already have been displaced by an asynchronous layout
 	// just before deactivation. Preserve the already committed user anchor.
 	freezeCurrentViewportAnchor();
+	clearTimelineNavigationLock();
 
 	removeNewMessagesSeparatorTimer.stop();
 	QListWidget::clear();
@@ -567,7 +567,7 @@ QListWidgetItem* PostsListWidget::getLastOwnPost () const
 void PostsListWidget::initiatePostEdit (QListWidgetItem& postItem)
 {
 	if (currentEditedItem) {
-		qDebug () << "Post edit requested while editing post";
+		qDebug() << "Post edit requested while editing post";
 		return;
 	}
 
@@ -722,14 +722,13 @@ void PostsListWidget::showContextMenu (const QPoint& pos)
 			});
 
 			myMenu.addAction ("Delete", [this, post] {
-				qDebug() << "Delete " << post->post.message;
+				qDebug() << "Delete " << post->post.id;
 				backend->deletePost (post->post.id);
 			});
 
 			myMenu.addSeparator();
 		}
 	}
-
 
 	if (!post->hoveredLink.isEmpty() && selectedItemsCount == 1) {
 		myMenu.addAction ("Copy link to clipboard", [this, post] {
