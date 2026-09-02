@@ -59,9 +59,10 @@ private:
                                const QString& focusPostId = QString(),
                                bool focusAtTop = false);
 
-    void renderTimeline(const QString& focusPostId = QString(),
-                        bool focusAtTop = false,
-                        const ViewportAnchor& anchor = ViewportAnchor());
+    void renderTimeline(const QString& focusPostId = QString(), bool focusAtTop = false);
+    void renderTimeline(const QString& focusPostId,
+                        bool focusAtTop,
+                        const ViewportAnchor& anchor);
     void updateGapHeights();
     void scheduleMeasurementPass();
     void measureRenderedPosts();
