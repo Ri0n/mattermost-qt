@@ -22,12 +22,15 @@
 #include <algorithm>
 
 #include <QCloseEvent>
+#include <QHBoxLayout>
 #include <QMessageBox>
 #include <QSettings>
 #include <QSplitter>
+#include <QStyle>
 #include <QSystemTrayIcon>
 #include <QTabWidget>
 #include <QTimer>
+#include <QToolButton>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
 #include <QWindow>
@@ -38,6 +41,7 @@
 #include "backend/SidebarService.h"
 #include "backend/UserProfileService.h"
 #include "build-config.h"
+#include "channel-tree/AttentionList.h"
 #include "channel-tree/ChannelQuickList.h"
 #include "chat-area/ChatArea.h"
 #include "log.h"
@@ -77,16 +81,18 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	auto& sidebar = SidebarService::instance(backend);
 	auto& userProfiles = UserProfileService::instance(backend);
 	connect(&sidebar, &SidebarService::channelActivityChanged, this,
-	        [this](const QString&) { refreshChannelQuickLists(); });
+	        [this](const QString&) { refreshSidebarViews(); });
 	connect(&sidebar, &SidebarService::channelActivityReset,
-	        this, &MainWindow::refreshChannelQuickLists);
+	        this, &MainWindow::refreshSidebarViews);
 	connect(&sidebar, &SidebarService::categoriesChanged, this,
-	        [this](const QString&) { refreshChannelQuickLists(); });
+	        [this](const QString&) {
+		QTimer::singleShot(0, this, &MainWindow::refreshSidebarViews);
+	});
 
 	// Do not wait for the server's channel_viewed websocket echo to update the
-	// local Recent/Unreads indexes. A channel becomes viewed as soon as the user
-	// selects it. Defer the update by one event-loop turn so a quick-list refresh
-	// cannot delete the item while its selection signal is still being handled.
+	// local Recent/Attention indexes. A channel becomes viewed as soon as the
+	// user selects it. Defer the update by one event-loop turn so a sidebar
+	// refresh cannot delete/hide the item while its selection signal is handled.
 	connect(ui->channelList, &QTreeWidget::currentItemChanged, this,
 	        [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
 		if (!current || current->data(0, ChannelTree::ItemKindRole).toInt() != ChannelTree::ChannelItemKind) {
@@ -104,7 +110,7 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	});
 
 	recentChannels->initialize(backend, ChannelQuickList::Recent);
-	unreadChannels->initialize(backend, ChannelQuickList::Unreads);
+	attentionList->initialize(backend);
 
 	sidebar.clear();
 	userProfiles.clear();
@@ -122,17 +128,14 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	});
 
 	/*
-	 * Gets the LoginUser's image for the user icon
-	 */
-	//backend.retrieveUserAvatar (currentUser.id);
-
-	/*
 	 * The Mattermost sidebar categories are per-user and per-team. Wait until all
 	 * channels (including DM/GM channels duplicated by the server across teams)
 	 * are in storage, then build each team's sidebar from the server category list.
 	 */
 	connect (&backend, &Backend::onAllTeamChannelsPopulated, [this] {
 		ui->channelList->populateSidebars (backend);
+		attentionList->refreshThreads();
+		QTimer::singleShot(0, this, &MainWindow::refreshSidebarViews);
 		initializationComplete ();
 	});
 
@@ -221,14 +224,35 @@ void MainWindow::setupChannelTabs ()
 	auto* channelsLayout = new QVBoxLayout(channelsPage);
 	channelsLayout->setContentsMargins(0, 0, 0, 0);
 	channelsLayout->setSpacing(0);
-	channelsLayout->addWidget(ui->channelList);
+
+	auto* channelsTools = new QWidget(channelsPage);
+	auto* channelsToolsLayout = new QHBoxLayout(channelsTools);
+	channelsToolsLayout->setContentsMargins(4, 2, 4, 2);
+	channelsToolsLayout->setSpacing(0);
+	channelsToolsLayout->addStretch(1);
+
+	unreadFilterButton = new QToolButton(channelsTools);
+	unreadFilterButton->setCheckable(true);
+	unreadFilterButton->setAutoRaise(true);
+	unreadFilterButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+	unreadFilterButton->setToolTip(tr("Show unread channels only"));
+	unreadFilterButton->setAccessibleName(tr("Show unread channels only"));
+	QIcon unreadIcon = QIcon::fromTheme(QStringLiteral("mail-unread"));
+	if (unreadIcon.isNull()) {
+		unreadIcon = style()->standardIcon(QStyle::SP_MessageBoxInformation);
+	}
+	unreadFilterButton->setIcon(unreadIcon);
+	channelsToolsLayout->addWidget(unreadFilterButton);
+
+	channelsLayout->addWidget(channelsTools);
+	channelsLayout->addWidget(ui->channelList, 1);
 
 	recentChannels = new ChannelQuickList(channelTabs);
-	unreadChannels = new ChannelQuickList(channelTabs);
+	attentionList = new AttentionList(channelTabs);
 
-	channelTabs->addTab(channelsPage, QStringLiteral("Channels"));
-	channelTabs->addTab(recentChannels, QStringLiteral("Recent"));
-	channelTabs->addTab(unreadChannels, QStringLiteral("Unreads"));
+	channelTabs->addTab(channelsPage, tr("Channels"));
+	channelTabs->addTab(recentChannels, tr("Recent"));
+	channelTabs->addTab(attentionList, tr("Attention"));
 
 	auto* leftSidebar = new QWidget(ui->centralwidget);
 	auto* leftLayout = new QVBoxLayout(leftSidebar);
@@ -250,20 +274,112 @@ void MainWindow::setupChannelTabs ()
 	ui->gridLayout_2->setRowStretch(1, 0);
 	ui->gridLayout_2->setColumnStretch(0, 1);
 
+	connect(unreadFilterButton, &QToolButton::toggled,
+	        this, &MainWindow::refreshChannelUnreadFilter);
 	connect(recentChannels, &ChannelQuickList::channelSelected,
 	        ui->channelList, &ChannelTree::openChannel);
-	connect(unreadChannels, &ChannelQuickList::channelSelected,
+	connect(attentionList, &AttentionList::channelSelected,
 	        ui->channelList, &ChannelTree::openChannel);
+	connect(attentionList, &AttentionList::threadSelected,
+	        this, &MainWindow::openAttentionThread);
+	connect(channelTabs, &QTabWidget::currentChanged, this, [this](int index) {
+		if (attentionList && channelTabs->widget(index) == attentionList) {
+			attentionList->refresh();
+			attentionList->refreshThreads();
+		}
+	});
 }
 
-void MainWindow::refreshChannelQuickLists ()
+void MainWindow::refreshSidebarViews ()
 {
 	if (recentChannels) {
 		recentChannels->refresh();
 	}
-	if (unreadChannels) {
-		unreadChannels->refresh();
+	if (attentionList) {
+		attentionList->refresh();
 	}
+	refreshChannelUnreadFilter();
+}
+
+void MainWindow::refreshChannelUnreadFilter ()
+{
+	if (!ui || !ui->channelList || !unreadFilterButton) {
+		return;
+	}
+
+	const bool unreadOnly = unreadFilterButton->isChecked();
+	auto& sidebar = SidebarService::instance(backend);
+
+	for (int teamIndex = 0; teamIndex < ui->channelList->topLevelItemCount(); ++teamIndex) {
+		QTreeWidgetItem* teamItem = ui->channelList->topLevelItem(teamIndex);
+		if (!teamItem) {
+			continue;
+		}
+
+		bool teamHasVisibleChannels = false;
+		for (int categoryIndex = 0; categoryIndex < teamItem->childCount(); ++categoryIndex) {
+			QTreeWidgetItem* categoryItem = teamItem->child(categoryIndex);
+			if (!categoryItem) {
+				continue;
+			}
+
+			bool categoryHasVisibleChannels = false;
+			for (int channelIndex = 0; channelIndex < categoryItem->childCount(); ++channelIndex) {
+				QTreeWidgetItem* channelItem = categoryItem->child(channelIndex);
+				if (!channelItem) {
+					continue;
+				}
+
+				bool visible = true;
+				if (unreadOnly) {
+					const QString channelId = channelItem->data(0, ChannelTree::ItemIdRole).toString();
+					BackendChannel* channel = backend.getStorage().getChannelById(channelId);
+					visible = channel
+						&& sidebar.isChannelUnread(*channel)
+						&& !sidebar.isChannelMuted(*channel);
+				}
+
+				channelItem->setHidden(!visible);
+				categoryHasVisibleChannels = categoryHasVisibleChannels || visible;
+			}
+
+			categoryItem->setHidden(unreadOnly && !categoryHasVisibleChannels);
+			teamHasVisibleChannels = teamHasVisibleChannels || categoryHasVisibleChannels;
+		}
+
+		teamItem->setHidden(unreadOnly && !teamHasVisibleChannels);
+	}
+}
+
+void MainWindow::openAttentionThread (const QString& channelId, const QString& rootPostId)
+{
+	BackendChannel* channel = backend.getStorage().getChannelById(channelId);
+	if (!channel || rootPostId.isEmpty()) {
+		return;
+	}
+
+	ui->channelList->openChannel(channelId);
+	ChatArea* parentArea = ui->channelList->getCurrentPage();
+	if (!parentArea || &parentArea->getChannel() != channel) {
+		return;
+	}
+
+	ChatArea* threadArea = nullptr;
+	for (ChatArea* area : parentArea->threadsAreas) {
+		if (area && area->root_id == rootPostId) {
+			threadArea = area;
+			break;
+		}
+	}
+
+	if (!threadArea) {
+		threadArea = new ChatArea(backend, *channel, rootPostId, parentArea);
+		parentArea->threadsAreas.insert(threadArea);
+	}
+
+	threadArea->show();
+	threadArea->raise();
+	threadArea->activateWindow();
 }
 
 void MainWindow::createMenu ()
@@ -346,8 +462,6 @@ void MainWindow::changeEvent (QEvent* event)
 
 	if (event->type() == QEvent::ActivationChange) {
 		if (isActiveWindow()) {
-			//qDebug() << "Activated";
-
 			ChatArea* currentPage = ui->channelList->getCurrentPage();
 
 			if (currentPage) {
@@ -360,9 +474,6 @@ void MainWindow::changeEvent (QEvent* event)
 					setNotificationsCountVisualization (channelsWithNewPosts.size());
 				}
 			}
-
-		} else {
-			//qDebug() << "Deactivated";
 		}
 	} else {
 		qDebug() << event->type();
