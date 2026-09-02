@@ -65,4 +65,12 @@ bool ChatArea::ensurePostVisible(const QString& postId)
     return list->findPost(postId) != nullptr;
 }
 
+void ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
+{
+    if (postId.isEmpty() || !ui || !ui->listWidget) {
+        return;
+    }
+    ui->listWidget->lockTimelineNavigationToPost(postId, 0, quietPeriodMs);
+}
+
 } // namespace Mattermost
