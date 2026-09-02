@@ -30,6 +30,7 @@ public:
 
 signals:
     void channelSelected(const QString& channelId);
+    void channelContextMenuRequested(const QString& channelId, const QPoint& globalPos);
 
 private:
     void updateDirectUser(const BackendUser& user);
