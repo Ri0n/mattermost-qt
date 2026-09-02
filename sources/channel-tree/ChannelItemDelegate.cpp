@@ -162,16 +162,15 @@ void ChannelItemDelegate::paint(QPainter* painter,
                              AvatarSize,
                              AvatarSize);
         const QPixmap pixmap = icon.pixmap(AvatarSize, AvatarSize);
-        const QString status = channel && channel->type == BackendChannel::directChannel
-            ? index.data(ChannelTree::ItemStatusRole).toString()
-            : QString();
+
+        // ItemStatusRole is populated only for direct conversations backed by a
+        // real BackendUser. Public/private channels and group conversations
+        // never receive this role, so they can never acquire a presence badge.
+        const QString status = index.data(ChannelTree::ItemStatusRole).toString();
 
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing, true);
         if (!status.isEmpty()) {
-            // Only direct-user avatars are clipped to circles. Channel and
-            // group-conversation glyphs are already shaped icons and should not
-            // be forced through the avatar mask.
             QPainterPath clip;
             clip.addEllipse(iconRect);
             painter->setClipPath(clip);
