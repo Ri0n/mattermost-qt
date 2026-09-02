@@ -11,6 +11,7 @@
 #include <QObject>
 #include <QSet>
 #include <QStringList>
+#include <QVector>
 
 #include "backend/ChannelActivityTracker.h"
 #include "backend/HTTPConnector.h"
@@ -66,6 +67,7 @@ public:
     bool isChannelUnread(const BackendChannel& channel) const;
     uint64_t channelActivityTime(const BackendChannel& channel) const;
     uint64_t channelRecentTime(const BackendChannel& channel) const;
+    QStringList visibleChannelIds(const SidebarCategory& category) const;
     void markChannelViewedLocally(const BackendChannel& channel);
     void synchronizeChannelActivity();
 
@@ -102,12 +104,28 @@ private:
     void recordChannelPost(BackendChannel& channel, const BackendPost& post);
     void recordChannelViewed(const BackendChannel& channel);
     void updateCollapsedThreadsMode();
+    bool isDirectChannelManuallyHidden(const BackendChannel& channel) const;
+    void finishMembershipLoad();
+    void finishPreferenceLoad();
+    void storeCategories(QString teamId, SidebarTeamState state,
+                         std::function<void(const SidebarTeamState&)> callback);
 
     Backend& backend;
     HTTPConnector httpConnector;
     QSet<QString> mutedChannelIds;
     QMap<QString, SidebarTeamState> sidebarByTeam;
     ChannelActivityTracker activityTracker;
+
+    QMap<QString, bool> directChannelVisibility;
+    QMap<QString, bool> groupChannelVisibility;
+    int visibleDirectMessagesLimit = 40;
+
+    QVector<std::function<void()>> membershipWaiters;
+    QVector<std::function<void()>> preferenceWaiters;
+    bool membershipsLoading = false;
+    bool membershipsLoaded = false;
+    bool preferencesLoading = false;
+    bool preferencesLoaded = false;
 
     QString collapsedThreadsConfig;
     bool hasCollapsedThreadsPreference = false;
