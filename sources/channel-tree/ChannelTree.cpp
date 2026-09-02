@@ -30,6 +30,7 @@
 
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
+#include "backend/types/BackendChannel.h"
 #include "backend/types/BackendTeam.h"
 #include "chat-area/ChatArea.h"
 #include "channel-tree/ChannelItem.h"
@@ -321,9 +322,36 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
         }
     }
 
-    QObject::connect(&channel, &BackendChannel::onLeave, this,
-                     [this, &channel, item] {
-        removeChannelToItem(channel.id, item);
+    // A channel may appear in multiple sidebar categories and category refreshes
+    // routinely destroy/recreate the QTreeWidgetItem objects. Never capture a
+    // row pointer in the long-lived BackendChannel::onLeave connection. The
+    // member slot resolves the currently alive rows from channelToItemMap.
+    QObject::connect(&channel, &BackendChannel::onLeave,
+                     this, &ChannelTree::handleChannelLeave,
+                     Qt::UniqueConnection);
+
+    addChannelToItem(channel.id, item);
+    auto& sidebar = SidebarService::instance(backend);
+    item->setMuted(sidebar.isChannelMuted(channel));
+    item->setMentioned(sidebar.hasUnreadMention(channel.id));
+    return item;
+}
+
+void ChannelTree::handleChannelLeave()
+{
+    auto* channel = qobject_cast<BackendChannel*>(sender());
+    if (!channel) {
+        return;
+    }
+
+    const QString channelId = channel->id;
+    const QList<QTreeWidgetItem*> items = channelToItemMap.value(channelId);
+    for (QTreeWidgetItem* item : items) {
+        if (!item || item->data(0, ItemKindRole).toInt() != ChannelItemKind) {
+            continue;
+        }
+
+        removeChannelToItem(channelId, item);
         ChatArea* chatArea = item->data(0, Qt::UserRole).value<ChatArea*>();
         if (chatArea && chatAreaStackedWidget) {
             chatAreaStackedWidget->removeWidget(chatArea);
@@ -333,13 +361,9 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
         }
         delete chatArea;
         delete item;
-    });
+    }
 
-    addChannelToItem(channel.id, item);
-    auto& sidebar = SidebarService::instance(backend);
-    item->setMuted(sidebar.isChannelMuted(channel));
-    item->setMentioned(sidebar.hasUnreadMention(channel.id));
-    return item;
+    channelToItemMap.remove(channelId);
 }
 
 ChatArea* ChannelTree::ensureChatArea(QTreeWidgetItem* item)
