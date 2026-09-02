@@ -20,6 +20,12 @@ void ChannelTree::markChannelViewed(QTreeWidgetItem* item)
         return;
     }
 
+    // The first widget added to an empty QStackedWidget becomes current before
+    // ChannelTree::activateChannelItem() gets a chance to call onActivate().
+    // onActivate()/init() are idempotent, so make explicit navigation close
+    // that lazy-materialization hole before recording read intent.
+    page->onActivate();
+
     // Selection expresses read intent. ChatArea waits until the newest channel
     // content is actually present in the model and rendered before committing
     // the local/server viewed state.
