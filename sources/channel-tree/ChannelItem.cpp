@@ -28,6 +28,7 @@
 
 #include "ChannelItemWidget.h"
 #include "ChannelTree.h"
+#include "backend/Backend.h"
 #include "backend/SidebarService.h"
 #include "backend/types/BackendChannel.h"
 
@@ -86,6 +87,12 @@ void ChannelItem::setMentioned(bool mentioned)
 void ChannelItem::setStatus(const QString& status)
 {
     setData(0, ChannelTree::ItemStatusRole, status);
+}
+
+BackendChannel* ChannelItem::backendChannel() const
+{
+    const QString channelId = data(0, ChannelTree::ItemIdRole).toString();
+    return channelId.isEmpty() ? nullptr : backend.getStorage().getChannelById(channelId);
 }
 
 void ChannelItem::addCommonContextMenuActions(QMenu& menu, BackendChannel& channel)
