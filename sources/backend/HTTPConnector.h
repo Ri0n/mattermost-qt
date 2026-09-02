@@ -28,6 +28,7 @@
 
 #include <QNetworkReply>
 #include <QQueue>
+#include <QSet>
 
 #include "backend/HttpResponseCallback.h"
 #include "backend/types/BackendError.h"
@@ -72,13 +73,16 @@ private:
 	};
 
 	void enqueue (PendingRequest request);
-	void processQueue ();
+	static void processQueues ();
+	static HTTPConnector* connectorWithPendingRequest (bool lowPriority);
 	void startRequest (PendingRequest request);
 	virtual void setProcessReply (QNetworkReply* reply,
 		std::function<void(QVariant,QByteArray,const QNetworkReply&)> responseHandler,
 		quint64 requestGeneration);
 
 	static constexpr int MaxConcurrentRequests = 6;
+	static QSet<HTTPConnector*> connectors;
+	static int globalActiveRequests;
 
 	std::unique_ptr<QNetworkAccessManager> qnetworkManager;
 	QQueue<PendingRequest> highPriorityRequests;
