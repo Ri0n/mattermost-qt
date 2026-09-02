@@ -1,6 +1,6 @@
 /**
  * @file ChannelQuickList.cpp
- * @brief Flat channel index used by the Recent and Unreads sidebar tabs.
+ * @brief Flat channel index used by the Recent sidebar tab.
  */
 
 #include "ChannelQuickList.h"
@@ -47,10 +47,9 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
     });
 }
 
-void ChannelQuickList::initialize(Backend& sourceBackend, Mode listMode)
+void ChannelQuickList::initialize(Backend& sourceBackend)
 {
     backend = &sourceBackend;
-    mode = listMode;
     refresh();
 }
 
@@ -78,41 +77,20 @@ void ChannelQuickList::refresh()
             continue;
         }
 
-        const bool unread = sidebar.isChannelUnread(*channel);
-        const bool muted = sidebar.isChannelMuted(*channel);
-        const bool mentioned = sidebar.hasUnreadMention(channel->id);
-
-        // ActivityTracker is populated from our channel memberships. Checking
-        // isChannelTracked() here used to walk every team/category and rebuild
-        // visibleChannelIds() for every single channel, turning a refresh into
-        // near-quadratic work on large accounts. The mode-specific predicates
-        // below already express the required membership/activity state.
-        if (mode == Unreads && (!unread || muted)) {
-            continue;
-        }
-
-        const uint64_t sortTime = mode == Recent
-            ? sidebar.channelRecentTime(*channel)
-            : sidebar.channelActivityTime(*channel);
-        if (mode == Recent && sortTime == 0) {
+        const uint64_t sortTime = sidebar.channelRecentTime(*channel);
+        if (sortTime == 0) {
             continue;
         }
 
         candidates.push_back(Candidate {
             channel,
             sortTime,
-            unread,
-            mentioned,
+            sidebar.isChannelUnread(*channel),
+            sidebar.hasUnreadMention(channel->id),
         });
     }
 
-    std::sort(candidates.begin(), candidates.end(), [this](const Candidate& lhs, const Candidate& rhs) {
-        // Mattermost sorts unread channels with mentions first, then by the
-        // most recent channel activity. Recent channels are sorted only by
-        // their user-specific recency key.
-        if (mode == Unreads && lhs.mentioned != rhs.mentioned) {
-            return lhs.mentioned;
-        }
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& lhs, const Candidate& rhs) {
         if (lhs.sortTime != rhs.sortTime) {
             return lhs.sortTime > rhs.sortTime;
         }
@@ -124,7 +102,7 @@ void ChannelQuickList::refresh()
     // transient switcher this is a persistent navigation tab: the conversation
     // that is currently open must remain visible instead of disappearing after
     // the user selects it.
-    if (mode == Recent && candidates.size() > 20) {
+    if (candidates.size() > 20) {
         candidates.resize(20);
     }
 
