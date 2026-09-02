@@ -39,6 +39,12 @@ enum id {
 };
 }
 
+namespace ItemRole {
+enum id {
+	postId = Qt::UserRole + 1,
+};
+}
+
 class PostsListWidget: public ResizableListWidget {
 	Q_OBJECT
 public:
@@ -49,6 +55,12 @@ public:
 	void insertPost (PostWidget* postWidget);
 	PostWidget* findPost (const QString& postId);
 	int findPostByIndex (const QString& postId, int startIndex);
+
+	// QListWidget::clear() is not virtual. ChatArea calls it through the concrete
+	// PostsListWidget type, so hiding it here lets us remember a stable visual
+	// anchor before the rows are destroyed and restore it when the chat is built
+	// again.
+	void clear();
 
 	static bool isPostItem (const QListWidgetItem* item)
 	{
@@ -80,7 +92,16 @@ signals:
 	void postEditInitiated (BackendPost& post);
 	void scrolledToTop ();
 private:
+	struct SavedScrollAnchor {
+		QString postId;
+		int bottomOffset = 0;
+		bool valid = false;
+	};
+
 	QList<QListWidgetItem*> sortedSelectedItems () const;
+	void saveScrollAnchor();
+	void scheduleSavedScrollAnchorRestore();
+	void restoreSavedScrollAnchor();
 
 	void copySelectedItemsToClipboard (PostWidget::FormatType formatType);
 	void keyPressEvent (QKeyEvent* event)		override;
@@ -92,6 +113,8 @@ private:
 	QListWidgetItem*				lastOwnPost;
 	QListWidgetItem*				currentEditedItem;
 	bool							menuShown;
+	SavedScrollAnchor				savedScrollAnchor;
+	bool							savedScrollRestoreScheduled = false;
 };
 
 } /* namespace Mattermost */
