@@ -25,11 +25,12 @@
 #include "DirectTeamItem.h"
 
 #include <QMenu>
-#include "chat-area/ChatArea.h"
+
 #include "backend/Backend.h"
-#include "channel-tree/channel-item/DirectChannelItem.h"
-#include "channel-tree-dialogs/UserListDialog.h"
+#include "backend/types/BackendChannel.h"
 #include "channel-tree/ChannelTree.h"
+#include "channel-tree/channel-item/DirectChannelItem.h"
+#include "channel-tree-dialogs/UserSearchDialog.h"
 
 namespace Mattermost {
 
@@ -40,44 +41,43 @@ ChannelItem* DirectTeamItem::createChannelItem (Backend& backendRef, ChannelItem
 
 void DirectTeamItem::showContextMenu (const QPoint& pos)
 {
-	// Create menu and insert some actions
 	QMenu myMenu;
 
 	myMenu.addAction ("Add direct channel", [this] {
-		qDebug() << "Add direct channel ";
-		QSet<const BackendUser*> allDirectChannelUsers = backend.getStorage().directChannels.getAllMembers();
+		QSet<QString> existingDirectUsers;
+		for (auto it = backend.getStorage().channels.cbegin();
+		     it != backend.getStorage().channels.cend(); ++it) {
+			const BackendChannel* channel = it.value();
+			if (channel && channel->type == BackendChannel::directChannel && !channel->name.isEmpty()) {
+				existingDirectUsers.insert(channel->name);
+			}
+		}
 
 		FilterListDialogConfig dialogCfg {
 			"Add direct channel - Mattermost",
-			"Select a user to start direct channel with:",
-			"Filter users by name:",
+			"Search for a user to start a direct channel with:",
+			"Search users by name:",
 			QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
 			" is already added"
 		};
 
-		UserListDialog* dialog = new UserListDialog (dialogCfg, backend.getStorage().getAllUsers(), &allDirectChannelUsers, treeWidget());
+		auto* dialog = new UserSearchDialog(
+			backend, dialogCfg, UserSearchOptions {}, existingDirectUsers, treeWidget());
 		dialog->show ();
 
-		connect (dialog, &UserListDialog::accepted, [this, dialog] {
+		connect (dialog, &UserSearchDialog::accepted, [this, dialog] {
 			const BackendUser* user = dialog->getSelectedUser();
-
 			if (!user) {
-				qDebug() << "dialog->getSelectedUser() returned nullptr";
 				return;
 			}
 
-			//if the channel already exists, switch to it
 			const BackendChannel* existingChannel = backend.getStorage().getDirectChannelByUserId(user->id);
 			if (existingChannel) {
-				qDebug() << "Open Direct channel requested with " << user->getDisplayName();
-
-				ChannelTree* treeWidget = static_cast<ChannelTree*> (this->treeWidget());
-				treeWidget->openChannel (existingChannel->id);
+				ChannelTree* tree = static_cast<ChannelTree*> (this->treeWidget());
+				tree->openChannel (existingChannel->id);
 			} else {
-				qDebug() << "New Direct channel requested with " << user->getDisplayName();
 				backend.createDirectChannel (*user);
 			}
-
 		});
 	});
 
