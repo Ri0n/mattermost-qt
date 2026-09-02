@@ -7,14 +7,6 @@
  * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
- *
- * Mattermost-QT is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with Mattermost-QT. if not, see https://www.gnu.org/licenses/.
  */
 
 #include "PostNavigationService.h"
@@ -27,17 +19,21 @@
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QPointer>
-#include <QSet>
+#include <QSignalBlocker>
 #include <QVariant>
 
 #include "Backend.h"
 #include "NetworkRequest.h"
+#include "PostNavigationWindow.h"
 #include "types/BackendChannel.h"
 
 namespace Mattermost {
 namespace {
 
-constexpr int ContextPostsPerSide = 30;
+// Fetch a reserve large enough for the controller to build a ~31-row window
+// even when the target is close to one edge. Only the selected window is
+// materialized; the remainder stays in BackendChannel's idempotent cache.
+constexpr int ContextFetchPerSide = 30;
 
 struct AroundState {
     QPointer<BackendChannel> channel;
@@ -47,27 +43,17 @@ struct AroundState {
     QJsonObject beforePosts;
     QJsonObject afterPosts;
     QJsonObject targetPost;
+    QString beforePrevPostId;
+    QString afterNextPostId;
     int pending = 3;
     bool failed = false;
-    std::function<void(bool)> callback;
+    PostNavigationService::ContextCallback callback;
 };
 
 void mergePosts(QJsonObject& destination, const QJsonObject& source)
 {
     for (auto it = source.constBegin(); it != source.constEnd(); ++it) {
         destination.insert(it.key(), it.value());
-    }
-}
-
-void appendUniqueOrder(QJsonArray& destination, QSet<QString>& seen, const QJsonArray& source)
-{
-    for (const QJsonValue& value : source) {
-        const QString id = value.toString();
-        if (id.isEmpty() || seen.contains(id)) {
-            continue;
-        }
-        seen.insert(id);
-        destination.push_back(id);
     }
 }
 
@@ -95,19 +81,36 @@ PostNavigationService::PostNavigationService(Backend& sourceBackend)
 
 void PostNavigationService::loadAround(BackendChannel& channel,
                                        const QString& postId,
-                                       std::function<void(bool)> callback,
+                                       CompletionCallback callback,
+                                       bool forceContext)
+{
+    loadAround(channel, postId,
+               ContextCallback([callback = std::move(callback)](const Context& context) mutable {
+                   if (callback) {
+                       callback(context.success);
+                   }
+               }),
+               forceContext);
+}
+
+void PostNavigationService::loadAround(BackendChannel& channel,
+                                       const QString& postId,
+                                       ContextCallback callback,
                                        bool forceContext)
 {
     if (postId.isEmpty()) {
         if (callback) {
-            callback(false);
+            callback(Context {});
         }
         return;
     }
 
     if (!forceContext && channel.postIdToPost.contains(postId)) {
         if (callback) {
-            callback(true);
+            Context result;
+            result.success = true;
+            result.postIds.push_back(postId);
+            callback(result);
         }
         return;
     }
@@ -125,7 +128,7 @@ void PostNavigationService::loadAround(BackendChannel& channel,
 
         if (state->failed || !state->channel || state->targetPost.isEmpty()) {
             if (state->callback) {
-                state->callback(false);
+                state->callback(PostNavigationService::Context {});
             }
             return;
         }
@@ -135,32 +138,38 @@ void PostNavigationService::loadAround(BackendChannel& channel,
         mergePosts(posts, state->beforePosts);
         posts.insert(state->postId, state->targetPost);
 
-        // Mattermost PostList order is newest -> oldest. Build the same order
-        // as the webapp's getPostsAround(): posts after target, target itself,
-        // then posts before it. BackendChannel::mergePostContext() is designed
-        // specifically for this arbitrary window and does not apply the
-        // newest-edge/deletion assumptions of the legacy reconnect addPosts().
-        QJsonArray order;
-        QSet<QString> seen;
-        appendUniqueOrder(order, seen, state->afterOrder);
-        if (!seen.contains(state->postId)) {
-            seen.insert(state->postId);
-            order.push_back(state->postId);
-        }
-        appendUniqueOrder(order, seen, state->beforeOrder);
+        // Both the backend ingestion order and chronological sparse order come
+        // from one tested request-local assembly. Do not derive this window from
+        // BackendChannel's wider, potentially disjoint cache.
+        const PostNavigationWindow window = buildPostNavigationWindow(
+            state->afterOrder, state->postId, state->beforeOrder);
 
         BackendChannel& currentChannel = *state->channel;
-        currentChannel.mergePostContext(order, posts);
+        {
+            // Cache population for an explicit semantic jump is not a bulk
+            // timeline page. Suppress the generic onNewPosts notification; the
+            // caller materializes one bounded context after the reserve is ready.
+            const QSignalBlocker blocker(&currentChannel);
+            currentChannel.mergePostContext(window.newestFirstOrder, posts);
+        }
 
         if (state->callback) {
-            state->callback(currentChannel.postIdToPost.contains(state->postId));
+            Context result;
+            result.success = currentChannel.postIdToPost.contains(state->postId);
+            result.reachedOldest = state->beforeOrder.size() < ContextFetchPerSide
+                || state->beforePrevPostId.isEmpty();
+            result.reachedNewest = state->afterOrder.size() < ContextFetchPerSide
+                || state->afterNextPostId.isEmpty();
+            result.postIds = window.chronologicalIds;
+            state->callback(result);
         }
     };
 
     auto fetchPostList = [this, state, finishPart](const QString& direction) {
         const QString path = QStringLiteral("channels/") + state->channel->id
             + QStringLiteral("/posts?") + direction + QLatin1Char('=') + state->postId
-            + QStringLiteral("&per_page=") + QString::number(ContextPostsPerSide);
+            + QStringLiteral("&per_page=") + QString::number(ContextFetchPerSide)
+            + QStringLiteral("&skipFetchThreads=true&collapsedThreads=true");
         NetworkRequest request(path);
         httpConnector.get(request, HttpResponseCallback(
             [state, finishPart, direction](QVariant status, const QJsonDocument& doc) {
@@ -170,9 +179,11 @@ void PostNavigationService::loadAround(BackendChannel& channel,
                     if (direction == QLatin1String("before")) {
                         state->beforeOrder = root.value(QStringLiteral("order")).toArray();
                         state->beforePosts = root.value(QStringLiteral("posts")).toObject();
+                        state->beforePrevPostId = root.value(QStringLiteral("prev_post_id")).toString();
                     } else {
                         state->afterOrder = root.value(QStringLiteral("order")).toArray();
                         state->afterPosts = root.value(QStringLiteral("posts")).toObject();
+                        state->afterNextPostId = root.value(QStringLiteral("next_post_id")).toString();
                     }
                 }
                 finishPart(success);

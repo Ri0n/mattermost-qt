@@ -137,3 +137,74 @@ target_link_libraries(backend-user-test
 
 add_test(NAME backend-user-test COMMAND backend-user-test)
 set_tests_properties(backend-user-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(sidebar-item-delegate-test
+    SidebarItemDelegateTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/channel-tree/ChannelItemDelegate.cpp"
+)
+
+target_include_directories(sidebar-item-delegate-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(sidebar-item-delegate-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+add_test(NAME sidebar-item-delegate-test COMMAND sidebar-item-delegate-test)
+set_tests_properties(sidebar-item-delegate-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(post-timeline-test
+    PostTimelineTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/backend/PostTimeline.cpp"
+)
+
+target_include_directories(post-timeline-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(post-timeline-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME post-timeline-test COMMAND post-timeline-test)
+
+add_executable(post-window-selection-test
+    PostWindowSelectionTest.cpp
+)
+
+target_include_directories(post-window-selection-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(post-window-selection-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME post-window-selection-test COMMAND post-window-selection-test)
+
+add_executable(post-navigation-window-test
+    PostNavigationWindowTest.cpp
+)
+
+target_include_directories(post-navigation-window-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(post-navigation-window-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME post-navigation-window-test COMMAND post-navigation-window-test)

@@ -35,7 +35,7 @@
 #include <QPointer>
 #include <QSettings>
 #include "backend/types/BackendFile.h"
-#include "backend/Backend.h"
+#include "backend/AttachmentService.h"
 #include "Settings.h"
 
 namespace {
@@ -88,7 +88,7 @@ AttachedImageFile::AttachedImageFile (Backend& backend, const BackendFile& file,
     const QString fileName = file.name;
     QPointer<AttachedImageFile> self(this);
 
-    backend.retrieveFile(fileId, [self](const QByteArray& fileContents) {
+    AttachmentService::instance(backend).retrieveFile(fileId, [self](const QByteArray& fileContents) {
         if (!self) {
             return;
         }
@@ -114,7 +114,7 @@ AttachedImageFile::AttachedImageFile (Backend& backend, const BackendFile& file,
                 return;
             }
 
-            this->backend.retrieveFile(fileId, [saveFileDestination](const QByteArray& fileContents) {
+            AttachmentService::instance(this->backend).retrieveFile(fileId, [saveFileDestination](const QByteArray& fileContents) {
                 QFile destFile(saveFileDestination);
                 if (!destFile.open(QIODevice::WriteOnly)) {
                     qWarning() << "Cannot save image to" << saveFileDestination << ":" << destFile.errorString();
@@ -165,11 +165,9 @@ void AttachedImageFile::setPreviewPixmap(QPixmap pixmap)
 
 void AttachedImageFile::mouseReleaseEvent(QMouseEvent*)
 {
-    qDebug() << "mouseRelease";
-
     const QString fileId = file.id;
     QPointer<AttachedImageFile> self(this);
-    backend.retrieveFile(fileId, [self](const QByteArray& fileContents) {
+    AttachmentService::instance(backend).retrieveFile(fileId, [self](const QByteArray& fileContents) {
         if (!self) {
             return;
         }

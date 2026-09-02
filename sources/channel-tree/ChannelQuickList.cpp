@@ -19,7 +19,7 @@
 #include "backend/types/BackendUser.h"
 #include "channel-tree/ChannelIcons.h"
 #include "channel-tree/ChannelItemDelegate.h"
-#include "channel-tree/ChannelTree.h"
+#include "channel-tree/SidebarItem.h"
 
 namespace Mattermost {
 
@@ -42,7 +42,7 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
         if (refreshing || !current) {
             return;
         }
-        const QString channelId = current->data(0, ChannelTree::ItemIdRole).toString();
+        const QString channelId = current->data(0, SidebarItem::IdRole).toString();
         if (!channelId.isEmpty()) {
             // ChannelTree/ChatArea owns read acknowledgement. It waits until
             // the selected channel's newest content has actually been rendered.
@@ -56,7 +56,7 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
         if (!item) {
             return;
         }
-        const QString channelId = item->data(0, ChannelTree::ItemIdRole).toString();
+        const QString channelId = item->data(0, SidebarItem::IdRole).toString();
         if (!channelId.isEmpty()) {
             emit channelContextMenuRequested(channelId, viewport()->mapToGlobal(pos));
         }
@@ -126,7 +126,7 @@ void ChannelQuickList::refresh()
     if (BackendChannel* currentChannel = backend->getCurrentChannel()) {
         selectedChannelId = currentChannel->id;
     } else if (currentItem()) {
-        selectedChannelId = currentItem()->data(0, ChannelTree::ItemIdRole).toString();
+        selectedChannelId = currentItem()->data(0, SidebarItem::IdRole).toString();
     }
 
     refreshing = true;
@@ -138,11 +138,12 @@ void ChannelQuickList::refresh()
         BackendChannel& channel = *candidate.channel;
         auto* item = new QTreeWidgetItem(this);
         item->setText(0, channel.display_name);
-        item->setData(0, ChannelTree::ItemKindRole, ChannelTree::ChannelItemKind);
-        item->setData(0, ChannelTree::ItemIdRole, channel.id);
-        item->setData(0, ChannelTree::ItemMutedRole, sidebar.isChannelMuted(channel));
-        item->setData(0, ChannelTree::ItemMentionedRole, candidate.mentioned);
-        item->setData(0, ChannelTree::ItemUnreadRole, candidate.unread);
+        item->setData(0, SidebarItem::KindRole, SidebarItem::Channel);
+        item->setData(0, SidebarItem::IdRole, channel.id);
+        item->setData(0, SidebarItem::ChannelTypeRole, channel.type);
+        item->setData(0, SidebarItem::MutedRole, sidebar.isChannelMuted(channel));
+        item->setData(0, SidebarItem::MentionedRole, candidate.mentioned);
+        item->setData(0, SidebarItem::UnreadRole, candidate.unread);
         item->setToolTip(0, channel.getTeamAndChannelName());
 
         if (channel.type == BackendChannel::directChannel) {
@@ -151,7 +152,7 @@ void ChannelQuickList::refresh()
                 if (!user->avatar.isNull()) {
                     item->setIcon(0, QIcon(user->avatar));
                 }
-                item->setData(0, ChannelTree::ItemStatusRole, user->status);
+                item->setData(0, SidebarItem::PresenceRole, user->status);
                 ensureDirectUserConnections(channel);
             }
         } else if (channel.type == BackendChannel::groupChannel) {
@@ -208,7 +209,7 @@ void ChannelQuickList::updateDirectUser(const BackendUser& user)
         return;
     }
 
-    item->setData(0, ChannelTree::ItemStatusRole, user.status);
+    item->setData(0, SidebarItem::PresenceRole, user.status);
     if (!user.avatar.isNull()) {
         item->setIcon(0, QIcon(user.avatar));
     }

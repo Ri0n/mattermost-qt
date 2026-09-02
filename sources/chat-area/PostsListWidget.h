@@ -39,12 +39,17 @@ namespace ItemType {
 enum id {
 	post,
 	separator,
+	// Sparse timeline placeholder. It intentionally has no item widget and no
+	// painted background; only its sizeHint contributes to scroll geometry.
+	gap,
 };
 }
 
 namespace ItemRole {
 enum id {
 	postId = Qt::UserRole + 1,
+	gapFirstIndex,
+	gapCount,
 };
 }
 
@@ -102,6 +107,13 @@ public:
 		animation->start(QAbstractAnimation::DeleteWhenStopped);
 	}
 
+	// Sparse rebuilds run synchronously on the GUI thread. Freezing QWidget
+	// updates across later event-loop turns leaves stale backing-store pixels when
+	// the splitter/list geometry changes (observed as post text over the editor).
+	// Qt already coalesces paints until control returns to the event loop, so the
+	// timeline controllers' legacy paint-suspension calls are intentionally no-op.
+	void setUpdatesEnabled(bool) {}
+
 	// QListWidget::clear(), scrollToItem() and scrollToBottom() are not virtual.
 	// ChatArea uses the concrete PostsListWidget type, so hiding them here lets
 	// us distinguish explicit navigation from automatic layout-driven scrolling.
@@ -118,6 +130,15 @@ public:
 
 		const QVariant itemType = item->data(Qt::UserRole);
 		return itemType.isValid() && itemType.toInt() == ItemType::post;
+	}
+
+	static bool isGapItem(const QListWidgetItem* item)
+	{
+		if (!item) {
+			return false;
+		}
+		const QVariant itemType = item->data(Qt::UserRole);
+		return itemType.isValid() && itemType.toInt() == ItemType::gap;
 	}
 
 	void scrollToUnreadPostsOrBottom ();
@@ -144,6 +165,29 @@ public:
 	// silently move the saved reading position to the newer bottom.
 	void freezeCurrentViewportAnchor();
 
+	/**
+	 * Sparse timeline controllers replace a large part of the QListWidget in one
+	 * operation. Suppress the ordinary per-row anchor restoration while that
+	 * transaction is in progress, then establish exactly one final viewport.
+	 */
+	void beginTimelineRebuild();
+	void finishTimelineRebuildAtBottom();
+	bool finishTimelineRebuildAtPost(const QString& postId, int viewportTopOffset);
+	void finishTimelineRebuildAtPixel(qint64 pixelOffset);
+
+	/**
+	 * Keep a semantic navigation target fixed while sparse pages and attachment
+	 * geometry settle. A quietPeriodMs of zero keeps the lock until explicit user
+	 * scrolling or list teardown; positive values retain the old timed behavior.
+	 */
+	void lockTimelineNavigationToPost(const QString& postId,
+	                                  int viewportTopOffset = 0,
+	                                  int quietPeriodMs = 2000);
+	void clearTimelineNavigationLock();
+	// Sparse controllers use this to suspend automatic gap prefetch while an
+	// explicit navigation target owns the viewport.
+	bool hasTimelineNavigationLock() const { return !timelineNavigationPostId.isEmpty(); }
+
 	Backend*						backend;
 signals:
 	void postEditInitiated (BackendPost& post);
@@ -155,6 +199,8 @@ private:
 	struct SavedScrollAnchor {
 		QString postId;
 		int bottomOffset = 0;
+		// Sticky-bottom state: automatic new content follows the newest edge only
+		// while this is true. User scroll and semantic navigation clear it.
 		bool atBottom = false;
 		bool valid = false;
 	};
@@ -168,6 +214,9 @@ private:
 	void commitUserScrollAnchor();
 	void schedulePendingUserIntentReset();
 	bool isUserScrollInProgress() const;
+	bool restoreTimelineNavigationLock();
+	void touchTimelineNavigationLock();
+	void scheduleTimelineNavigationRestore();
 
 	void copySelectedItemsToClipboard (PostWidget::FormatType formatType);
 	void keyPressEvent (QKeyEvent* event)		override;
@@ -190,6 +239,13 @@ private:
 	bool							scrollBarUserGesture = false;
 	bool							pendingScrollBarUserIntent = false;
 	quint64							scrollIntentGeneration = 0;
+	QString							timelineNavigationPostId;
+	int							timelineNavigationTopOffset = 0;
+	int							timelineNavigationQuietPeriodMs = 2000;
+	quint64							timelineNavigationLockGeneration = 0;
+	bool							timelineNavigationUserCancelConnected = false;
+	bool							timelineNavigationGeometryConnected = false;
+	bool							timelineNavigationRestoreScheduled = false;
 };
 
 } /* namespace Mattermost */

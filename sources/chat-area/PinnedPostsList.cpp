@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -40,6 +40,11 @@
 #include "ui_PinnedPostsList.h"
 
 namespace Mattermost {
+namespace {
+// Zero means semantic navigation remains authoritative until the user actually
+// scrolls. Network/page/image latency must not decide when pinned navigation ends.
+constexpr int PinnedNavigationQuietPeriodMs = 0;
+}
 
 PinnedPostsList::PinnedPostsList(QWidget *parent)
 :QWidget(parent)
@@ -132,18 +137,26 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
         QPointer<ChatArea> guard(chatArea);
         BackendChannel& channel = chatArea->getChannel();
 
-        // Set pendingPostId first. If the post is old, loadAround() emits the
-        // normal channel onNewPosts signal while merging context; ChatArea will
-        // then complete the pending navigation as soon as the row is inserted.
+        // Keep the target authoritative before starting any asynchronous context
+        // request. Sparse page materialization and image reflow may continue for
+        // arbitrarily long; only explicit user scrolling ends this navigation.
+        chatArea->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
+
         chatArea->goToPost(navigationId);
-        if (!channel.postIdToPost.contains(navigationId)) {
-            PostNavigationService::instance(chatArea->getBackend()).loadAround(
-                channel, navigationId, [guard, navigationId](bool loaded) {
-                    if (guard && loaded) {
-                        guard->goToPost(navigationId);
-                    }
-                });
-        }
+        PostNavigationService::instance(chatArea->getBackend()).loadAround(
+            channel, navigationId,
+            [guard, navigationId](const PostNavigationService::Context& context) {
+                if (!guard || !context.success) {
+                    return;
+                }
+                guard->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
+                guard->ensurePinnedPostVisible(navigationId,
+                                               context.postIds,
+                                               context.reachedOldest,
+                                               context.reachedNewest);
+                guard->goToPost(navigationId);
+            },
+            true);
 
         closePanel();
     });

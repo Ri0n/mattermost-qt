@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -23,6 +23,7 @@
 #include <QDate>
 #include <QPointer>
 #include <QSet>
+#include <QStringList>
 #include <QTreeWidgetItem>
 #include <QScrollBar>
 
@@ -48,6 +49,11 @@ class ChannelItem;
 struct ChannelNewPosts;
 class OutgoingAttachmentList;
 class QChatArea;
+class ChatArea;
+class ChannelTimelineController;
+class ThreadTimelineController;
+ChannelTimelineController* createChannelTimelineController(ChatArea& area);
+ThreadTimelineController* createThreadTimelineController(ChatArea& area);
 
 class ChatArea: public QWidget {
 	Q_OBJECT
@@ -69,6 +75,23 @@ public:
 	 */
 	void goToPost (const BackendPost& post);
 	void goToPost (const QString& postId);
+
+	/**
+	 * Ensure a cached root post has a visible row in the normal channel view.
+	 * Context navigation can cache the target before its surrounding chunks are
+	 * rendered; this bridges backend identity with the current materialized UI.
+	 */
+	bool ensurePostVisible (const QString& postId);
+	bool ensurePinnedPostVisible(const QString& postId,
+	                             const QStringList& contextPostIds,
+	                             bool reachedOldest,
+	                             bool reachedNewest);
+
+	/**
+	 * Temporarily make a semantic navigation target authoritative for viewport
+	 * restoration while sparse pages and attachment geometry settle.
+	 */
+	void lockNavigationToPost(const QString& postId, int quietPeriodMs = 2000);
 
 	/**
 	 * Called when the chat area is being selected from the channels menu (so that it's contents is shown)
@@ -136,6 +159,12 @@ public:
 	QSet<ChatArea*> 					threadsAreas;
 	QString							root_id;
 	std::vector<QMetaObject::Connection> 		signalConnections;
+
+	// Declared last on purpose: isThread/root_id/ui/backend/channel are already
+	// initialized when these factories run. Controllers defer UI access until
+	// the next event-loop turn, after the constructor body has completed.
+	ChannelTimelineController*		channelTimelineController = createChannelTimelineController(*this);
+	ThreadTimelineController*		threadTimelineController = createThreadTimelineController(*this);
 };
 
 } /* namespace Mattermost */

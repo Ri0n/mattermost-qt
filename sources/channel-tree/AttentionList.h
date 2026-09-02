@@ -30,6 +30,7 @@
 #include <QTreeWidget>
 #include <QVector>
 
+#include "SidebarItem.h"
 #include "backend/HTTPConnector.h"
 
 namespace Mattermost {
@@ -74,16 +75,19 @@ private:
         bool synthetic = false;
     };
 
-    enum EntryType {
-        ChannelEntry = 1,
-        ThreadEntryType = 2,
-    };
+    using EntryType = SidebarItem::Kind;
 
-    enum Role {
-        EntryTypeRole = Qt::UserRole + 100,
-        ChannelIdRole,
-        ThreadIdRole,
-        TeamIdRole,
+    // Transitional names keep the implementation readable without introducing
+    // a second enum domain. Comparing/assigning them therefore remains strongly
+    // typed as SidebarItem::Kind under -Wenum-compare.
+    static constexpr EntryType ChannelEntry = SidebarItem::Channel;
+    static constexpr EntryType ThreadEntryType = SidebarItem::Thread;
+
+    enum : int {
+        EntryTypeRole = SidebarItem::KindRole,
+        ChannelIdRole = SidebarItem::ChannelIdRole,
+        ThreadIdRole = SidebarItem::ThreadIdRole,
+        TeamIdRole = SidebarItem::TeamIdRole,
     };
 
     void retainSelection(QTreeWidgetItem* item);

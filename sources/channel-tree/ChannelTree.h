@@ -29,6 +29,7 @@
 #include <QTreeWidget>
 
 #include "ChannelTreeItem.h"
+#include "SidebarItem.h"
 
 class QDropEvent;
 class QMouseEvent;
@@ -48,23 +49,26 @@ struct SidebarTeamState;
 class ChannelTree: public QTreeWidget {
 	Q_OBJECT
 public:
-	enum ItemKind {
-		UnknownItem = 0,
-		TeamItemKind,
-		CategoryItemKind,
-		ChannelItemKind,
-	};
+    using ItemKind = SidebarItem::Kind;
+    using ItemRole = SidebarItem::Role;
 
-	enum ItemRole {
-		ItemKindRole = Qt::UserRole + 1,
-		ItemIdRole,
-		ItemTeamIdRole,
-		ItemMutedRole,
-		ItemMentionedRole,
-		ItemStatusRole,
-		ItemUnreadRole,
-		ItemLifetimeRole,
-	};
+    // Compatibility names for the existing ChannelTree implementation and
+    // callers. SidebarItem is the canonical contract shared by all sidebar
+    // views; new code should use it directly.
+    static constexpr ItemKind UnknownItem = SidebarItem::Unknown;
+    static constexpr ItemKind TeamItemKind = SidebarItem::Team;
+    static constexpr ItemKind CategoryItemKind = SidebarItem::Category;
+    static constexpr ItemKind ChannelItemKind = SidebarItem::Channel;
+
+    static constexpr ItemRole ItemKindRole = SidebarItem::KindRole;
+    static constexpr ItemRole ItemIdRole = SidebarItem::IdRole;
+    static constexpr ItemRole ItemTeamIdRole = SidebarItem::TeamIdRole;
+    static constexpr ItemRole ItemMutedRole = SidebarItem::MutedRole;
+    static constexpr ItemRole ItemMentionedRole = SidebarItem::MentionedRole;
+    static constexpr ItemRole ItemStatusRole = SidebarItem::PresenceRole;
+    static constexpr ItemRole ItemUnreadRole = SidebarItem::UnreadRole;
+    static constexpr ItemRole ItemLifetimeRole = SidebarItem::LifetimeRole;
+    static constexpr ItemRole ItemChannelTypeRole = SidebarItem::ChannelTypeRole;
 
 	ChannelTree (QWidget* parent = nullptr);
 	virtual ~ChannelTree ();
