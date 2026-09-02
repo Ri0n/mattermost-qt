@@ -20,6 +20,16 @@ namespace Mattermost {
 class Backend;
 class BackendUser;
 
+struct UserSearchOptions {
+    QString term;
+    QString teamId;
+    QString notInTeamId;
+    QString inChannelId;
+    QString notInChannelId;
+    int limit = 100;
+    bool allowInactive = false;
+};
+
 class UserProfileService : public QObject {
     Q_OBJECT
 public:
@@ -33,6 +43,8 @@ public:
                      std::function<void()> callback = {});
     void ensureStatuses(const QStringList& userIds,
                         std::function<void()> callback = {});
+    void searchUsers(const UserSearchOptions& options,
+                     std::function<void(QVector<const BackendUser*>)> callback);
 
 private:
     explicit UserProfileService(Backend& backend);
