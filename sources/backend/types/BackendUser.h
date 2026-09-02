@@ -63,6 +63,7 @@ public:
 public:
 	QString 			id;
 	QPixmap				avatar;
+	uint64_t			avatar_picture_update = 0;
 	uint64_t 			create_at;
 	uint64_t			update_at;
 	uint64_t 			delete_at;
@@ -79,6 +80,7 @@ public:
 	BackendNotifyPreps 	notify_preps;
 	BackendUserProps	props;
 	uint64_t 			last_password_update;
+	uint64_t			last_picture_update;
 	QString 			locale;
 	BackendTimeZone		timezone;
 	bool				isLoginUser;

@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -67,7 +67,6 @@ QString BackendChannel::getTeamAndChannelName ()
 
 void ChannelNewPosts::addChunk (ChannelNewPostsChunk&& chunk)
 {
-	//do not add empty chunk
 	if (chunk.postsToAdd.empty()) {
 		return;
 	}
@@ -93,6 +92,10 @@ BackendChannel::BackendChannel (Storage& storage, const QJsonObject& jsonObject)
 	last_post_at = jsonObject.value("last_post_at").toVariant().toULongLong();
 
 	total_msg_count = jsonObject.value("total_msg_count").toInt();
+	has_total_msg_count_root = jsonObject.contains("total_msg_count_root");
+	total_msg_count_root = has_total_msg_count_root
+		? jsonObject.value("total_msg_count_root").toInt()
+		: total_msg_count;
 	extra_update_at = jsonObject.value("extra_update_at").toInt();
 	creator = storage.getUserById (jsonObject.value("creator_id").toString());
 	scheme_id = jsonObject.value("scheme_id").toVariant();
@@ -112,7 +115,6 @@ BackendPost* BackendChannel::addPost (const QJsonObject& postObject)
 	QString rootId = postObject.value("root_id").toString();
 
 	if (!rootId.isEmpty()) {
-		//qDebug() << rootId << newPost->id;
 		rootIdAndPostList.push_back(QPair<QString,QString> (rootId, newPost->id));
 		newPost->hidden = true;
 		BackendPost* rootPost = findPostById(rootId);
@@ -123,7 +125,6 @@ BackendPost* BackendChannel::addPost (const QJsonObject& postObject)
 		} else {
 			missingRootPostIds.insert(rootId);
 		}
-
 	}
 
 	if(missingRootPostIds.contains(newPost->id)) {
@@ -135,12 +136,10 @@ BackendPost* BackendChannel::addPost (const QJsonObject& postObject)
 	return newPost;
 }
 
-void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPost>::iterator position, ChannelNewPostsChunk& currentChunk, QVector<QPair<QString, QString>>& rootLinks, bool initialLoad)
+void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPost>::iterator position,
+                              ChannelNewPostsChunk& currentChunk,
+                              QVector<QPair<QString, QString>>& rootLinks, bool initialLoad)
 {
-	/*
-	 * Add a post.
-	 * And add added post to the list of new posts
-	 */
 	BackendPost* newPost = &*posts.emplace (position, postObject, storage);
 	postIdToPost[newPost->id] = newPost;
 
@@ -148,16 +147,15 @@ void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPo
 
 	QString rootId = postObject.value("root_id").toString();
 
-	 if (!rootId.isEmpty()) {
-		//qDebug() << rootId << newPost->id;
-	 	rootLinks.push_back(QPair<QString,QString> (rootId, newPost->id));
-	 	newPost->hidden = true;
-	 	BackendPost* rootPost = findPostById(rootId);
-	 	if (rootPost) {
+	if (!rootId.isEmpty()) {
+		rootLinks.push_back(QPair<QString,QString> (rootId, newPost->id));
+		newPost->hidden = true;
+		BackendPost* rootPost = findPostById(rootId);
+		if (rootPost) {
 			qDebug() << rootPost->id <<  rootPost->message;
-	 		rootPost->has_thread = true;
-	 		emit onPostEdited(*rootPost);
-	 	} else {
+			rootPost->has_thread = true;
+			emit onPostEdited(*rootPost);
+		} else {
 			missingRootPostIds.insert(rootId);
 		}
 	}
@@ -169,32 +167,24 @@ void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPo
 	}
 
 	if (!initialLoad) {
-		qDebug() << newPost->create_at << " " << newPost->id << " " << newPost->getDisplayAuthorName() << " " << newPost->message;
+		qDebug() << newPost->create_at << " " << newPost->id << " "
+		         << newPost->getDisplayAuthorName() << " " << newPost->message;
 	}
 }
 
-
 void BackendChannel::prependPosts (const QJsonArray& orderArray, const QJsonObject& postsObject)
 {
-	/*
-	 * A list of (sequential) groups of new posts
-	 */
 	ChannelNewPosts allNewPosts;
-
-	/*
-	 * A sequential group of new posts
-	 */
 	ChannelNewPostsChunk currentNewPostsChunk;
 
 	bool initialLoad = true;
 
-	//add all posts to the beginning of the posts list
 	for (const auto& newPostEl: orderArray) {
 		QString newPostId = newPostEl.toString();
-		addPost (postsObject.find (newPostId).value().toObject(), posts.begin (), currentNewPostsChunk, rootIdAndPostList, initialLoad);
+		addPost (postsObject.find (newPostId).value().toObject(), posts.begin (),
+		         currentNewPostsChunk, rootIdAndPostList, initialLoad);
 	}
 
-	//if there are new posts left, add them to allMissingPosts
 	if (!currentNewPostsChunk.postsToAdd.empty()) {
 		allNewPosts.addChunk (std::move (currentNewPostsChunk));
 	}
@@ -204,19 +194,9 @@ void BackendChannel::prependPosts (const QJsonArray& orderArray, const QJsonObje
 
 void BackendChannel::addPosts (const QJsonArray& orderArray, const QJsonObject& postsObject)
 {
-	/*
-	 * A list of (sequential) groups of new posts
-	 */
 	ChannelNewPosts allNewPosts;
-
-	/*
-	 * A sequential group of new posts
-	 */
 	ChannelNewPostsChunk currentNewPostsChunk;
 
-	/* Position to add new posts (if any)
-	 * local posts are searched from newest to oldest
-	 */
 	std::list<BackendPost>::reverse_iterator currentLocalPost = posts.rbegin();
 
 #if defined(_MSC_VER)
@@ -229,33 +209,19 @@ void BackendChannel::addPosts (const QJsonArray& orderArray, const QJsonObject& 
 	bool lastPostWasSkipped = false;
 
 	for (const auto& newPostEl: orderArray) {
-
-		/*
-		 * Skip deleted posts.
-		 * if a post is deleted, it will exist locally (with 'message deleted' text), but will not exist in the list of received posts.
-		 * Deleted posts are not affected. They will not be present after client restart
-		 */
 		while (currentLocalPost != posts.rend() && currentLocalPost->isDeleted) {
 			++currentLocalPost;
 		}
 
 		QString newPostId = newPostEl.toString();
 
-		/*
-		 * end of local posts list. Save the current missing post sequence and add all missing posts.
-		 * This is the case when scrolling up and getting older posts.
-		 */
 		if (currentLocalPost == posts.rend()) {
-			addPost (postsObject.find (newPostId).value().toObject(), posts.begin (), currentNewPostsChunk, rootIdAndPostList, initialLoad);
+			addPost (postsObject.find (newPostId).value().toObject(), posts.begin (),
+			         currentNewPostsChunk, rootIdAndPostList, initialLoad);
 			++currentLocalPost;
 			continue;
 		}
 
-		/*
-		 * Compare new posts with existing ones. If there is a new post, mark it for adding.
-		 */
-
-		//post already exists. No need to be added. Save the current missing posts chunk and start a new one
 		if (currentLocalPost->id == newPostId) {
 			++currentLocalPost;
 
@@ -267,14 +233,13 @@ void BackendChannel::addPosts (const QJsonArray& orderArray, const QJsonObject& 
 			continue;
 		}
 
-		//post not found. Add it to the list of new posts
 		qDebug () << "Add after currentLocalPost";
-		addPost (postsObject.find (newPostId).value().toObject(), currentLocalPost.base(), currentNewPostsChunk, rootIdAndPostList, initialLoad);
+		addPost (postsObject.find (newPostId).value().toObject(), currentLocalPost.base(),
+		         currentNewPostsChunk, rootIdAndPostList, initialLoad);
 		++currentLocalPost;
 		lastPostWasSkipped = true;
 	}
 
-	//if there are new posts left, add them to allMissingPosts
 	if (!currentNewPostsChunk.postsToAdd.empty()) {
 		if (currentLocalPost != posts.rend()) {
 			currentNewPostsChunk.previousPostId = currentLocalPost->id;
@@ -291,7 +256,6 @@ void BackendChannel::addPinnedPosts (const QJsonArray& orderArray, const QJsonOb
 
 	for (const auto& newPostEl: orderArray) {
 		QString newPostId = newPostEl.toString();
-
 		pinnedPosts.emplace_back (postsObject.find (newPostId).value().toObject(), storage);
 	}
 
@@ -344,7 +308,9 @@ QSet<const BackendUser*> BackendChannel::getAllMembers () const
 	QSet<const BackendUser*> ret;
 
 	for (auto& member: members) {
-		ret.insert (member.user);
+		if (member.user) {
+			ret.insert (member.user);
+		}
 	}
 
 	return ret;
@@ -353,12 +319,11 @@ QSet<const BackendUser*> BackendChannel::getAllMembers () const
 void BackendChannel::addMember (const Storage& channelStorage, const QJsonObject& jsonObject)
 {
 	BackendChannelMember member (channelStorage, jsonObject);
-	if (member.user) {
-		members.insert (member.user->id, std::move (member));
-	} else {
-		QString userID = jsonObject.value("user_id").toString();
-		LOG_DEBUG ("Channel " << display_name << " addMember: null user: " << userID);
+	if (member.userId.isEmpty()) {
+		LOG_DEBUG ("Channel " << display_name << " addMember: empty user id");
+		return;
 	}
+	members.insert (member.userId, std::move (member));
 }
 
 BackendPost* BackendChannel::findPostById (QString postID)
@@ -373,4 +338,3 @@ BackendPost* BackendChannel::findPostById (QString postID)
 }
 
 } /* namespace Mattermost */
-

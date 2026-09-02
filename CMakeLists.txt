@@ -90,7 +90,10 @@ if(ANDROID)
     resource.qrc
   )
 else()
-  file(GLOB_RECURSE SOURCES sources/*.cpp)
+  # Keep an existing build tree aware of newly added/removed implementation
+  # files. CI always configures from scratch, but local incremental builds must
+  # also rerun CMake when the recursive source set changes.
+  file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS sources/*.cpp)
   add_executable(${APPID}
     ${SOURCES}
     resource.qrc

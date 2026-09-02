@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -58,7 +58,9 @@ QSet<const BackendUser*> BackendTeam::getAllMembers () const
 	QSet<const BackendUser*> ret;
 
 	for (auto& member: members) {
-		ret.insert (member.user);
+		if (member.user) {
+			ret.insert (member.user);
+		}
 	}
 
 	return ret;
@@ -67,14 +69,11 @@ QSet<const BackendUser*> BackendTeam::getAllMembers () const
 void BackendTeam::addMember (const Storage& storage, const QJsonObject& jsonObject)
 {
 	BackendTeamMember member (storage, jsonObject);
-
-	if (member.user) {
-		members.insert (member.user->id, std::move (member));
-	} else {
-		QString userID = jsonObject.value("user_id").toString();
-		LOG_DEBUG ("Team " << display_name << " addMember: null user: " << userID);
+	if (member.userId.isEmpty()) {
+		LOG_DEBUG ("Team " << display_name << " addMember: empty user id");
+		return;
 	}
+	members.insert (member.userId, std::move (member));
 }
 
 } /* namespace Mattermost */
-

@@ -32,12 +32,13 @@ class BackendChannel;
 
 class ViewChannelMembersListDialog: public UserListDialog {
 public:
-	ViewChannelMembersListDialog (Backend& backend, const BackendChannel& channel, QWidget *parent);
+	ViewChannelMembersListDialog (Backend& backend, BackendChannel& channel, QWidget *parent);
 	virtual ~ViewChannelMembersListDialog ();
 private:
 	void addContextMenuActions (QMenu& menu, const QVariant& selectedItemData)		override;
+	void refreshMembers();
 private:
-	const BackendChannel& 	channel;
+	BackendChannel& 		channel;
 	Backend& 				backend;
 };
 

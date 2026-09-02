@@ -22,19 +22,38 @@
  * along with Mattermost-QT. if not, see https://www.gnu.org/licenses/.
  */
 
-
 #include "ViewChannelMembersListDialog.h"
 
 #include <QMenu>
-#include "backend/types/BackendChannel.h"
+#include <QPointer>
+
 #include "backend/Backend.h"
+#include "backend/UserProfileService.h"
+#include "backend/types/BackendChannel.h"
+#include "ui_FilterListDialog.h"
 
 namespace Mattermost {
 
-ViewChannelMembersListDialog::ViewChannelMembersListDialog (Backend& backend, const BackendChannel& channel, QWidget* parent)
+ViewChannelMembersListDialog::ViewChannelMembersListDialog (Backend& backend, BackendChannel& channel, QWidget* parent)
 :UserListDialog (parent)
 ,channel (channel)
 ,backend (backend)
+{
+	refreshMembers();
+
+	QPointer<ViewChannelMembersListDialog> guard(this);
+	UserProfileService::instance(backend).ensureChannelMembers(channel, [guard] {
+		if (guard) {
+			guard->refreshMembers();
+		}
+	});
+
+	connect (&channel, &BackendChannel::onUserRemoved, this, &UserListDialog::removeRowByData);
+}
+
+ViewChannelMembersListDialog::~ViewChannelMembersListDialog () = default;
+
+void ViewChannelMembersListDialog::refreshMembers()
 {
 	FilterListDialogConfig dialogCfg {
 		"Channel Members - Mattermost",
@@ -45,23 +64,16 @@ ViewChannelMembersListDialog::ViewChannelMembersListDialog (Backend& backend, co
 	};
 
 	std::set<UserListEntry> entrySet;
-
 	for (auto& it: channel.members) {
 		if (it.user) {
 			entrySet.emplace (it);
 		}
 	}
 
+	dataToItemMap.clear();
+	ui->tableWidget->clearContents();
 	create (dialogCfg, entrySet, {"Full Name", "Status", "Channel was last viewed"});
-
-//	connect (&channel, &BackendChannel::onUserAdded, [this] (const BackendUser&) {
-//
-//	});
-
-	connect (&channel, &BackendChannel::onUserRemoved, this, &UserListDialog::removeRowByData);
 }
-
-ViewChannelMembersListDialog::~ViewChannelMembersListDialog () = default;
 
 void ViewChannelMembersListDialog::addContextMenuActions (QMenu& menu, const QVariant& selectedItemData)
 {

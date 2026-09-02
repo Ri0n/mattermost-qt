@@ -22,9 +22,11 @@
 #include <iostream>
 #include <QDebug>
 #include <QDateTime>
+#include <QPointer>
 #include <QResizeEvent>
 #include <QPushButton>
 #include "backend/Backend.h"
+#include "backend/UserProfileService.h"
 #include "backend/types/BackendPost.h"
 #include "backend/emoji/EmojiInfo.h"
 #include "chat-area/ChatArea.h"
@@ -68,17 +70,16 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 		hoveredLink = link;
 	});
 
-	//avatars are downloaded in background, need to redraw it when ready
-
-	connect (post.author, &BackendUser::onAvatarChanged, this,[this] {
-		ui->authorAvatar->setPixmap (this->post.author->avatar);
-	});
-
 	if (post.author) {
-		if (post.author->avatar.isNull())
-			backend.retrieveUserAvatar(post.author->id);
-		else
-			ui->authorAvatar->setPixmap (this->post.author->avatar);
+		setAuthor(backend, post.author);
+	} else if (!post.user_id.isEmpty()) {
+		QPointer<PostWidget> guard(this);
+		UserProfileService::instance(backend).ensureUser(
+			post.user_id, [guard, &backend](const BackendUser* user) {
+				if (guard && user) {
+					guard->setAuthor(backend, user);
+				}
+			});
 	}
 
 	/**
@@ -140,6 +141,39 @@ PostWidget::~PostWidget()
     delete ui;
 }
 
+void PostWidget::setAuthor(Backend& backend, const BackendUser* user)
+{
+	if (!user) {
+		return;
+	}
+
+	post.author = user;
+	ui->authorName->setText(post.getDisplayAuthorName());
+	if (post.isOwnPost()) {
+		ui->authorName->setStyleSheet("QLabel { color : blue; }");
+	}
+
+	// Qt::UniqueConnection is only supported for member-function receivers.
+	// Using it with the previous lambda trips Qt's runtime assertion in debug
+	// builds as soon as a lazily loaded post author is resolved.
+	connect(user, &BackendUser::onAvatarChanged,
+		this, &PostWidget::updateAuthorAvatar, Qt::UniqueConnection);
+
+	if (user->avatar.isNull()
+		|| user->avatar_picture_update != user->last_picture_update) {
+		UserProfileService::instance(backend).ensureAvatar(*user);
+	} else {
+		updateAuthorAvatar();
+	}
+}
+
+void PostWidget::updateAuthorAvatar()
+{
+	if (post.author) {
+		ui->authorAvatar->setPixmap(post.author->avatar);
+	}
+}
+
 void PostWidget::setEdited (const QString& message)
 {
 	messageContent->setMessage(message);
@@ -162,7 +196,6 @@ void PostWidget::updateReactions ()
 		reactions.reset ();
 	}
 
-	//Add reactions, if any
 	if (!post.reactions.empty()) {
 		reactions = std::make_unique<PostReactionList> (this);
 
@@ -243,7 +276,6 @@ QString PostWidget::getMessageTimeString (uint64_t timestamp)
 	QDate postDate = postTime.date();
 
 	QString format;
-
 	if (currentDate.year() != postDate.year()) {
 		format = "dd MMM yyyy, hh:mm:ss";
 	} else if (currentDate.day() != postDate.day() || currentDate.month() != postDate.month()) {

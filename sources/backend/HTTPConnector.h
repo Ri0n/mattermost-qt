@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -25,9 +25,13 @@
 #pragma once
 
 #include <memory>
+
 #include <QNetworkReply>
-#include "backend/types/BackendError.h"
+#include <QQueue>
+#include <QSet>
+
 #include "backend/HttpResponseCallback.h"
+#include "backend/types/BackendError.h"
 
 class QNetworkAccessManager;
 
@@ -53,10 +57,38 @@ signals:
 	void onHttpError (uint32_t errorNumber, const QString& errorText);
 
 private:
-	virtual void setProcessReply (QNetworkReply* reply, std::function<void(QVariant,QByteArray,const QNetworkReply&)> responseHandler);
-private:
-	std::unique_ptr<QNetworkAccessManager> 	qnetworkManager;
+	enum class Method {
+		Get,
+		Post,
+		Put,
+		Delete,
+	};
+
+	struct PendingRequest {
+		Method method = Method::Get;
+		QNetworkRequest request;
+		QByteArray data;
+		bool jsonData = false;
+		HttpResponseCallback responseHandler;
+	};
+
+	void enqueue (PendingRequest request);
+	static void processQueues ();
+	static HTTPConnector* connectorWithPendingRequest (bool lowPriority);
+	void startRequest (PendingRequest request);
+	virtual void setProcessReply (QNetworkReply* reply,
+		std::function<void(QVariant,QByteArray,const QNetworkReply&)> responseHandler,
+		quint64 requestGeneration);
+
+	static constexpr int MaxConcurrentRequests = 6;
+	static QSet<HTTPConnector*> connectors;
+	static int globalActiveRequests;
+
+	std::unique_ptr<QNetworkAccessManager> qnetworkManager;
+	QQueue<PendingRequest> highPriorityRequests;
+	QQueue<PendingRequest> lowPriorityRequests;
+	int activeRequests = 0;
+	quint64 generation = 0;
 };
 
 } /* namespace Mattermost */
-

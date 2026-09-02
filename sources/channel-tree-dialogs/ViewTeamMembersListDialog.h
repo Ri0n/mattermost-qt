@@ -30,12 +30,13 @@ namespace Mattermost {
 
 class ViewTeamMembersListDialog: public UserListDialog {
 public:
-	ViewTeamMembersListDialog (Backend& backend, const BackendTeam& team, QWidget *parent);
+	ViewTeamMembersListDialog (Backend& backend, BackendTeam& team, QWidget *parent);
 	virtual ~ViewTeamMembersListDialog ();
 private:
 	void addContextMenuActions (QMenu& menu, const QVariant& selectedItemData)		override;
+	void refreshMembers();
 private:
-	const BackendTeam&		team;
+	BackendTeam&			team;
 	Backend& 				backend;
 };
 

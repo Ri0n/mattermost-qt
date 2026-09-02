@@ -176,7 +176,9 @@ void ChannelItemDelegate::paint(QPainter* painter,
 
     QRect textRect(textLeft, contentRect.top(), qMax(0, textRight - textLeft + 1), contentRect.height());
     QFont font = option.font;
-    font.setBold(index.data(ChannelTree::ItemMentionedRole).toBool());
+    const bool unread = index.data(ChannelTree::ItemUnreadRole).toBool();
+    const bool mentioned = index.data(ChannelTree::ItemMentionedRole).toBool();
+    font.setBold(unread || mentioned);
     painter->setFont(font);
 
     const bool selected = option.state.testFlag(QStyle::State_Selected);

@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -65,16 +65,16 @@ const QMap<QString, void(*)(WebSocketConnector&, const QJsonObject&, const QJson
 	{"reaction_removed",	handler<PostReactionRemovedEvent>},
 	{"typing",				handler<TypingEvent>},
 	{"status_change", 		handler<StatusChangeEvent>},
-	{"direct_added", 		handler<NewDirectChannelEvent>},		//new direct channel created
-	{"new_user",			handler<NewUserEvent>},				//user added to the server
-	{"user_updated",		handler<UserUpdatedEvent>},			//user data updated
-	{"user_added",			handler<UserAddedToChannelEvent>},		//user added to channel
-	{"added_to_team",		handler<UserAddedToTeamEvent>},			//user added to team
-	{"leave_team",			handler<UserLeaveTeamEvent>},			//a user has left a team
-	{"user_removed",		handler<UserRemovedFromChannelEvent>},	//a user (the logged-in user, or someone else) was removed from a channel
-	{"channel_created",		handler<ChannelCreatedEvent>},			//a new channel was created
-	{"channel_updated",		handler<ChannelUpdatedEvent>},			//a channel was updated
-	{"open_dialog",			handler<OpenDialogEvent>},				//a server-side dialog
+	{"direct_added", 		handler<NewDirectChannelEvent>},
+	{"new_user",			handler<NewUserEvent>},
+	{"user_updated",		handler<UserUpdatedEvent>},
+	{"user_added",			handler<UserAddedToChannelEvent>},
+	{"added_to_team",		handler<UserAddedToTeamEvent>},
+	{"leave_team",			handler<UserLeaveTeamEvent>},
+	{"user_removed",		handler<UserRemovedFromChannelEvent>},
+	{"channel_created",		handler<ChannelCreatedEvent>},
+	{"channel_updated",		handler<ChannelUpdatedEvent>},
+	{"open_dialog",			handler<OpenDialogEvent>},
 };
 
 bool printEvent (const QString& name)
@@ -84,7 +84,6 @@ bool printEvent (const QString& name)
 			name == "reaction_added" 	||
 			name == "status_change" 	||
 			name == "posted" 			||
-			//name == "typing" 			||
 			name == "reaction_removed"	||
 			name == "user_removed"		||
 			name == "user_updated"		||
@@ -111,6 +110,7 @@ struct WebSocketConnector::Private {
 	int reconnectAttempt = 0;
 	bool waitingForPong = false;
 	bool hasReconnect = false;
+	bool resumeFailed = false;
 	bool helloReceived = false;
 	bool suppressReconnect = false;
 };
@@ -136,6 +136,7 @@ WebSocketConnector::WebSocketConnector (WebSocketEventHandler& eventHandler)
 		d->reconnectTimer.stop ();
 		d->responseSequence = 1;
 		d->helloReceived = false;
+		d->resumeFailed = false;
 		doHandshake ();
 		startHeartbeat ();
 	});
@@ -192,6 +193,7 @@ void WebSocketConnector::open (const QString& urlString, const QString& authToke
 	d->reconnectAttempt = 0;
 	d->waitingForPong = false;
 	d->hasReconnect = false;
+	d->resumeFailed = false;
 	d->helloReceived = false;
 	d->suppressReconnect = false;
 	d->reconnectTimer.stop ();
@@ -291,9 +293,6 @@ void WebSocketConnector::sendPing ()
 		return;
 	}
 
-	// Mattermost's web client uses an application-level websocket action named
-	// "ping". It does not rely on RFC6455 control-frame ping/pong for its
-	// liveness check. The response is a normal {status, seq_reply} packet.
 	if (d->waitingForPong) {
 		LOG_DEBUG ("Mattermost WebSocket ping received no response within "
 				   << HeartbeatIntervalMs << " ms. Reconnecting");
@@ -321,6 +320,7 @@ void WebSocketConnector::reset ()
 	d->serverSequence = 0;
 	d->reconnectAttempt = 0;
 	d->hasReconnect = false;
+	d->resumeFailed = false;
 	d->helloReceived = false;
 
 	if (d->webSocket.state() != QAbstractSocket::UnconnectedState) {
@@ -342,8 +342,6 @@ void WebSocketConnector::onNewPacket (const QString& string)
 
 	const QJsonObject jsonObject = doc.object ();
 
-	// Replies to websocket actions use the request's sequence number and are
-	// separate from the server event stream sequence.
 	const QJsonValue seqReply = jsonObject.value (QStringLiteral("seq_reply"));
 	if (!seqReply.isUndefined()) {
 		const int replySequence = seqReply.toInt ();
@@ -360,20 +358,29 @@ void WebSocketConnector::onNewPacket (const QString& string)
 
 	const QString eventName = jsonObject.value (QStringLiteral("event")).toString ();
 
-	// A hello packet identifies the reliable websocket stream. On reconnect the
-	// server reuses connection_id and resumes from sequence_number when its
-	// backlog is still available. A different id means replay was not possible;
-	// reset the expected sequence and let Backend's reconnect sync fill the gap.
 	if (eventName == QStringLiteral("hello")) {
+		const QString oldConnectionId = d->connectionId;
 		const QString newConnectionId = jsonObject.value(QStringLiteral("data"))
 			.toObject().value(QStringLiteral("connection_id")).toString();
-		if (!d->connectionId.isEmpty() && !newConnectionId.isEmpty()
-			&& d->connectionId != newConnectionId) {
+
+		if (d->hasReconnect) {
+			// A resumed Mattermost stream keeps the same connection_id. Only a
+			// different (or missing) id means the backlog could not be replayed
+			// and the Backend really needs its expensive HTTP fallback sync.
+			d->resumeFailed = oldConnectionId.isEmpty() || newConnectionId.isEmpty()
+				|| oldConnectionId != newConnectionId;
+		}
+
+		if (!oldConnectionId.isEmpty() && !newConnectionId.isEmpty()
+			&& oldConnectionId != newConnectionId) {
 			LOG_DEBUG ("Mattermost started a new WebSocket stream (old connection_id="
-					   << d->connectionId << ", new connection_id=" << newConnectionId
+					   << oldConnectionId << ", new connection_id=" << newConnectionId
 					   << "). Falling back to HTTP resync");
 			d->serverSequence = 0;
+		} else if (d->hasReconnect && !d->resumeFailed) {
+			LOG_DEBUG ("Mattermost WebSocket stream resumed successfully; skipping HTTP resync");
 		}
+
 		if (!newConnectionId.isEmpty()) {
 			d->connectionId = newConnectionId;
 		}
@@ -395,15 +402,19 @@ void WebSocketConnector::onNewPacket (const QString& string)
 	if (eventName == QStringLiteral("hello") && !d->helloReceived) {
 		d->helloReceived = true;
 		d->reconnectAttempt = 0;
-		const bool reconnected = d->hasReconnect;
+
+		// Historically the signal's bool meant "a socket reconnect occurred",
+		// and Backend consequently performed a full HTTP resync after every
+		// transient disconnect. Keep the signal ABI but narrow the bool to the
+		// only condition that needs that fallback: reliable replay failed.
+		const bool needsHttpResync = d->hasReconnect && d->resumeFailed;
 		d->hasReconnect = false;
-		emit onConnect (reconnected);
+		d->resumeFailed = false;
+		emit onConnect (needsHttpResync);
 	}
 
 	auto it = eventHandlers.find (eventName);
 	if (it == eventHandlers.end()) {
-		//sometimes MM instance keeps spamming custom_profile_attributes_values_updated
-		//custom profile attributes will not be supported in the near future
 		if (eventName != QStringLiteral("custom_profile_attributes_values_updated")) {
 			LOG_DEBUG ("Unhandled WebSocket event '" << eventName << "'\n");
 			const QString jsonString = doc.toJson (QJsonDocument::Indented);
