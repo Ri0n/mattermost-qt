@@ -28,8 +28,8 @@ namespace {
 constexpr int ChannelPageSize = 80;
 constexpr int SmallChannelPrefetchPages = 2;
 constexpr int LargeChannelPrefetchPages = 3;
-constexpr int SeekDebounceMs = 140;
-constexpr int MeasurementDebounceMs = 120;
+constexpr int SeekDebounceMs = 120;
+constexpr int MeasurementDebounceMs = 180;
 constexpr int GapPrefetchScreens = 3;
 constexpr int ContextPostsPerSide = 30;
 
@@ -107,23 +107,25 @@ bool ChannelTimelineController::eventFilter(QObject* watched, QEvent* event)
     if (event->type() == QEvent::Show) {
         QTimer::singleShot(0, this, &ChannelTimelineController::tryStart);
     } else if (event->type() == QEvent::Hide) {
-        // QStackedWidget can emit transient Hide events while the initial page
-        // hierarchy is being assembled. Deactivate only after the backend has
-        // actually selected another channel; otherwise the very first selected
-        // chat can lose its controller before the first page arrives.
         QPointer<ChannelTimelineController> guard(this);
         QTimer::singleShot(0, this, [guard] {
             if (!guard || !guard->active) {
                 return;
             }
-            if (guard->area.backend.getCurrentChannel() != &guard->area.channel) {
+            BackendChannel* current = guard->area.backend.getCurrentChannel();
+            // During startup QStackedWidget can hide/show pages before Backend
+            // has selected any channel. nullptr is not evidence of navigation.
+            if (current && current != &guard->area.channel) {
                 guard->deactivate();
                 return;
             }
             if (!guard->area.isVisible()) {
                 QTimer::singleShot(50, guard, [guard] {
-                    if (guard && guard->active && !guard->area.isVisible()
-                        && guard->area.backend.getCurrentChannel() != &guard->area.channel) {
+                    if (!guard || !guard->active || guard->area.isVisible()) {
+                        return;
+                    }
+                    BackendChannel* delayedCurrent = guard->area.backend.getCurrentChannel();
+                    if (delayedCurrent && delayedCurrent != &guard->area.channel) {
                         guard->deactivate();
                     }
                 });
@@ -146,7 +148,8 @@ void ChannelTimelineController::tryStart()
         return;
     }
 
-    if (!area.isVisible() && area.backend.getCurrentChannel() != &area.channel) {
+    BackendChannel* current = area.backend.getCurrentChannel();
+    if (!area.isVisible() && current && current != &area.channel) {
         return;
     }
     start();
@@ -154,10 +157,6 @@ void ChannelTimelineController::tryStart()
 
 int ChannelTimelineController::channelRootPostCount() const
 {
-    // total_msg_count includes replies on servers that do not expose the root
-    // counter. Using it as an exact root count manufactures a phantom gap for
-    // every thread reply. Unknown is safer: page responses grow a provisional
-    // oldest-side gap until the server marks the real boundary.
     if (!area.channel.has_total_msg_count_root) {
         return 0;
     }
@@ -177,7 +176,6 @@ void ChannelTimelineController::start()
     requestedFocusIndex = -1;
     pendingSeekIndex = -1;
     viewportCheckScheduled = false;
-    deferredExternalFlushScheduled = false;
     loadedPages.clear();
     deferredExternalPostIds.clear();
     nextOlderPage = 0;
@@ -188,9 +186,14 @@ void ChannelTimelineController::start()
     timeline.reset(expectedPostCount);
     lastAppliedGapRowHeight = timeline.estimatedRowHeight();
 
+    // Sparse history is the sole bulk renderer. ChatArea keeps live onNewPost,
+    // edits, reactions and read handling, but must not materialize REST pages in
+    // parallel with this controller.
     QObject::disconnect(&area.channel, &BackendChannel::onNewPosts,
                         &area, &ChatArea::fillChannelPosts);
 
+    // Also keeps the legacy load-old callbacks inert while this controller is
+    // active; their lambdas guard on gettingOlderPosts.
     area.gettingOlderPosts = true;
 
     connect(area.ui->loadOldPosts, &QPushButton::clicked,
@@ -212,10 +215,7 @@ void ChannelTimelineController::start()
         if (!active || post.hidden || !post.root_id.isEmpty()) {
             return;
         }
-
-        if (expectedPostCount < INT_MAX) {
-            ++expectedPostCount;
-        }
+        ++expectedPostCount;
         timeline.setTotalCount(expectedPostCount);
         timeline.placeWindow(expectedPostCount - 1, QStringList {post.id});
         scheduleMeasurementPass();
@@ -234,9 +234,6 @@ void ChannelTimelineController::start()
     }
     initialPageTarget = std::max(1, initialPageTarget);
 
-    // Do not rebuild after every prefetched page. The previous implementation
-    // destroyed/recreated every PostWidget 2-3 times during channel opening,
-    // retriggering image layout and making the viewport visibly oscillate.
     continueInitialPrefetch();
 }
 
@@ -280,6 +277,8 @@ int ChannelTimelineController::authoritativeFirstIndex(int page, int pageSize) c
 
 void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
 {
+    Q_UNUSED(focusLogicalIndex);
+
     if (!active || requestInFlight || page < 0) {
         return;
     }
@@ -291,19 +290,12 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
     }
 
     if (loadedPages.contains(page)) {
-        if (focusLogicalIndex >= 0) {
-            const QString focusId = timeline.postIdAt(focusLogicalIndex);
-            if (!focusId.isEmpty()) {
-                renderTimeline(focusId);
-            }
-        }
         continueInitialPrefetch();
         return;
     }
 
     requestInFlight = true;
     requestedPage = page;
-    requestedFocusIndex = focusLogicalIndex;
     const quint64 requestGeneration = generation;
     QPointer<ChannelTimelineController> guard(this);
 
@@ -314,22 +306,18 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
                 return;
             }
 
-            const int focusIndex = guard->requestedFocusIndex;
             guard->requestInFlight = false;
             guard->requestedPage = -1;
-            guard->requestedFocusIndex = -1;
 
             if (!result.success) {
                 guard->flushDeferredExternalPosts();
                 return;
             }
 
+            const ViewportAnchor anchor = guard->captureViewportAnchor();
             const QStringList ids = result.postIds;
             const int responseSize = static_cast<int>(ids.size());
             const int minimumKnownCount = page * ChannelPageSize + responseSize;
-            // Mattermost itself uses an empty prev_post_id as the authoritative
-            // oldest-edge marker. Page length is not reliable here: filtering
-            // collapsed/thread replies can make a non-final root page short.
             const bool reachedOldestEdge = result.prevPostId.isEmpty();
 
             int discoveredCount = guard->expectedPostCount;
@@ -342,9 +330,9 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
                 discoveredCount = std::max(reportedRootCount, minimumKnownCount);
                 guard->totalCountExact = true;
             } else if (!guard->totalCountExact) {
-                // Keep exactly one not-yet-proven older page as provisional
-                // geometry. If another page exists, the whole loaded tail is
-                // shifted right before that page is placed.
+                // Keep one unproven older page in front of the loaded newest
+                // tail. Growing this estimate must move existing indices right,
+                // never append a phantom gap after the newest message.
                 discoveredCount = std::max(
                     guard->expectedPostCount,
                     minimumKnownCount + ChannelPageSize);
@@ -363,15 +351,9 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
                 ++guard->nextOlderPage;
             }
 
-            QString focusId;
             if (!ids.isEmpty()) {
                 const int firstIndex = guard->authoritativeFirstIndex(page, responseSize);
                 guard->timeline.placeWindow(firstIndex, ids);
-                if (focusIndex >= 0) {
-                    const int clamped = std::max(firstIndex,
-                        std::min(focusIndex, firstIndex + responseSize - 1));
-                    focusId = guard->timeline.postIdAt(clamped);
-                }
             }
 
             if (!guard->initialRenderDone) {
@@ -379,7 +361,7 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
                 return;
             }
 
-            guard->renderTimeline(focusId);
+            guard->renderTimeline(QString(), anchor);
             guard->flushDeferredExternalPosts();
             guard->scheduleViewportCheck();
         });
@@ -420,27 +402,25 @@ void ChannelTimelineController::requestOlderPage()
 
 void ChannelTimelineController::requestPageForIndex(int logicalIndex, bool focusAfterLoad)
 {
+    Q_UNUSED(focusAfterLoad);
+
     if (!active || logicalIndex < 0 || logicalIndex >= timeline.totalCount()) {
         return;
     }
 
-    const QString loadedId = timeline.postIdAt(logicalIndex);
-    if (!loadedId.isEmpty()) {
-        if (focusAfterLoad) {
-            renderTimeline(loadedId);
-        }
+    if (!timeline.postIdAt(logicalIndex).isEmpty()) {
         return;
     }
 
     const int distanceFromNewest = timeline.totalCount() - 1 - logicalIndex;
     const int page = std::max(0, distanceFromNewest / ChannelPageSize);
-    requestPage(page, focusAfterLoad ? logicalIndex : -1);
+    requestPage(page);
 }
 
 void ChannelTimelineController::requestSeek(int logicalIndex)
 {
     pendingSeekIndex = -1;
-    requestPageForIndex(logicalIndex, true);
+    requestPageForIndex(logicalIndex, false);
 }
 
 void ChannelTimelineController::absorbNewPosts(const ChannelNewPosts& newPosts)
@@ -553,10 +533,12 @@ void ChannelTimelineController::placeApproximateWindow(const QStringList& postId
 
     if (missing.isEmpty()) {
         if (renderAfter && !focusPostId.isEmpty()) {
-            renderTimeline(focusPostId);
+            renderTimeline(focusPostId, captureViewportAnchor());
         }
         return;
     }
+
+    const ViewportAnchor anchor = captureViewportAnchor();
 
     if (timeline.totalCount() <= 0) {
         expectedPostCount = std::max(channelRootPostCount(), static_cast<int>(missing.size()));
@@ -576,7 +558,7 @@ void ChannelTimelineController::placeApproximateWindow(const QStringList& postId
 
     timeline.placeWindow(first, missing);
     if (renderAfter) {
-        renderTimeline(focusPostId);
+        renderTimeline(focusPostId, anchor);
     }
 }
 
@@ -596,7 +578,7 @@ bool ChannelTimelineController::ensurePostVisible(const QString& postId)
     }
 
     if (timeline.contains(postId)) {
-        renderTimeline(postId);
+        renderTimeline(postId, captureViewportAnchor());
         return area.ui->listWidget->findPost(postId) != nullptr;
     }
 
@@ -629,6 +611,109 @@ bool ChannelTimelineController::ensurePostVisible(const QString& postId)
     return area.ui->listWidget->findPost(postId) != nullptr;
 }
 
+ChannelTimelineController::ViewportAnchor ChannelTimelineController::captureViewportAnchor() const
+{
+    ViewportAnchor anchor;
+    if (!active || !area.ui || !area.ui->listWidget) {
+        return anchor;
+    }
+
+    PostsListWidget* list = area.ui->listWidget;
+    if (list->count() == 0 || list->viewport()->height() <= 0) {
+        return anchor;
+    }
+
+    if (list->isAtBottom()) {
+        anchor.kind = ViewportAnchor::Bottom;
+        return anchor;
+    }
+
+    const QRect viewportRect = list->viewport()->rect();
+    const int centerY = viewportRect.center().y();
+    int bestDistance = INT_MAX;
+    for (int row = 0; row < list->count(); ++row) {
+        QListWidgetItem* item = list->item(row);
+        if (!PostsListWidget::isPostItem(item)) {
+            continue;
+        }
+        const QRect rect = list->visualItemRect(item);
+        if (!rect.isValid() || !rect.intersects(viewportRect)) {
+            continue;
+        }
+        const int distance = std::abs(rect.center().y() - centerY);
+        if (distance >= bestDistance) {
+            continue;
+        }
+        const QString postId = item->data(ItemRole::postId).toString();
+        if (postId.isEmpty()) {
+            continue;
+        }
+        bestDistance = distance;
+        anchor.kind = ViewportAnchor::Post;
+        anchor.postId = postId;
+        anchor.postTopOffset = rect.top();
+    }
+
+    if (anchor.kind == ViewportAnchor::Post) {
+        return anchor;
+    }
+
+    const qint64 centerPixel = static_cast<qint64>(list->verticalScrollBar()->value())
+        + list->viewport()->height() / 2;
+    const PostTimeline::PixelLocation location = timeline.locatePixel(centerPixel);
+    if (!location.isValid()) {
+        return anchor;
+    }
+
+    anchor.kind = ViewportAnchor::Gap;
+    anchor.distanceFromNewest = timeline.totalCount() - 1 - location.logicalIndex;
+    anchor.offsetWithinEstimatedRow = location.offsetWithinRow;
+    return anchor;
+}
+
+void ChannelTimelineController::restoreViewportAnchor(const ViewportAnchor& anchor,
+                                                      const QString& focusPostId)
+{
+    if (!area.ui || !area.ui->listWidget) {
+        return;
+    }
+
+    PostsListWidget* list = area.ui->listWidget;
+
+    if (!focusPostId.isEmpty()) {
+        const int row = list->findPostByIndex(focusPostId, 0);
+        if (row >= 0) {
+            const int topOffset = std::max(0, list->viewport()->height() / 3);
+            list->finishTimelineRebuildAtPost(focusPostId, topOffset);
+            list->highlightPost(focusPostId);
+            return;
+        }
+    }
+
+    if (anchor.kind == ViewportAnchor::Bottom || !anchor.isValid()) {
+        list->finishTimelineRebuildAtBottom();
+        return;
+    }
+
+    if (anchor.kind == ViewportAnchor::Post
+        && list->finishTimelineRebuildAtPost(anchor.postId, anchor.postTopOffset)) {
+        return;
+    }
+
+    if (anchor.kind == ViewportAnchor::Gap && timeline.totalCount() > 0) {
+        const int index = std::max(0,
+            std::min(timeline.totalCount() - 1,
+                     timeline.totalCount() - 1 - anchor.distanceFromNewest));
+        const qint64 centerPixel = timeline.estimatedPixelForIndex(index)
+            + anchor.offsetWithinEstimatedRow;
+        const qint64 viewportTop = centerPixel - list->viewport()->height() / 2;
+        list->finishTimelineRebuildAtPixel(viewportTop);
+        return;
+    }
+
+    list->finishTimelineRebuildAtBottom();
+}
+
 void ChannelTimelineController::scheduleViewportCheck()
 {
     if (!active || viewportCheckScheduled || rebuilding) {
@@ -641,69 +726,57 @@ void ChannelTimelineController::scheduleViewportCheck()
     });
 }
 
-int ChannelTimelineController::logicalIndexForNearbyGap(bool* viewportCenterInsideGap) const
+int ChannelTimelineController::logicalIndexNearViewport(int extraScreens,
+                                                        bool* centerInsideGap) const
 {
-    if (viewportCenterInsideGap) {
-        *viewportCenterInsideGap = false;
+    if (centerInsideGap) {
+        *centerInsideGap = false;
     }
-    if (!active || !area.ui || !area.ui->listWidget) {
+    if (!active || !area.ui || !area.ui->listWidget || timeline.totalCount() <= 0) {
         return -1;
     }
 
     PostsListWidget* list = area.ui->listWidget;
+    QScrollBar* bar = list->verticalScrollBar();
     const int viewportHeight = list->viewport()->height();
     if (viewportHeight <= 0) {
         return -1;
     }
 
-    const int centerY = viewportHeight / 2;
-    const int margin = viewportHeight * GapPrefetchScreens;
-    const int average = std::max(1, timeline.estimatedRowHeight());
-    int bestIndex = -1;
-    int bestDistance = INT_MAX;
-    bool bestContainsCenter = false;
-
-    for (int row = 0; row < list->count(); ++row) {
-        QListWidgetItem* item = list->item(row);
-        if (!PostsListWidget::isGapItem(item)) {
-            continue;
-        }
-
-        const QRect rect = list->visualItemRect(item);
-        if (!rect.isValid() || rect.height() <= 0) {
-            continue;
-        }
-        if (rect.bottom() < -margin || rect.top() > viewportHeight + margin) {
-            continue;
-        }
-
-        const int first = item->data(ItemRole::gapFirstIndex).toInt();
-        const int count = item->data(ItemRole::gapCount).toInt();
-        if (count <= 0) {
-            continue;
-        }
-
-        const bool containsCenter = rect.top() <= centerY && rect.bottom() >= centerY;
-        const int yInside = std::max(0, std::min(rect.height() - 1, centerY - rect.top()));
-        const int offset = std::min(count - 1, yInside / average);
-        const int candidate = first + offset;
-
-        int distance = 0;
-        if (!containsCenter) {
-            distance = rect.bottom() < centerY
-                ? centerY - rect.bottom()
-                : rect.top() - centerY;
-        }
-
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            bestIndex = candidate;
-            bestContainsCenter = containsCenter;
-        }
+    const qint64 centerPixel = static_cast<qint64>(bar->value()) + viewportHeight / 2;
+    const PostTimeline::PixelLocation center = timeline.locatePixel(centerPixel);
+    if (centerInsideGap) {
+        *centerInsideGap = center.isValid() && !center.loaded;
+    }
+    if (center.isValid() && !center.loaded) {
+        return center.logicalIndex;
     }
 
-    if (viewportCenterInsideGap) {
-        *viewportCenterInsideGap = bestContainsCenter;
+    // Probe several screens before the viewport instead of waiting until the
+    // giant gap item itself reaches y=0. This makes wheel scrolling continuously
+    // prefetch into an approaching sparse region.
+    const qint64 margin = static_cast<qint64>(viewportHeight)
+        * std::max(1, extraScreens);
+    const qint64 probes[] = {
+        std::max<qint64>(0, static_cast<qint64>(bar->value()) - margin),
+        std::max<qint64>(0, static_cast<qint64>(bar->value()) - viewportHeight),
+        static_cast<qint64>(bar->value()),
+        static_cast<qint64>(bar->value()) + viewportHeight,
+        static_cast<qint64>(bar->value()) + viewportHeight + margin,
+    };
+
+    int bestIndex = -1;
+    qint64 bestDistance = LLONG_MAX;
+    for (qint64 probe : probes) {
+        const PostTimeline::PixelLocation location = timeline.locatePixel(probe);
+        if (!location.isValid() || location.loaded) {
+            continue;
+        }
+        const qint64 distance = std::llabs(probe - centerPixel);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestIndex = location.logicalIndex;
+        }
     }
     return bestIndex;
 }
@@ -718,7 +791,7 @@ void ChannelTimelineController::checkViewport()
     QScrollBar* scrollBar = list->verticalScrollBar();
 
     bool centerInsideGap = false;
-    const int targetIndex = logicalIndexForNearbyGap(&centerInsideGap);
+    const int targetIndex = logicalIndexNearViewport(GapPrefetchScreens, &centerInsideGap);
     if (targetIndex < 0) {
         pendingSeekIndex = -1;
         seekTimer.stop();
@@ -733,21 +806,26 @@ void ChannelTimelineController::checkViewport()
 
     pendingSeekIndex = -1;
     seekTimer.stop();
-    requestPageForIndex(targetIndex, centerInsideGap);
+    requestPageForIndex(targetIndex, false);
 }
 
-void ChannelTimelineController::renderTimeline(const QString& focusPostId)
+void ChannelTimelineController::renderTimeline(const QString& focusPostId,
+                                               const ViewportAnchor& requestedAnchor)
 {
     if (!active || !area.ui || !area.ui->listWidget || rebuilding) {
         return;
     }
 
+    ViewportAnchor anchor = requestedAnchor;
+    if (!anchor.isValid() && initialRenderDone) {
+        anchor = captureViewportAnchor();
+    }
+
     rebuilding = true;
     const quint64 renderId = ++renderGeneration;
     PostsListWidget* list = area.ui->listWidget;
-    list->commitCurrentViewportAsAnchor();
     list->setUpdatesEnabled(false);
-    list->clear();
+    list->beginTimelineRebuild();
 
     const QDate currentDate = QDateTime::currentDateTime().date();
     for (const PostTimeline::Span& span : timeline.spans()) {
@@ -791,18 +869,7 @@ void ChannelTimelineController::renderTimeline(const QString& focusPostId)
     area.gettingOlderPosts = true;
     rebuilding = false;
 
-    bool focused = false;
-    if (!focusPostId.isEmpty()) {
-        const int row = list->findPostByIndex(focusPostId, 0);
-        if (row >= 0) {
-            list->scrollToItem(list->item(row), QAbstractItemView::PositionAtCenter);
-            focused = true;
-        }
-    }
-    if (!focused) {
-        list->scrollToBottom();
-    }
-
+    restoreViewportAnchor(anchor, focusPostId);
     scheduleMeasurementPass();
     schedulePaintResume(renderId);
     QTimer::singleShot(0, this, &ChannelTimelineController::scheduleViewportCheck);
@@ -813,13 +880,11 @@ void ChannelTimelineController::schedulePaintResume(quint64 renderId)
     QPointer<PostsListWidget> list(area.ui ? area.ui->listWidget : nullptr);
     QTimer::singleShot(0, this, [this, list, renderId] {
         QTimer::singleShot(0, this, [this, list, renderId] {
-            QTimer::singleShot(0, this, [this, list, renderId] {
-                if (!list || renderGeneration != renderId) {
-                    return;
-                }
-                list->setUpdatesEnabled(true);
-                list->viewport()->update();
-            });
+            if (!list || renderGeneration != renderId) {
+                return;
+            }
+            list->setUpdatesEnabled(true);
+            list->viewport()->update();
         });
     });
 }
@@ -831,20 +896,17 @@ void ChannelTimelineController::updateGapHeights()
     }
 
     PostsListWidget* list = area.ui->listWidget;
-    const int average = timeline.estimatedRowHeight();
-    bool hasGap = false;
-    for (int row = 0; row < list->count(); ++row) {
-        if (PostsListWidget::isGapItem(list->item(row))) {
-            hasGap = true;
-            break;
-        }
-    }
-    if (!hasGap) {
-        lastAppliedGapRowHeight = average;
+    const ViewportAnchor anchor = captureViewportAnchor();
+    // A gap-only viewport has no concrete QWidget anchor. Changing the height of
+    // that same giant item while the user is inside it is exactly the visible
+    // oscillation we want to avoid. The next materialized page will rebuild it
+    // with the refined estimate anyway.
+    if (anchor.kind == ViewportAnchor::Gap) {
         return;
     }
 
-    list->commitCurrentViewportAsAnchor();
+    const int average = timeline.estimatedRowHeight();
+    bool changed = false;
     const quint64 renderId = ++renderGeneration;
     list->setUpdatesEnabled(false);
     for (int row = 0; row < list->count(); ++row) {
@@ -855,9 +917,16 @@ void ChannelTimelineController::updateGapHeights()
 
         const int count = item->data(ItemRole::gapCount).toInt();
         const qint64 height = static_cast<qint64>(std::max(0, count)) * average;
-        item->setSizeHint(QSize(0, static_cast<int>(std::min<qint64>(height, INT_MAX))));
+        const int bounded = static_cast<int>(std::min<qint64>(height, INT_MAX));
+        if (item->sizeHint().height() != bounded) {
+            item->setSizeHint(QSize(0, bounded));
+            changed = true;
+        }
     }
-    list->resizeToBottom();
+
+    if (changed) {
+        restoreViewportAnchor(anchor);
+    }
     lastAppliedGapRowHeight = average;
     schedulePaintResume(renderId);
 }
@@ -892,7 +961,9 @@ void ChannelTimelineController::measureRenderedPosts()
     const int average = timeline.estimatedRowHeight();
     const int baseline = std::max(1, lastAppliedGapRowHeight);
     const int difference = std::abs(average - lastAppliedGapRowHeight);
-    if (difference * 20 >= baseline) {
+    // A 20% threshold avoids continuously resizing a huge sparse gap as a few
+    // image previews finish layout one by one.
+    if (difference * 5 >= baseline) {
         updateGapHeights();
     }
 }
