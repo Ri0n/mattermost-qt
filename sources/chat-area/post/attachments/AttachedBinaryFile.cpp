@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -28,7 +28,7 @@
 #include "Settings.h"
 #include "AttachedBinaryFile.h"
 #include "ui_AttachedBinaryFile.h"
-#include "backend/Backend.h"
+#include "backend/AttachmentService.h"
 #include "backend/types/BackendFile.h"
 #include "config/Config.h"
 
@@ -89,7 +89,7 @@ AttachedBinaryFile::AttachedBinaryFile(Backend& backend, const BackendFile& file
         ui->downloadedLabel->setText("Downloading...");
 
         QPointer<AttachedBinaryFile> self(this);
-        backend.retrieveFile(fileId, [self, fileName, downloadDir](const QByteArray& fileData) {
+        AttachmentService::instance(backend).retrieveFile(fileId, [self, fileName, downloadDir](const QByteArray& fileData) {
             if (!self) {
                 return;
             }
@@ -119,7 +119,7 @@ AttachedBinaryFile::AttachedBinaryFile(Backend& backend, const BackendFile& file
         }
 
         QPointer<AttachedBinaryFile> self(this);
-        backend.retrieveFile(fileId, [self, fileName](const QByteArray& fileData) {
+        AttachmentService::instance(backend).retrieveFile(fileId, [self, fileName](const QByteArray& fileData) {
             if (!self) {
                 return;
             }
