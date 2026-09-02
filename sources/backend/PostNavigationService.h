@@ -39,13 +39,22 @@ public:
         bool success = false;
     };
 
+    using CompletionCallback = std::function<void(bool)>;
     using ContextCallback = std::function<void(const Context&)>;
 
     static PostNavigationService& instance(Backend& backend);
 
+    // Simple callers only care that the target is now cached.
     void loadAround(BackendChannel& channel,
                     const QString& postId,
-                    ContextCallback callback = {},
+                    CompletionCallback callback,
+                    bool forceContext = false);
+
+    // Sparse semantic navigation also needs the exact request-local reserve and
+    // server edge information so it can materialize a bounded context window.
+    void loadAround(BackendChannel& channel,
+                    const QString& postId,
+                    ContextCallback callback,
                     bool forceContext = false);
 
 private:
