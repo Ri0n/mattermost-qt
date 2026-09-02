@@ -75,11 +75,6 @@ public:
 	 */
 	void messageNotify (BackendChannel& channel, const BackendPost& post);
 
-	/**
-	 * Called on Mattermost client startup, when there were new posts, while the client was not open
-	 * @param channel channel
-	 */
-	void unreadMessagesNotify (const BackendChannel& channel);
 	void setNotificationsCountVisualization (uint32_t notificationsCount);
 
 	void moveEvent (QMoveEvent* event) override;
