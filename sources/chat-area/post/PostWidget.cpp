@@ -153,17 +153,24 @@ void PostWidget::setAuthor(Backend& backend, const BackendUser* user)
 		ui->authorName->setStyleSheet("QLabel { color : blue; }");
 	}
 
-	connect(user, &BackendUser::onAvatarChanged, this, [this, user] {
-		if (post.author == user) {
-			ui->authorAvatar->setPixmap(user->avatar);
-		}
-	}, Qt::UniqueConnection);
+	// Qt::UniqueConnection is only supported for member-function receivers.
+	// Using it with the previous lambda trips Qt's runtime assertion in debug
+	// builds as soon as a lazily loaded post author is resolved.
+	connect(user, &BackendUser::onAvatarChanged,
+		this, &PostWidget::updateAuthorAvatar, Qt::UniqueConnection);
 
 	if (user->avatar.isNull()
 		|| user->avatar_picture_update != user->last_picture_update) {
 		UserProfileService::instance(backend).ensureAvatar(*user);
 	} else {
-		ui->authorAvatar->setPixmap(user->avatar);
+		updateAuthorAvatar();
+	}
+}
+
+void PostWidget::updateAuthorAvatar()
+{
+	if (post.author) {
+		ui->authorAvatar->setPixmap(post.author->avatar);
 	}
 }
 
