@@ -129,22 +129,21 @@ void ChannelItemDelegate::paint(QPainter* painter,
     const QString text = base.text;
     QIcon icon = base.icon;
 
+    const auto* tree = qobject_cast<const ChannelTree*>(parent());
+    Backend* backend = tree ? tree->backendInstance() : nullptr;
+    const QString channelId = index.data(ChannelTree::ItemIdRole).toString();
+    BackendChannel* channel = backend && !channelId.isEmpty()
+        ? backend->getStorage().getChannelById(channelId) : nullptr;
+
     // Direct rows get an avatar asynchronously. Ordinary channels and group
     // conversations have no server image, so give them stable fallback glyphs
     // without storing generated pixmaps in every duplicated category row.
-    if (icon.isNull()) {
-        const auto* tree = qobject_cast<const ChannelTree*>(parent());
-        Backend* backend = tree ? tree->backendInstance() : nullptr;
-        const QString channelId = index.data(ChannelTree::ItemIdRole).toString();
-        BackendChannel* channel = backend && !channelId.isEmpty()
-            ? backend->getStorage().getChannelById(channelId) : nullptr;
-        if (channel) {
-            if (channel->type == BackendChannel::groupChannel) {
-                icon = ChannelIcons::groupConversation();
-            } else if (channel->type == BackendChannel::publicChannel
-                       || channel->type == BackendChannel::privateChannel) {
-                icon = ChannelIcons::channel();
-            }
+    if (icon.isNull() && channel) {
+        if (channel->type == BackendChannel::groupChannel) {
+            icon = ChannelIcons::groupConversation();
+        } else if (channel->type == BackendChannel::publicChannel
+                   || channel->type == BackendChannel::privateChannel) {
+            icon = ChannelIcons::channel();
         }
     }
 
@@ -163,7 +162,9 @@ void ChannelItemDelegate::paint(QPainter* painter,
                              AvatarSize,
                              AvatarSize);
         const QPixmap pixmap = icon.pixmap(AvatarSize, AvatarSize);
-        const QString status = index.data(ChannelTree::ItemStatusRole).toString();
+        const QString status = channel && channel->type == BackendChannel::directChannel
+            ? index.data(ChannelTree::ItemStatusRole).toString()
+            : QString();
 
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing, true);
