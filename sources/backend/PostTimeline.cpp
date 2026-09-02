@@ -48,17 +48,18 @@ void PostTimeline::placeWindow(int firstIndex, const QStringList& chronologicalP
         return;
     }
 
+    const int sourceCount = static_cast<int>(chronologicalPostIds.size());
     int sourceOffset = 0;
     int target = firstIndex;
     if (target < 0) {
         sourceOffset = -target;
         target = 0;
     }
-    if (sourceOffset >= chronologicalPostIds.size() || target >= logicalCount) {
+    if (sourceOffset >= sourceCount || target >= logicalCount) {
         return;
     }
 
-    const int available = std::min(chronologicalPostIds.size() - sourceOffset,
+    const int available = std::min(sourceCount - sourceOffset,
                                    logicalCount - target);
 
     auto forgetPost = [this](const QString& postId) {
@@ -74,21 +75,15 @@ void PostTimeline::placeWindow(int firstIndex, const QStringList& chronologicalP
     // First remove previous occurrences of every incoming ID. Keep its measured
     // height: relocating an already-rendered post does not invalidate geometry
     // learned for the post itself.
-    QHash<QString, int> incomingMeasuredHeights;
     for (int i = 0; i < available; ++i) {
         const QString& postId = chronologicalPostIds.at(sourceOffset + i);
         if (postId.isEmpty()) {
             continue;
         }
         const auto oldIndexIt = indexByPostId.constFind(postId);
-        if (oldIndexIt == indexByPostId.cend()) {
-            continue;
-        }
-        loadedByIndex.remove(oldIndexIt.value());
-        indexByPostId.remove(postId);
-        const auto measured = measuredHeights.constFind(postId);
-        if (measured != measuredHeights.cend()) {
-            incomingMeasuredHeights.insert(postId, measured.value());
+        if (oldIndexIt != indexByPostId.cend()) {
+            loadedByIndex.remove(oldIndexIt.value());
+            indexByPostId.remove(postId);
         }
     }
 
@@ -109,11 +104,6 @@ void PostTimeline::placeWindow(int firstIndex, const QStringList& chronologicalP
         loadedByIndex.insert(logicalIndex, postId);
         indexByPostId.insert(postId, logicalIndex);
     }
-
-    // Relocation preserved existing entries in measuredHeights and therefore
-    // needs no sum adjustment. The hash only documents that intent and avoids a
-    // future implementation accidentally treating relocation as replacement.
-    Q_UNUSED(incomingMeasuredHeights);
 }
 
 bool PostTimeline::contains(const QString& postId) const
@@ -161,7 +151,7 @@ QVector<PostTimeline::Span> PostTimeline::spans() const
             ++expectedIndex;
             ++it;
         }
-        loaded.count = loaded.postIds.size();
+        loaded.count = static_cast<int>(loaded.postIds.size());
         result.push_back(std::move(loaded));
         cursor = expectedIndex;
     }
