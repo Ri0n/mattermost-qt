@@ -17,6 +17,7 @@
 #include "backend/NetworkRequest.h"
 #include "backend/QByteArrayCreator.h"
 #include "backend/Storage.h"
+#include "backend/UserProfileService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendTeam.h"
@@ -29,7 +30,12 @@ const QString channelOpenTimeCategory = QStringLiteral("channel_open_time");
 const QString channelApproximateViewTimeCategory = QStringLiteral("channel_approximate_view_time");
 const QString displaySettingsCategory = QStringLiteral("display_settings");
 const QString collapsedReplyThreadsName = QStringLiteral("collapsed_reply_threads");
+const QString sidebarSettingsCategory = QStringLiteral("sidebar_settings");
+const QString visibleDirectMessagesName = QStringLiteral("limit_visible_dms_gms");
+const QString directChannelShowCategory = QStringLiteral("direct_channel_show");
+const QString groupChannelShowCategory = QStringLiteral("group_channel_show");
 constexpr int channelMembershipsPerPage = 200;
+constexpr int defaultVisibleDirectMessages = 40;
 
 } // namespace
 
@@ -136,9 +142,6 @@ SidebarService::SidebarService(Backend& backend)
     connect(&backend, &Backend::onAllTeamChannelsPopulated,
             this, &SidebarService::synchronizeChannelActivity);
 
-    // MainWindow clears the service immediately after acquiring the singleton.
-    // Defer these auxiliary requests by one event-loop turn so that reset
-    // cannot cancel them, while keeping the loading policy inside the service.
     QTimer::singleShot(0, this, [this] {
         retrieveClientConfig();
         retrieveChannelPreferences();
@@ -151,6 +154,15 @@ void SidebarService::clear()
     mutedChannelIds.clear();
     sidebarByTeam.clear();
     activityTracker.clear();
+    directChannelVisibility.clear();
+    groupChannelVisibility.clear();
+    visibleDirectMessagesLimit = defaultVisibleDirectMessages;
+    membershipWaiters.clear();
+    preferenceWaiters.clear();
+    membershipsLoading = false;
+    membershipsLoaded = false;
+    preferencesLoading = false;
+    preferencesLoaded = false;
     collapsedThreadsConfig.clear();
     hasCollapsedThreadsPreference = false;
     collapsedThreadsPreference = false;
@@ -207,14 +219,10 @@ bool SidebarService::isChannelTracked(const QString& channelId) const
         return false;
     }
 
-    // Keep Recent/Unreads in the same universe as the Channels tab. A channel
-    // membership may exist on the server while the conversation is hidden by
-    // the user's sidebar configuration (for example an old DM beyond the
-    // configured Direct Messages limit).
     for (auto teamIt = sidebarByTeam.cbegin(); teamIt != sidebarByTeam.cend(); ++teamIt) {
         const SidebarTeamState& state = teamIt.value();
         for (auto categoryIt = state.categories.cbegin(); categoryIt != state.categories.cend(); ++categoryIt) {
-            if (categoryIt->channelIds.contains(channelId)) {
+            if (visibleChannelIds(*categoryIt).contains(channelId)) {
                 return true;
             }
         }
@@ -235,6 +243,123 @@ uint64_t SidebarService::channelActivityTime(const BackendChannel& channel) cons
 uint64_t SidebarService::channelRecentTime(const BackendChannel& channel) const
 {
     return activityTracker.recentTime(channel.id);
+}
+
+bool SidebarService::isDirectChannelManuallyHidden(const BackendChannel& channel) const
+{
+    if (channel.type == BackendChannel::directChannel) {
+        const auto it = directChannelVisibility.constFind(channel.name);
+        return it != directChannelVisibility.cend() && !it.value();
+    }
+    if (channel.type == BackendChannel::groupChannel) {
+        const auto it = groupChannelVisibility.constFind(channel.id);
+        return it != groupChannelVisibility.cend() && !it.value();
+    }
+    return false;
+}
+
+QStringList SidebarService::visibleChannelIds(const SidebarCategory& category) const
+{
+    struct Candidate {
+        QString id;
+        BackendChannel* channel = nullptr;
+        bool unread = false;
+    };
+
+    QVector<Candidate> candidates;
+    candidates.reserve(category.channelIds.size());
+    BackendChannel* currentChannel = backend.getCurrentChannel();
+
+    for (const QString& channelId : category.channelIds) {
+        BackendChannel* channel = backend.getStorage().getChannelById(channelId);
+        if (!channel) {
+            continue;
+        }
+        if (channel->delete_at != 0 && channel != currentChannel) {
+            continue;
+        }
+
+        const bool unread = isChannelUnread(*channel);
+        if (category.type == QStringLiteral("direct_messages")
+            && isDirectChannelManuallyHidden(*channel)
+            && !unread && channel != currentChannel) {
+            continue;
+        }
+        candidates.push_back(Candidate {channelId, channel, unread});
+    }
+
+    if (category.type == QStringLiteral("direct_messages")) {
+        int unreadCount = 0;
+        for (const Candidate& candidate : candidates) {
+            unreadCount += candidate.unread ? 1 : 0;
+        }
+
+        std::stable_sort(candidates.begin(), candidates.end(),
+                         [this, currentChannel](const Candidate& a, const Candidate& b) {
+            if (a.channel == currentChannel && b.channel != currentChannel) {
+                return true;
+            }
+            if (b.channel == currentChannel && a.channel != currentChannel) {
+                return false;
+            }
+            if (a.unread != b.unread) {
+                return a.unread;
+            }
+
+            const uint64_t aRecent = std::max({channelRecentTime(*a.channel),
+                                                a.channel->last_post_at,
+                                                a.channel->create_at});
+            const uint64_t bRecent = std::max({channelRecentTime(*b.channel),
+                                                b.channel->last_post_at,
+                                                b.channel->create_at});
+            return aRecent > bRecent;
+        });
+
+        const int keep = std::max(visibleDirectMessagesLimit, unreadCount);
+        if (candidates.size() > keep) {
+            candidates.resize(keep);
+        }
+
+        QSet<QString> selected;
+        for (const Candidate& candidate : candidates) {
+            selected.insert(candidate.id);
+        }
+
+        QVector<Candidate> inServerOrder;
+        inServerOrder.reserve(candidates.size());
+        for (const QString& channelId : category.channelIds) {
+            if (!selected.contains(channelId)) {
+                continue;
+            }
+            for (const Candidate& candidate : candidates) {
+                if (candidate.id == channelId) {
+                    inServerOrder.push_back(candidate);
+                    break;
+                }
+            }
+        }
+        candidates = std::move(inServerOrder);
+    }
+
+    if (category.sorting == QStringLiteral("recent")) {
+        std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+            const uint64_t aTime = std::max(a.channel->last_post_at, a.channel->create_at);
+            const uint64_t bTime = std::max(b.channel->last_post_at, b.channel->create_at);
+            return aTime > bTime;
+        });
+    } else if (category.sorting == QStringLiteral("alpha")) {
+        std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+            return QString::compare(a.channel->display_name, b.channel->display_name,
+                                    Qt::CaseInsensitive) < 0;
+        });
+    }
+
+    QStringList result;
+    result.reserve(candidates.size());
+    for (const Candidate& candidate : candidates) {
+        result.push_back(candidate.id);
+    }
+    return result;
 }
 
 void SidebarService::markChannelViewedLocally(const BackendChannel& channel)
@@ -272,9 +397,6 @@ void SidebarService::recordChannelViewed(const BackendChannel& channel)
 {
     const bool wasMentioned = activityTracker.hasMention(channel.id);
 
-    // Mattermost's server-side last_viewed_at is tied to channel content, not
-    // wall-clock click history. Reopening an already-read channel therefore
-    // leaves its Recent ordering unchanged until newer content is consumed.
     activityTracker.recordViewed(
         channel.id,
         channel.last_post_at,
@@ -288,31 +410,51 @@ void SidebarService::recordChannelViewed(const BackendChannel& channel)
     emit channelActivityChanged(channel.id);
 }
 
+void SidebarService::finishMembershipLoad()
+{
+    membershipsLoading = false;
+    membershipsLoaded = true;
+    const auto callbacks = std::move(membershipWaiters);
+    membershipWaiters.clear();
+    for (const auto& callback : callbacks) {
+        if (callback) {
+            callback();
+        }
+    }
+}
+
 void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
 {
-    if (currentUserId().isEmpty()) {
+    if (membershipsLoaded) {
         if (callback) {
             callback();
         }
         return;
     }
+    if (callback) {
+        membershipWaiters.push_back(std::move(callback));
+    }
+    if (membershipsLoading) {
+        return;
+    }
+    membershipsLoading = true;
 
-    // Mattermost's channel_members endpoint is paginated by default. The web
-    // client asks for page=-1 and parses the NDJSON stream, but HTTPConnector's
-    // JSON callback deliberately handles a single JSON document. Fetch every
-    // ordinary JSON page here instead so Recent/Unreads are built from the full
-    // membership set rather than an arbitrary first page.
+    if (currentUserId().isEmpty()) {
+        finishMembershipLoad();
+        return;
+    }
+
     const auto memberships = std::make_shared<QJsonArray>();
     const auto fetchPage = std::make_shared<std::function<void(int)>>();
 
-    *fetchPage = [this, callback, memberships, fetchPage](int page) {
+    *fetchPage = [this, memberships, fetchPage](int page) {
         NetworkRequest request(
             QStringLiteral("users/") + currentUserId()
             + QStringLiteral("/channel_members?page=") + QString::number(page)
             + QStringLiteral("&per_page=") + QString::number(channelMembershipsPerPage));
 
         httpConnector.get(request, HttpResponseCallback(
-            [this, callback, memberships, fetchPage, page](const QJsonDocument& doc) {
+            [this, memberships, fetchPage, page](const QJsonDocument& doc) {
                 const QJsonArray pageMemberships = doc.array();
                 for (const auto& value : pageMemberships) {
                     memberships->push_back(value);
@@ -324,11 +466,6 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
                 }
 
                 mutedChannelIds.clear();
-
-                // Do not clear the tracker here. A websocket post may have
-                // arrived while the membership pages were in flight.
-                // Server-derived and runtime unread state are kept separately
-                // so this refresh cannot destroy newer runtime activity.
                 for (const auto& value : *memberships) {
                     const auto object = value.toObject();
                     const QString channelId = object.value(QStringLiteral("channel_id")).toString();
@@ -365,28 +502,54 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
                 }
 
                 synchronizeChannelActivity();
-                if (callback) {
-                    callback();
-                }
+                finishMembershipLoad();
             }));
     };
 
     (*fetchPage)(0);
 }
 
+void SidebarService::finishPreferenceLoad()
+{
+    preferencesLoading = false;
+    preferencesLoaded = true;
+    const auto callbacks = std::move(preferenceWaiters);
+    preferenceWaiters.clear();
+    for (const auto& callback : callbacks) {
+        if (callback) {
+            callback();
+        }
+    }
+}
+
 void SidebarService::retrieveChannelPreferences(std::function<void()> callback)
 {
-    if (currentUserId().isEmpty()) {
+    if (preferencesLoaded) {
         if (callback) {
             callback();
         }
         return;
     }
+    if (callback) {
+        preferenceWaiters.push_back(std::move(callback));
+    }
+    if (preferencesLoading) {
+        return;
+    }
+    preferencesLoading = true;
+
+    if (currentUserId().isEmpty()) {
+        finishPreferenceLoad();
+        return;
+    }
 
     NetworkRequest request(QStringLiteral("users/") + currentUserId() + QStringLiteral("/preferences"));
-    httpConnector.get(request, HttpResponseCallback([this, callback](const QJsonDocument& doc) {
+    httpConnector.get(request, HttpResponseCallback([this](const QJsonDocument& doc) {
         QMap<QString, uint64_t> approximateViewTimes;
         QMap<QString, uint64_t> openTimes;
+        directChannelVisibility.clear();
+        groupChannelVisibility.clear();
+        visibleDirectMessagesLimit = defaultVisibleDirectMessages;
         hasCollapsedThreadsPreference = false;
 
         for (const auto& value : doc.array()) {
@@ -402,6 +565,16 @@ void SidebarService::retrieveChannelPreferences(std::function<void()> callback)
             } else if (category == displaySettingsCategory && name == collapsedReplyThreadsName) {
                 hasCollapsedThreadsPreference = true;
                 collapsedThreadsPreference = preferenceValue == QStringLiteral("on");
+            } else if (category == sidebarSettingsCategory && name == visibleDirectMessagesName) {
+                bool ok = false;
+                const int limit = preferenceValue.toInt(&ok);
+                if (ok && limit > 0) {
+                    visibleDirectMessagesLimit = std::min(limit, defaultVisibleDirectMessages);
+                }
+            } else if (category == directChannelShowCategory) {
+                directChannelVisibility.insert(name, preferenceValue != QStringLiteral("false"));
+            } else if (category == groupChannelShowCategory) {
+                groupChannelVisibility.insert(name, preferenceValue != QStringLiteral("false"));
             }
         }
 
@@ -421,9 +594,7 @@ void SidebarService::retrieveChannelPreferences(std::function<void()> callback)
 
         updateCollapsedThreadsMode();
         emit channelActivityReset();
-        if (callback) {
-            callback();
-        }
+        finishPreferenceLoad();
     }));
 }
 
@@ -492,34 +663,63 @@ void SidebarService::setChannelMuted(BackendChannel& channel, bool muted,
     }));
 }
 
+void SidebarService::storeCategories(QString teamId, SidebarTeamState state,
+                                     std::function<void(const SidebarTeamState&)> callback)
+{
+    QStringList directUserIds;
+    for (auto it = state.categories.cbegin(); it != state.categories.cend(); ++it) {
+        for (const QString& channelId : visibleChannelIds(*it)) {
+            BackendChannel* channel = backend.getStorage().getChannelById(channelId);
+            if (channel && channel->type == BackendChannel::directChannel && !channel->name.isEmpty()) {
+                directUserIds.push_back(channel->name);
+            }
+        }
+    }
+
+    const auto statePtr = std::make_shared<SidebarTeamState>(std::move(state));
+    UserProfileService::instance(backend).ensureUsers(directUserIds,
+        [this, teamId = std::move(teamId), statePtr, directUserIds, callback] {
+            UserProfileService::instance(backend).ensureStatuses(directUserIds,
+                [this, teamId, statePtr, callback] {
+                    sidebarByTeam.insert(teamId, std::move(*statePtr));
+                    emit categoriesChanged(teamId);
+                    if (callback) {
+                        callback(sidebarByTeam[teamId]);
+                    }
+                });
+        });
+}
+
 void SidebarService::retrieveCategories(BackendTeam& team,
                                         std::function<void(const SidebarTeamState&)> callback)
 {
-    NetworkRequest request(categoriesPath(team.id));
-    httpConnector.get(request, HttpResponseCallback([this, teamId = team.id, callback](const QJsonDocument& doc) {
-        SidebarTeamState state;
-        const auto object = doc.object();
+    const QString teamId = team.id;
+    retrieveChannelMemberships([this, teamId, callback] {
+        retrieveChannelPreferences([this, teamId, callback] {
+            NetworkRequest request(categoriesPath(teamId));
+            httpConnector.get(request, HttpResponseCallback(
+                [this, teamId, callback](const QJsonDocument& doc) {
+                    SidebarTeamState state;
+                    const auto object = doc.object();
 
-        for (const auto& categoryValue : object.value(QStringLiteral("categories")).toArray()) {
-            SidebarCategory category = SidebarCategory::fromJson(categoryValue.toObject());
-            state.categories.insert(category.id, std::move(category));
-        }
-        for (const auto& categoryId : object.value(QStringLiteral("order")).toArray()) {
-            state.order.push_back(categoryId.toString());
-        }
+                    for (const auto& categoryValue : object.value(QStringLiteral("categories")).toArray()) {
+                        SidebarCategory category = SidebarCategory::fromJson(categoryValue.toObject());
+                        state.categories.insert(category.id, std::move(category));
+                    }
+                    for (const auto& categoryId : object.value(QStringLiteral("order")).toArray()) {
+                        state.order.push_back(categoryId.toString());
+                    }
 
-        for (auto it = state.categories.cbegin(); it != state.categories.cend(); ++it) {
-            if (!state.order.contains(it.key())) {
-                state.order.push_back(it.key());
-            }
-        }
+                    for (auto it = state.categories.cbegin(); it != state.categories.cend(); ++it) {
+                        if (!state.order.contains(it.key())) {
+                            state.order.push_back(it.key());
+                        }
+                    }
 
-        sidebarByTeam.insert(teamId, std::move(state));
-        emit categoriesChanged(teamId);
-        if (callback) {
-            callback(sidebarByTeam[teamId]);
-        }
-    }));
+                    storeCategories(teamId, std::move(state), callback);
+                }));
+        });
+    });
 }
 
 const SidebarTeamState* SidebarService::teamState(const QString& teamId) const
