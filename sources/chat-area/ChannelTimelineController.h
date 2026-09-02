@@ -33,6 +33,7 @@ public:
     explicit ChannelTimelineController(ChatArea& area);
 
     bool ensurePostVisible(const QString& postId);
+    void beginContextNavigation(const QString& postId);
     void requestOlderPage();
 
 protected:
@@ -60,6 +61,8 @@ private:
     void deactivate();
 
     void requestPage(int page, int focusLogicalIndex = -1);
+    void requestContextBefore();
+    void requestContextAfter();
     void continueInitialPrefetch();
     void requestPageForIndex(int logicalIndex, bool focusAfterLoad);
 
@@ -72,6 +75,7 @@ private:
     int gapPlacementForWindow(int estimatedCenter, int count) const;
 
     ViewportAnchor captureViewportAnchor() const;
+    ViewportAnchor stableViewportAnchor() const;
     void restoreViewportAnchor(const ViewportAnchor& anchor,
                                const QString& focusPostId = QString());
 
@@ -98,6 +102,11 @@ private:
     QSet<int> loadedPages;
     QStringList deferredExternalPostIds;
 
+    ViewportAnchor lastUserViewportAnchor;
+    QString contextNavigationPostId;
+    QString contextOldestPostId;
+    QString contextNewestPostId;
+
     int expectedPostCount = 0;
     int nextOlderPage = 0;
     int initialPageTarget = 0;
@@ -114,6 +123,9 @@ private:
     bool requestInFlight = false;
     bool viewportCheckScheduled = false;
     bool rebuilding = false;
+    bool contextNavigationActive = false;
+    bool contextReachedOldest = false;
+    bool contextReachedNewest = false;
 };
 
 } // namespace Mattermost
