@@ -40,6 +40,9 @@
 
 namespace Mattermost {
 
+QSet<HTTPConnector*> HTTPConnector::connectors;
+int HTTPConnector::globalActiveRequests = 0;
+
 static QNetworkDiskCache* createDiskCache ()
 {
 	QNetworkDiskCache* diskCache = new QNetworkDiskCache ();
@@ -55,27 +58,34 @@ static QNetworkDiskCache* createDiskCache ()
 HTTPConnector::HTTPConnector ()
 :qnetworkManager (std::make_unique <QNetworkAccessManager> ())
 {
-	// qnetworkManager takes ownership over the disk cache.
 	qnetworkManager->setCache (createDiskCache ());
 	qnetworkManager->setAutoDeleteReplies(true);
+	connectors.insert(this);
 }
 
-HTTPConnector::~HTTPConnector () = default;
+HTTPConnector::~HTTPConnector ()
+{
+	connectors.remove(this);
+	globalActiveRequests = qMax(0, globalActiveRequests - activeRequests);
+	activeRequests = 0;
+	processQueues();
+}
 
 void HTTPConnector::reset ()
 {
-	// Invalidate callbacks from requests owned by the old network manager and
-	// discard work that has not started yet. This is important on websocket
-	// reconnect, where Backend deliberately resets the HTTP side.
+	// Requests owned by the old QNetworkAccessManager are aborted when the
+	// manager is replaced. Release their slots in the process-wide limiter and
+	// invalidate their callbacks before starting a new generation.
 	++generation;
 	highPriorityRequests.clear ();
 	lowPriorityRequests.clear ();
+	globalActiveRequests = qMax(0, globalActiveRequests - activeRequests);
 	activeRequests = 0;
 
-	// qnetworkManager takes ownership over the disk cache.
 	qnetworkManager.reset(new QNetworkAccessManager());
 	qnetworkManager->setCache (createDiskCache ());
 	qnetworkManager->setAutoDeleteReplies(true);
+	processQueues();
 }
 
 void HTTPConnector::get (QNetworkRequest& request, HttpResponseCallback responseHandler)
@@ -148,17 +158,42 @@ void HTTPConnector::enqueue(PendingRequest request)
 	} else {
 		highPriorityRequests.enqueue(std::move(request));
 	}
-	processQueue();
+	processQueues();
 }
 
-void HTTPConnector::processQueue()
+HTTPConnector* HTTPConnector::connectorWithPendingRequest(bool lowPriority)
 {
-	while (activeRequests < MaxConcurrentRequests
-	       && (!highPriorityRequests.isEmpty() || !lowPriorityRequests.isEmpty())) {
-		PendingRequest request = !highPriorityRequests.isEmpty()
-			? highPriorityRequests.dequeue()
-			: lowPriorityRequests.dequeue();
-		startRequest(std::move(request));
+	for (HTTPConnector* connector : connectors) {
+		if (!connector) {
+			continue;
+		}
+		const auto& queue = lowPriority
+			? connector->lowPriorityRequests
+			: connector->highPriorityRequests;
+		if (!queue.isEmpty()) {
+			return connector;
+		}
+	}
+	return nullptr;
+}
+
+void HTTPConnector::processQueues()
+{
+	while (globalActiveRequests < MaxConcurrentRequests) {
+		HTTPConnector* connector = connectorWithPendingRequest(false);
+		bool lowPriority = false;
+		if (!connector) {
+			connector = connectorWithPendingRequest(true);
+			lowPriority = true;
+		}
+		if (!connector) {
+			return;
+		}
+
+		PendingRequest request = lowPriority
+			? connector->lowPriorityRequests.dequeue()
+			: connector->highPriorityRequests.dequeue();
+		connector->startRequest(std::move(request));
 	}
 }
 
@@ -185,6 +220,7 @@ void HTTPConnector::startRequest(PendingRequest request)
 	}
 
 	++activeRequests;
+	++globalActiveRequests;
 	setProcessReply(reply, std::move(request.responseHandler), generation);
 }
 
@@ -197,14 +233,9 @@ void HTTPConnector::setProcessReply (QNetworkReply* reply,
 			const int statusCode = reply->error();
 			auto data = reply->readAll();
 
-			// Keep the historical callback behavior: callers receive the response
-			// regardless of HTTP/network status and decide how to interpret it.
 			responseHandler(statusCode, qMove(data), *reply);
 			reply->deleteLater();
 
-			// reset() replaces the network manager and starts a new request
-			// generation. Replies from the old generation must not alter the new
-			// queue's accounting.
 			if (requestGeneration != generation) {
 				return;
 			}
@@ -212,7 +243,10 @@ void HTTPConnector::setProcessReply (QNetworkReply* reply,
 			if (activeRequests > 0) {
 				--activeRequests;
 			}
-			processQueue();
+			if (globalActiveRequests > 0) {
+				--globalActiveRequests;
+			}
+			processQueues();
 		});
 
 #if QT_VERSION <= QT_VERSION_CHECK(5,15,0)
@@ -221,7 +255,6 @@ void HTTPConnector::setProcessReply (QNetworkReply* reply,
 	connect(reply, qOverload<QNetworkReply::NetworkError>(&QNetworkReply::errorOccurred),
 #endif
 			this, [this, reply](QNetworkReply::NetworkError error) {
-
 		emit onNetworkError (error, reply->errorString());
 	});
 }
