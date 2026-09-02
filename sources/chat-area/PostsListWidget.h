@@ -170,8 +170,8 @@ public:
 
 	/**
 	 * Keep a semantic navigation target fixed while sparse pages and attachment
-	 * geometry settle. The lock is automatically released after a quiet period;
-	 * every timeline rebuild that still contains the target extends that period.
+	 * geometry settle. A quietPeriodMs of zero keeps the lock until explicit user
+	 * scrolling or list teardown; positive values retain the old timed behavior.
 	 */
 	void lockTimelineNavigationToPost(const QString& postId,
 	                                  int viewportTopOffset = 0,
@@ -204,6 +204,7 @@ private:
 	bool isUserScrollInProgress() const;
 	bool restoreTimelineNavigationLock();
 	void touchTimelineNavigationLock();
+	void scheduleTimelineNavigationRestore();
 
 	void copySelectedItemsToClipboard (PostWidget::FormatType formatType);
 	void keyPressEvent (QKeyEvent* event)		override;
@@ -231,6 +232,8 @@ private:
 	int							timelineNavigationQuietPeriodMs = 2000;
 	quint64							timelineNavigationLockGeneration = 0;
 	bool							timelineNavigationUserCancelConnected = false;
+	bool							timelineNavigationGeometryConnected = false;
+	bool							timelineNavigationRestoreScheduled = false;
 };
 
 } /* namespace Mattermost */
