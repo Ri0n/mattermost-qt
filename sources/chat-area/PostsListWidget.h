@@ -39,12 +39,17 @@ namespace ItemType {
 enum id {
 	post,
 	separator,
+	// Sparse timeline placeholder. It intentionally has no item widget and no
+	// painted background; only its sizeHint contributes to scroll geometry.
+	gap,
 };
 }
 
 namespace ItemRole {
 enum id {
 	postId = Qt::UserRole + 1,
+	gapFirstIndex,
+	gapCount,
 };
 }
 
@@ -118,6 +123,15 @@ public:
 
 		const QVariant itemType = item->data(Qt::UserRole);
 		return itemType.isValid() && itemType.toInt() == ItemType::post;
+	}
+
+	static bool isGapItem(const QListWidgetItem* item)
+	{
+		if (!item) {
+			return false;
+		}
+		const QVariant itemType = item->data(Qt::UserRole);
+		return itemType.isValid() && itemType.toInt() == ItemType::gap;
 	}
 
 	void scrollToUnreadPostsOrBottom ();
