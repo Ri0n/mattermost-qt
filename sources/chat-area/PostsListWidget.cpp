@@ -617,7 +617,7 @@ QList<QListWidgetItem*> PostsListWidget::sortedSelectedItems () const
 	QList<QListWidgetItem*> sortedItems;
 
 	for (auto item: set) {
-		set.push_back (item);
+		sortedItems.push_back (item);
 	}
 
 	return sortedItems;
