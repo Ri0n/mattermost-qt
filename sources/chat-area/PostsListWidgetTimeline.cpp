@@ -68,6 +68,13 @@ void PostsListWidget::lockTimelineNavigationToPost(const QString& postId,
         });
     }
 
+    // Semantic navigation always detaches from the live bottom. Even before the
+    // target row has been materialized, no automatic population/layout path may
+    // reinterpret the temporary scrollbar position as "follow latest".
+    if (savedScrollAnchor.valid) {
+        savedScrollAnchor.atBottom = false;
+    }
+
     timelineNavigationPostId = postId;
     timelineNavigationTopOffset = std::max(0, viewportTopOffset);
     timelineNavigationQuietPeriodMs = std::max(0, quietPeriodMs);
@@ -165,6 +172,9 @@ bool PostsListWidget::restoreTimelineNavigationLock()
         }
         restoringSavedScroll = false;
         saveScrollAnchor();
+        if (savedScrollAnchor.valid) {
+            savedScrollAnchor.atBottom = false;
+        }
     };
 
     apply();
@@ -188,9 +198,9 @@ void PostsListWidget::beginTimelineRebuild()
 
     // A sparse-timeline rebuild owns viewport restoration as one transaction.
     // Do not let the ordinary clear()/insertPost() path capture and repeatedly
-    // restore intermediate geometries while hundreds of rows are replaced.
-    // A semantic navigation lock is deliberately kept separately: if its target
-    // survives the rebuild, finishTimelineRebuild*() will make it authoritative.
+    // restore intermediate geometries while rows are replaced. A semantic
+    // navigation lock is deliberately kept separately and remains authoritative
+    // even while its target row is temporarily absent.
     savedScrollAnchor = SavedScrollAnchor();
     QListWidget::clear();
     newMessagesSeparator = nullptr;
@@ -202,7 +212,12 @@ void PostsListWidget::finishTimelineRebuildAtBottom()
 {
     Q_ASSERT(QThread::currentThread() == thread());
 
-    if (restoreTimelineNavigationLock()) {
+    if (!timelineNavigationPostId.isEmpty()) {
+        // A pending semantic jump owns the viewport even before its row exists.
+        // Never fall back to bottom while context is still being materialized.
+        restoringSavedScroll = false;
+        restoreTimelineNavigationLock();
+        scheduleTimelineNavigationRestore();
         return;
     }
 
@@ -216,6 +231,9 @@ void PostsListWidget::finishTimelineRebuildAtBottom()
         QListWidget::scrollToBottom();
         restoringSavedScroll = false;
         saveScrollAnchor();
+        if (savedScrollAnchor.valid) {
+            savedScrollAnchor.atBottom = true;
+        }
     };
 
     apply();
@@ -227,7 +245,10 @@ bool PostsListWidget::finishTimelineRebuildAtPost(const QString& postId,
 {
     Q_ASSERT(QThread::currentThread() == thread());
 
-    if (restoreTimelineNavigationLock()) {
+    if (!timelineNavigationPostId.isEmpty()) {
+        restoringSavedScroll = false;
+        restoreTimelineNavigationLock();
+        scheduleTimelineNavigationRestore();
         return true;
     }
 
@@ -267,6 +288,9 @@ bool PostsListWidget::finishTimelineRebuildAtPost(const QString& postId,
         }
         restoringSavedScroll = false;
         saveScrollAnchor();
+        if (savedScrollAnchor.valid) {
+            savedScrollAnchor.atBottom = false;
+        }
     };
 
     apply();
@@ -278,7 +302,10 @@ void PostsListWidget::finishTimelineRebuildAtPixel(qint64 pixelOffset)
 {
     Q_ASSERT(QThread::currentThread() == thread());
 
-    if (restoreTimelineNavigationLock()) {
+    if (!timelineNavigationPostId.isEmpty()) {
+        restoringSavedScroll = false;
+        restoreTimelineNavigationLock();
+        scheduleTimelineNavigationRestore();
         return;
     }
 
@@ -295,6 +322,9 @@ void PostsListWidget::finishTimelineRebuildAtPixel(qint64 pixelOffset)
         bar->setValue(static_cast<int>(bounded));
         restoringSavedScroll = false;
         saveScrollAnchor();
+        if (savedScrollAnchor.valid) {
+            savedScrollAnchor.atBottom = false;
+        }
     };
 
     apply();
