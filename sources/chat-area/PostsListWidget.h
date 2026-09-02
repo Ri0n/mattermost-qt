@@ -107,6 +107,13 @@ public:
 		animation->start(QAbstractAnimation::DeleteWhenStopped);
 	}
 
+	// Sparse rebuilds run synchronously on the GUI thread. Freezing QWidget
+	// updates across later event-loop turns leaves stale backing-store pixels when
+	// the splitter/list geometry changes (observed as post text over the editor).
+	// Qt already coalesces paints until control returns to the event loop, so the
+	// timeline controllers' legacy paint-suspension calls are intentionally no-op.
+	void setUpdatesEnabled(bool) {}
+
 	// QListWidget::clear(), scrollToItem() and scrollToBottom() are not virtual.
 	// ChatArea uses the concrete PostsListWidget type, so hiding them here lets
 	// us distinguish explicit navigation from automatic layout-driven scrolling.
