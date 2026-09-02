@@ -109,6 +109,14 @@ BackendChannel::~BackendChannel () = default;
 
 BackendPost* BackendChannel::addPost (const QJsonObject& postObject)
 {
+	const QString postId = postObject.value(QStringLiteral("id")).toString();
+	if (!postId.isEmpty()) {
+		const auto existing = postIdToPost.constFind(postId);
+		if (existing != postIdToPost.cend()) {
+			return existing.value();
+		}
+	}
+
 	posts.emplace_back (postObject, storage);
 
 	BackendPost* newPost = &posts.back ();
@@ -144,6 +152,11 @@ void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPo
                               ChannelNewPostsChunk& currentChunk,
                               QVector<QPair<QString, QString>>& rootLinks, bool initialLoad)
 {
+	const QString postId = postObject.value(QStringLiteral("id")).toString();
+	if (postId.isEmpty() || postIdToPost.contains(postId)) {
+		return;
+	}
+
 	BackendPost* newPost = &*posts.emplace (position, postObject, storage);
 	postIdToPost[newPost->id] = newPost;
 
@@ -178,80 +191,21 @@ void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPo
 
 void BackendChannel::prependPosts (const QJsonArray& orderArray, const QJsonObject& postsObject)
 {
-	ChannelNewPosts allNewPosts;
-	ChannelNewPostsChunk currentNewPostsChunk;
-
-	bool initialLoad = true;
-
-	for (const auto& newPostEl: orderArray) {
-		QString newPostId = newPostEl.toString();
-		addPost (postsObject.find (newPostId).value().toObject(), posts.begin (),
-		         currentNewPostsChunk, rootIdAndPostList, initialLoad);
-	}
-
-	if (!currentNewPostsChunk.postsToAdd.empty()) {
-		allNewPosts.addChunk (std::move (currentNewPostsChunk));
-	}
-
-	emit onNewPosts (allNewPosts);
+	// Older-page responses are not guaranteed to be disjoint from data already
+	// materialized by reconnect, pinned navigation or thread loading. Use the
+	// same identity-based merge as every other arbitrary server window.
+	mergePostContext(orderArray, postsObject);
 }
 
 void BackendChannel::addPosts (const QJsonArray& orderArray, const QJsonObject& postsObject)
 {
-	ChannelNewPosts allNewPosts;
-	ChannelNewPostsChunk currentNewPostsChunk;
-
-	std::list<BackendPost>::reverse_iterator currentLocalPost = posts.rbegin();
-
-#if defined(_MSC_VER)
-#pragma message("warning: Handle case of deleted post, that is not deleted locally")
-#else
-#warning "Handle case of deleted post, that is not deleted locally"
-#endif
-
-	bool initialLoad = (posts.empty());
-	bool lastPostWasSkipped = false;
-
-	for (const auto& newPostEl: orderArray) {
-		while (currentLocalPost != posts.rend() && currentLocalPost->isDeleted) {
-			++currentLocalPost;
-		}
-
-		QString newPostId = newPostEl.toString();
-
-		if (currentLocalPost == posts.rend()) {
-			addPost (postsObject.find (newPostId).value().toObject(), posts.begin (),
-			         currentNewPostsChunk, rootIdAndPostList, initialLoad);
-			++currentLocalPost;
-			continue;
-		}
-
-		if (currentLocalPost->id == newPostId) {
-			++currentLocalPost;
-
-			if (lastPostWasSkipped) {
-				currentNewPostsChunk.previousPostId = newPostId;
-				allNewPosts.addChunk (std::move (currentNewPostsChunk));
-				lastPostWasSkipped = false;
-			}
-			continue;
-		}
-
-		qDebug () << "Add after currentLocalPost";
-		addPost (postsObject.find (newPostId).value().toObject(), currentLocalPost.base(),
-		         currentNewPostsChunk, rootIdAndPostList, initialLoad);
-		++currentLocalPost;
-		lastPostWasSkipped = true;
-	}
-
-	if (!currentNewPostsChunk.postsToAdd.empty()) {
-		if (currentLocalPost != posts.rend()) {
-			currentNewPostsChunk.previousPostId = currentLocalPost->id;
-		}
-		allNewPosts.addChunk (std::move (currentNewPostsChunk));
-	}
-
-	emit onNewPosts (allNewPosts);
+	// Historically this method tried to reconcile a newest-edge response against
+	// a reverse iterator over the local list. That made ordering dependent on the
+	// source of the response and could insert the same post again when another
+	// request had already materialized it. Deleted-post reconciliation was never
+	// complete either. Keep this compatibility entry point, but make insertion
+	// idempotent and source-independent.
+	mergePostContext(orderArray, postsObject);
 }
 
 void BackendChannel::mergePostContext(const QJsonArray& orderArray, const QJsonObject& postsObject)
@@ -304,7 +258,7 @@ void BackendChannel::mergePostContext(const QJsonArray& orderArray, const QJsonO
 		addPost(postObject, position, chunk, rootIdAndPostList, false);
 		if (!chunk.postsToAdd.empty()) {
 			// We are already iterating oldest -> newest, so do not use addChunk(),
-			// which intentionally reverses chunks produced by addPosts().
+			// which intentionally reverses chunks produced by the old addPosts().
 			allNewPosts.postsToAdd.emplace_back(std::move(chunk));
 		}
 	}
