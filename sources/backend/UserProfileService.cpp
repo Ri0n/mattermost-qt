@@ -87,7 +87,7 @@ void UserProfileService::clear()
         }
 
         ensureStatuses(QStringList {loginUserId});
-        if (BackendUser* loginUser = backend.getStorage().getUserById(loginUserId)) {
+        if (const BackendUser* loginUser = backend.getStorage().getUserById(loginUserId)) {
             ensureAvatar(*loginUser);
         }
     });
@@ -147,18 +147,26 @@ void UserProfileService::ensureUsers(const QStringList& userIds,
     }
 }
 
-void UserProfileService::ensureAvatar(BackendUser& user)
+void UserProfileService::ensureAvatar(const BackendUser& user)
 {
     if (user.id.isEmpty()) {
         return;
     }
 
-    const uint64_t pictureVersion = user.last_picture_update;
-    if (!user.avatar.isNull() && user.avatar_picture_update == pictureVersion) {
+    BackendUser* storedUser = backend.getStorage().getUserById(user.id);
+    if (!storedUser) {
         return;
     }
 
-    const QString requestKey = user.id + QLatin1Char(':') + QString::number(pictureVersion);
+    const uint64_t pictureVersion = storedUser->last_picture_update;
+    if (!storedUser->avatar.isNull()
+        && storedUser->avatar_picture_update == pictureVersion) {
+        return;
+    }
+
+    const QString pictureVersionString = QString::number(
+        static_cast<qulonglong>(pictureVersion));
+    const QString requestKey = storedUser->id + QLatin1Char(':') + pictureVersionString;
     if (inFlightAvatarKeys.contains(requestKey)) {
         return;
     }
@@ -169,14 +177,14 @@ void UserProfileService::ensureAvatar(BackendUser& user)
     // same URL identity so an unchanged avatar can be served directly by
     // QNetworkDiskCache while a changed avatar necessarily gets a new key.
     NetworkRequest request(
-        QStringLiteral("users/") + user.id + QStringLiteral("/image?_=")
-            + QString::number(pictureVersion),
+        QStringLiteral("users/") + storedUser->id + QStringLiteral("/image?_=")
+            + pictureVersionString,
         true);
     request.setPriority(QNetworkRequest::LowPriority);
     request.setAttribute(QNetworkRequest::BackgroundRequestAttribute, true);
     request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
 
-    const QString userId = user.id;
+    const QString userId = storedUser->id;
     httpConnector.get(request, HttpResponseCallback(
         [this, requestKey, userId, pictureVersion](QVariant, QByteArray data) {
             inFlightAvatarKeys.remove(requestKey);
