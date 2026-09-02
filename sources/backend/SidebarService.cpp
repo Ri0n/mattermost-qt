@@ -6,6 +6,7 @@
 #include "SidebarService.h"
 
 #include <algorithm>
+#include <memory>
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -28,6 +29,7 @@ const QString channelOpenTimeCategory = QStringLiteral("channel_open_time");
 const QString channelApproximateViewTimeCategory = QStringLiteral("channel_approximate_view_time");
 const QString displaySettingsCategory = QStringLiteral("display_settings");
 const QString collapsedReplyThreadsName = QStringLiteral("collapsed_reply_threads");
+constexpr int channelMembershipsPerPage = 200;
 
 } // namespace
 
@@ -295,54 +297,81 @@ void SidebarService::retrieveChannelMemberships(std::function<void()> callback)
         return;
     }
 
-    NetworkRequest request(QStringLiteral("users/") + currentUserId() + QStringLiteral("/channel_members"));
-    httpConnector.get(request, HttpResponseCallback([this, callback](const QJsonDocument& doc) {
-        mutedChannelIds.clear();
+    // Mattermost's channel_members endpoint is paginated by default. The web
+    // client asks for page=-1 and parses the NDJSON stream, but HTTPConnector's
+    // JSON callback deliberately handles a single JSON document. Fetch every
+    // ordinary JSON page here instead so Recent/Unreads are built from the full
+    // membership set rather than an arbitrary first page.
+    const auto memberships = std::make_shared<QJsonArray>();
+    const auto fetchPage = std::make_shared<std::function<void(int)>>();
 
-        // Do not clear the tracker here. A websocket post may have arrived while
-        // this membership request was in flight. Server-derived and runtime
-        // unread state are kept separately so this response can refresh one
-        // without destroying the other.
-        for (const auto& value : doc.array()) {
-            const auto object = value.toObject();
-            const QString channelId = object.value(QStringLiteral("channel_id")).toString();
-            const auto notifyProps = object.value(QStringLiteral("notify_props")).toObject();
-            const bool muted = notifyProps.value(QStringLiteral("mark_unread")).toString()
-                == QStringLiteral("mention");
-            const uint64_t readMessageCount = object.value(QStringLiteral("msg_count"))
-                .toVariant().toULongLong();
-            const bool hasReadRootMessageCount = object.contains(QStringLiteral("msg_count_root"));
-            const uint64_t readRootMessageCount = hasReadRootMessageCount
-                ? object.value(QStringLiteral("msg_count_root")).toVariant().toULongLong()
-                : 0;
-            const uint64_t mentionCount = object.value(QStringLiteral("mention_count"))
-                .toVariant().toULongLong();
-            const bool hasRootMentionCount = object.contains(QStringLiteral("mention_count_root"));
-            const uint64_t rootMentionCount = hasRootMentionCount
-                ? object.value(QStringLiteral("mention_count_root")).toVariant().toULongLong()
-                : 0;
+    *fetchPage = [this, callback, memberships, fetchPage](int page) {
+        NetworkRequest request(
+            QStringLiteral("users/") + currentUserId()
+            + QStringLiteral("/channel_members?page=") + QString::number(page)
+            + QStringLiteral("&per_page=") + QString::number(channelMembershipsPerPage));
 
-            if (muted) {
-                mutedChannelIds.insert(channelId);
-            }
+        httpConnector.get(request, HttpResponseCallback(
+            [this, callback, memberships, fetchPage, page](const QJsonDocument& doc) {
+                const QJsonArray pageMemberships = doc.array();
+                for (const auto& value : pageMemberships) {
+                    memberships->push_back(value);
+                }
 
-            activityTracker.setMembership(
-                channelId,
-                object.value(QStringLiteral("last_viewed_at")).toVariant().toULongLong(),
-                readMessageCount,
-                readRootMessageCount,
-                hasReadRootMessageCount,
-                mentionCount,
-                rootMentionCount,
-                hasRootMentionCount,
-                muted);
-        }
+                if (pageMemberships.size() == channelMembershipsPerPage) {
+                    (*fetchPage)(page + 1);
+                    return;
+                }
 
-        synchronizeChannelActivity();
-        if (callback) {
-            callback();
-        }
-    }));
+                mutedChannelIds.clear();
+
+                // Do not clear the tracker here. A websocket post may have
+                // arrived while the membership pages were in flight.
+                // Server-derived and runtime unread state are kept separately
+                // so this refresh cannot destroy newer runtime activity.
+                for (const auto& value : *memberships) {
+                    const auto object = value.toObject();
+                    const QString channelId = object.value(QStringLiteral("channel_id")).toString();
+                    const auto notifyProps = object.value(QStringLiteral("notify_props")).toObject();
+                    const bool muted = notifyProps.value(QStringLiteral("mark_unread")).toString()
+                        == QStringLiteral("mention");
+                    const uint64_t readMessageCount = object.value(QStringLiteral("msg_count"))
+                        .toVariant().toULongLong();
+                    const bool hasReadRootMessageCount = object.contains(QStringLiteral("msg_count_root"));
+                    const uint64_t readRootMessageCount = hasReadRootMessageCount
+                        ? object.value(QStringLiteral("msg_count_root")).toVariant().toULongLong()
+                        : 0;
+                    const uint64_t mentionCount = object.value(QStringLiteral("mention_count"))
+                        .toVariant().toULongLong();
+                    const bool hasRootMentionCount = object.contains(QStringLiteral("mention_count_root"));
+                    const uint64_t rootMentionCount = hasRootMentionCount
+                        ? object.value(QStringLiteral("mention_count_root")).toVariant().toULongLong()
+                        : 0;
+
+                    if (muted) {
+                        mutedChannelIds.insert(channelId);
+                    }
+
+                    activityTracker.setMembership(
+                        channelId,
+                        object.value(QStringLiteral("last_viewed_at")).toVariant().toULongLong(),
+                        readMessageCount,
+                        readRootMessageCount,
+                        hasReadRootMessageCount,
+                        mentionCount,
+                        rootMentionCount,
+                        hasRootMentionCount,
+                        muted);
+                }
+
+                synchronizeChannelActivity();
+                if (callback) {
+                    callback();
+                }
+            }));
+    };
+
+    (*fetchPage)(0);
 }
 
 void SidebarService::retrieveChannelPreferences(std::function<void()> callback)
