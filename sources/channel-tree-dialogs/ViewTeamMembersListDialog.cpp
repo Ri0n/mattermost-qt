@@ -25,15 +25,35 @@
 #include "ViewTeamMembersListDialog.h"
 
 #include <QMenu>
-#include "backend/types/BackendTeam.h"
+#include <QPointer>
+
 #include "backend/Backend.h"
+#include "backend/UserProfileService.h"
+#include "backend/types/BackendTeam.h"
+#include "ui_FilterListDialog.h"
 
 namespace Mattermost {
 
-ViewTeamMembersListDialog::ViewTeamMembersListDialog (Backend& backend, const BackendTeam& team, QWidget* parent)
+ViewTeamMembersListDialog::ViewTeamMembersListDialog (Backend& backend, BackendTeam& team, QWidget* parent)
 :UserListDialog (parent)
 ,team (team)
 ,backend (backend)
+{
+	refreshMembers();
+
+	QPointer<ViewTeamMembersListDialog> guard(this);
+	UserProfileService::instance(backend).ensureTeamMembers(team, [guard] {
+		if (guard) {
+			guard->refreshMembers();
+		}
+	});
+
+	connect (&team, &BackendTeam::onUserRemoved, this, &UserListDialog::removeRowByData);
+}
+
+ViewTeamMembersListDialog::~ViewTeamMembersListDialog () = default;
+
+void ViewTeamMembersListDialog::refreshMembers()
 {
 	FilterListDialogConfig dialogCfg {
 		"Team Members - Mattermost",
@@ -44,23 +64,16 @@ ViewTeamMembersListDialog::ViewTeamMembersListDialog (Backend& backend, const Ba
 	};
 
 	std::set<UserListEntry> entrySet;
-
 	for (auto& it: team.members) {
 		if (it.user) {
 			entrySet.emplace (it);
 		}
 	}
 
+	dataToItemMap.clear();
+	ui->tableWidget->clearContents();
 	create (dialogCfg, entrySet, {"Full Name", "Status"});
-
-//	connect (&team, &BackendTeam::onUserAdded, [this] (const BackendUser&) {
-//
-//	});
-
-	connect (&team, &BackendTeam::onUserRemoved, this, &UserListDialog::removeRowByData);
 }
-
-ViewTeamMembersListDialog::~ViewTeamMembersListDialog () = default;
 
 void ViewTeamMembersListDialog::addContextMenuActions (QMenu& menu, const QVariant& selectedItemData)
 {
