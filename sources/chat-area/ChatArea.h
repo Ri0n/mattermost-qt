@@ -98,6 +98,8 @@ private:
 	void moveOnListTop ();
 	void setUnreadMessagesCount (uint32_t count);
 	void setTextEditWidgetHeight (int height);
+	void updatePinnedPostsButton ();
+	void markChannelViewedIfAtBottom ();
 	
 	ChatArea*					parentArea;
 	QString						parentPostId;
@@ -127,7 +129,6 @@ public:
 	QSet<ChatArea*> 					threadsAreas;
 	QString							root_id;
 	std::vector<QMetaObject::Connection> 		signalConnections;
-	double					scrollRatio;
 };
 
 } /* namespace Mattermost */
