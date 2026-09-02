@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -31,6 +31,7 @@
 #include <QPersistentModelIndex>
 #include <QPointer>
 #include <QResizeEvent>
+#include <QTimer>
 #include "post-separator/PostDaySeparatorWidget.h"
 #include "backend/Backend.h"
 #include "backend/types/BackendPost.h"
@@ -62,11 +63,124 @@ PostsListWidget::PostsListWidget (QWidget* parent)
 
 PostsListWidget::~PostsListWidget () = default;
 
+void PostsListWidget::saveScrollAnchor()
+{
+	savedScrollAnchor = {};
+	if (count() == 0 || viewport()->height() <= 0) {
+		return;
+	}
+
+	const QRect viewportRect = viewport()->rect();
+	for (int row = count() - 1; row >= 0; --row) {
+		QListWidgetItem* listItem = item(row);
+		if (!isPostItem(listItem)) {
+			continue;
+		}
+
+		const QRect rect = visualItemRect(listItem);
+		if (!rect.isValid() || !rect.intersects(viewportRect)) {
+			continue;
+		}
+
+		const QString postId = listItem->data(ItemRole::postId).toString();
+		if (postId.isEmpty()) {
+			continue;
+		}
+
+		savedScrollAnchor.postId = postId;
+		savedScrollAnchor.bottomOffset = viewportRect.bottom() - rect.bottom();
+		savedScrollAnchor.valid = true;
+		return;
+	}
+}
+
+void PostsListWidget::clear()
+{
+	// Persist the last visible post rather than a scrollbar percentage. A ratio
+	// is unstable when delayed images or Markdown reflow change row heights.
+	saveScrollAnchor();
+
+	removeNewMessagesSeparatorTimer.stop();
+	QListWidget::clear();
+	newMessagesSeparator = nullptr;
+	lastOwnPost = nullptr;
+	currentEditedItem = nullptr;
+	savedScrollRestoreScheduled = false;
+}
+
+void PostsListWidget::scheduleSavedScrollAnchorRestore()
+{
+	if (!savedScrollAnchor.valid || savedScrollRestoreScheduled) {
+		return;
+	}
+
+	savedScrollRestoreScheduled = true;
+
+	// Initial row sizing is also queued with zero-timeout callbacks. Give those
+	// callbacks one event-loop turn, then restore the saved post on the next one.
+	// Subsequent image/content growth is handled by ResizableListWidget's live
+	// viewport anchoring.
+	QTimer::singleShot(0, this, [this] {
+		QTimer::singleShot(0, this, [this] {
+			savedScrollRestoreScheduled = false;
+			restoreSavedScrollAnchor();
+		});
+	});
+}
+
+void PostsListWidget::restoreSavedScrollAnchor()
+{
+	if (!savedScrollAnchor.valid) {
+		return;
+	}
+
+	const int row = findPostByIndex(savedScrollAnchor.postId, 0);
+	if (row < 0) {
+		return;
+	}
+
+	QListWidgetItem* listItem = item(row);
+	if (!listItem) {
+		return;
+	}
+
+	const int wantedBottomOffset = savedScrollAnchor.bottomOffset;
+	const QPersistentModelIndex index = indexFromItem(listItem);
+	const QString restoredPostId = savedScrollAnchor.postId;
+
+	scrollToItem(listItem, QAbstractItemView::PositionAtBottom);
+	QTimer::singleShot(0, this, [this, index, wantedBottomOffset, restoredPostId] {
+		if (!index.isValid()) {
+			return;
+		}
+
+		QListWidgetItem* currentItem = itemFromIndex(index);
+		if (!currentItem || currentItem->data(ItemRole::postId).toString() != restoredPostId) {
+			return;
+		}
+
+		const QRect rect = visualItemRect(currentItem);
+		if (!rect.isValid()) {
+			return;
+		}
+
+		const int targetBottom = viewport()->rect().bottom() - wantedBottomOffset;
+		const int delta = rect.bottom() - targetBottom;
+		if (delta != 0) {
+			verticalScrollBar()->setValue(verticalScrollBar()->value() + delta);
+		}
+
+		// The identity anchor has now been translated back into a live viewport
+		// position. Future content growth keeps that viewport stable generically.
+		savedScrollAnchor = {};
+	});
+}
+
 void PostsListWidget::insertPost (int position, PostWidget* postWidget)
 {
 	QListWidgetItem* newItem = new QListWidgetItem();
 	newItem->setData(Qt::UserRole, ItemType::post);
-	//newItem->setSizeHint (postWidget->sizeHint());
+	newItem->setData(ItemRole::postId, postWidget->post.id);
 	newItem->setSizeHint (QSize (viewportSizeHint().width(), postWidget->heightForWidth(width())));
 	insertItem (position, newItem);
 
@@ -75,6 +189,10 @@ void PostsListWidget::insertPost (int position, PostWidget* postWidget)
 
 	if (postWidget->post.isOwnPost()) {
 		lastOwnPost = newItem;
+	}
+
+	if (savedScrollAnchor.valid && savedScrollAnchor.postId == postWidget->post.id) {
+		scheduleSavedScrollAnchorRestore();
 	}
 
 	// MessageContentWidget emits dimensionsChanged asynchronously after text/image
@@ -95,7 +213,7 @@ void PostsListWidget::insertPost (int position, PostWidget* postWidget)
 				return;
 			}
 
-			scheduleItemResize(currentItem, guardedPost.data());
+			scheduleItemResize(currentItem, guardedPost.data(), true);
 		});
 }
 
@@ -117,8 +235,7 @@ int PostsListWidget::findPostByIndex (const QString& postId, int startIndex)
 			continue;
 		}
 
-		PostWidget* message = static_cast<PostWidget*> (itemWidget (listItem));
-		if (message && message->post.id == postId) {
+		if (listItem->data(ItemRole::postId).toString() == postId) {
 			return startIndex;
 		}
 
@@ -135,24 +252,13 @@ PostWidget* PostsListWidget::findPost (const QString& postId)
 		return nullptr;
 	}
 
-	int startIndex = 0;
-
-	while (startIndex < count()) {
-		QListWidgetItem* listItem = item (startIndex);
-		if (!isPostItem (listItem)) {
-			++startIndex;
-			continue;
-		}
-
-		PostWidget* message = static_cast<PostWidget*> (itemWidget (listItem));
-		if (message && message->post.id == postId) {
-			return message;
-		}
-
-		++startIndex;
+	const int row = findPostByIndex(postId, 0);
+	if (row < 0) {
+		return nullptr;
 	}
 
-	return nullptr;
+	QListWidgetItem* listItem = item(row);
+	return listItem ? static_cast<PostWidget*>(itemWidget(listItem)) : nullptr;
 }
 
 void PostsListWidget::scrollToUnreadPostsOrBottom ()
@@ -317,8 +423,6 @@ void PostsListWidget::showContextMenu (const QPoint& pos)
 		return;
 	}
 
-	//post->create
-
 	// Create menu and insert some actions
 	QMenu myMenu;
 
@@ -341,7 +445,6 @@ void PostsListWidget::showContextMenu (const QPoint& pos)
 
 	if (!post->hoveredLink.isEmpty() && selectedItemsCount == 1) {
 		myMenu.addAction ("Copy link to clipboard", [this, post] {
-			//qDebug() << "Copy " << post->post.message;
 			QApplication::clipboard()->setText (post->hoveredLink);
 		});
 	}
@@ -363,13 +466,11 @@ void PostsListWidget::showContextMenu (const QPoint& pos)
 	}
 
 	myMenu.addAction ("Copy entire post (formatted)", [this, post] {
-		//qDebug() << "Copy " << post->post.message;
 		copySelectedItemsToClipboard (PostWidget::entirePost);
 	});
 
 	if (selectedItemsCount == 1) {
 		myMenu.addAction ("Copy post message", [this, post] {
-			//qDebug() << "Copy " << post->post.message;
 			copySelectedItemsToClipboard (PostWidget::messageOnly);
 		});
 	}
@@ -383,7 +484,6 @@ void PostsListWidget::showContextMenu (const QPoint& pos)
 	myMenu.addSeparator();
 
 	myMenu.addAction ("View " + post->post.author->getDisplayName() + "'s profile", [this, post] {
-		//qDebug() << "Copy " << post->post.message;
 		UserProfileDialog* dialog = new UserProfileDialog (*post->post.author, this);
 		dialog->show ();
 	});
@@ -415,7 +515,6 @@ void PostsListWidget::resizeToBottom ()
 
 void PostsListWidget::focusOutEvent (QFocusEvent* event)
 {
-	//qDebug() << "FocusOutEvent";
 	if (!menuShown) {
 		clearSelection ();
 	}
