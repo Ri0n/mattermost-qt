@@ -230,12 +230,24 @@ void HTTPConnector::setProcessReply (QNetworkReply* reply,
 {
 	connect(reply, &QNetworkReply::finished, this,
 		[this, reply, responseHandler = std::move(responseHandler), requestGeneration]() mutable {
+			// reset() replaces the QNetworkAccessManager and releases the limiter
+			// slots for its old replies. Those aborted replies may still emit
+			// finished; never deliver them into callbacks belonging to the new
+			// application/storage generation.
+			if (requestGeneration != generation) {
+				reply->deleteLater();
+				return;
+			}
+
 			const int statusCode = reply->error();
 			auto data = reply->readAll();
 
 			responseHandler(statusCode, qMove(data), *reply);
 			reply->deleteLater();
 
+			// A response handler is allowed to reset the connector itself (for
+			// example after an authentication failure). In that case reset() has
+			// already released all active slots, so do not decrement them twice.
 			if (requestGeneration != generation) {
 				return;
 			}
@@ -254,7 +266,10 @@ void HTTPConnector::setProcessReply (QNetworkReply* reply,
 #else
 	connect(reply, qOverload<QNetworkReply::NetworkError>(&QNetworkReply::errorOccurred),
 #endif
-			this, [this, reply](QNetworkReply::NetworkError error) {
+			this, [this, reply, requestGeneration](QNetworkReply::NetworkError error) {
+		if (requestGeneration != generation) {
+			return;
+		}
 		emit onNetworkError (error, reply->errorString());
 	});
 }
