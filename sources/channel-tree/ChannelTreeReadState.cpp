@@ -3,33 +3,26 @@
 #include <QMouseEvent>
 #include <QTimer>
 
-#include "backend/Backend.h"
-#include "backend/SidebarService.h"
-#include "backend/Storage.h"
-#include "backend/types/BackendChannel.h"
+#include "chat-area/ChatArea.h"
 
 namespace Mattermost {
 
 void ChannelTree::markChannelViewed(QTreeWidgetItem* item)
 {
-    if (!backendForSidebar || !item
-        || item->data(0, ItemKindRole).toInt() != ChannelItemKind) {
+    if (!item || item->data(0, ItemKindRole).toInt() != ChannelItemKind) {
         return;
     }
 
     const QString channelId = item->data(0, ItemIdRole).toString();
-    BackendChannel* channel = backendForSidebar->getStorage().getChannelById(channelId);
-    if (!channel) {
+    ChatArea* page = getCurrentPage();
+    if (!page || page->getChannel().id != channelId) {
         return;
     }
 
-    auto& sidebar = SidebarService::instance(*backendForSidebar);
-    if (!sidebar.isChannelUnread(*channel) && !sidebar.hasUnreadMention(channelId)) {
-        return;
-    }
-
-    sidebar.markChannelViewedLocally(*channel);
-    backendForSidebar->markChannelAsViewed(*channel);
+    // Selection expresses read intent. ChatArea waits until the newest channel
+    // content is actually present in the model and rendered before committing
+    // the local/server viewed state.
+    page->requestExplicitReadAcknowledgement();
 }
 
 void ChannelTree::currentChanged(const QModelIndex& current, const QModelIndex& previous)
@@ -37,8 +30,6 @@ void ChannelTree::currentChanged(const QModelIndex& current, const QModelIndex& 
     QTreeWidget::currentChanged(current, previous);
 
     // Sidebar rebuilds are programmatic and must never consume unread state.
-    // Every other channel transition is an explicit navigation path: Channels,
-    // Recent, Attention and notification activation all end up here.
     if (renderingSidebar || !current.isValid()) {
         return;
     }
@@ -53,23 +44,17 @@ void ChannelTree::currentChanged(const QModelIndex& current, const QModelIndex& 
         return;
     }
 
-    // Recent and Attention also acknowledge their own selection synchronously.
-    // Defer the shared ChannelTree acknowledgement by one event-loop turn and
-    // re-check unread state so those paths never issue duplicate server calls.
+    // currentItemChanged activates/materializes the ChatArea. Defer the read
+    // request until that synchronous navigation path has completed, and resolve
+    // the item again so category/sidebar rebuilds cannot leave a stale pointer.
     QTimer::singleShot(0, this, [this, channelId] {
-        if (!backendForSidebar) {
+        QTreeWidgetItem* currentItemPtr = currentItem();
+        if (!currentItemPtr
+            || currentItemPtr->data(0, ItemKindRole).toInt() != ChannelItemKind
+            || currentItemPtr->data(0, ItemIdRole).toString() != channelId) {
             return;
         }
-        BackendChannel* channel = backendForSidebar->getStorage().getChannelById(channelId);
-        if (!channel) {
-            return;
-        }
-        auto& sidebar = SidebarService::instance(*backendForSidebar);
-        if (!sidebar.isChannelUnread(*channel) && !sidebar.hasUnreadMention(channelId)) {
-            return;
-        }
-        sidebar.markChannelViewedLocally(*channel);
-        backendForSidebar->markChannelAsViewed(*channel);
+        markChannelViewed(currentItemPtr);
     });
 }
 
@@ -79,8 +64,7 @@ void ChannelTree::mousePressEvent(QMouseEvent* event)
     QTreeWidget::mousePressEvent(event);
 
     // currentChanged() handles normal navigation. A click on the already-current
-    // row has no current-index transition, but it is still an explicit user
-    // acknowledgement and should mark newly arrived unread messages as viewed.
+    // row has no current-index transition, but is still an explicit read intent.
     if (!renderingSidebar && previousItem && previousItem == currentItem()) {
         QTreeWidgetItem* clickedItem = itemAt(event->pos());
         if (clickedItem == previousItem) {
