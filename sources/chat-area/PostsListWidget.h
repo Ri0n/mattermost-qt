@@ -184,6 +184,7 @@ public:
 	                                  int viewportTopOffset = 0,
 	                                  int quietPeriodMs = 2000);
 	void clearTimelineNavigationLock();
+	bool hasTimelineNavigationLock() const { return !timelineNavigationPostId.isEmpty(); }
 
 	Backend*						backend;
 signals:
