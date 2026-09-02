@@ -12,7 +12,6 @@
 #include <cstdint>
 
 #include <QObject>
-#include <QPointer>
 #include <QString>
 #include <QTimer>
 
@@ -32,14 +31,37 @@ public:
     explicit ThreadTimelineController(ChatArea& area);
 
 private:
+    struct ViewportAnchor {
+        enum Kind {
+            None,
+            Bottom,
+            Post,
+            Gap,
+        } kind = None;
+
+        QString postId;
+        int postTopOffset = 0;
+        int logicalIndex = -1;
+        int offsetWithinEstimatedRow = 0;
+
+        bool isValid() const { return kind != None; }
+    };
+
     void start();
     void requestNextPage();
     void requestSeek(int logicalIndex);
     void scheduleViewportCheck();
     void checkViewport();
-    int logicalIndexForNearbyGap(bool* viewportCenterInsideGap) const;
+    int logicalIndexNearViewport(int extraScreens, bool* viewportCenterInsideGap) const;
 
-    void renderTimeline(const QString& focusPostId = QString(), bool focusAtTop = false);
+    ViewportAnchor captureViewportAnchor() const;
+    void restoreViewportAnchor(const ViewportAnchor& anchor,
+                               const QString& focusPostId = QString(),
+                               bool focusAtTop = false);
+
+    void renderTimeline(const QString& focusPostId = QString(),
+                        bool focusAtTop = false,
+                        const ViewportAnchor& anchor = ViewportAnchor());
     void updateGapHeights();
     void scheduleMeasurementPass();
     void measureRenderedPosts();
