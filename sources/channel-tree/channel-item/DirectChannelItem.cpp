@@ -25,7 +25,6 @@
 #include "DirectChannelItem.h"
 
 #include <QMenu>
-#include "chat-area/ChatArea.h"
 #include "backend/Backend.h"
 #include "info-dialogs/UserProfileDialog.h"
 
@@ -35,13 +34,12 @@ void DirectChannelItem::showContextMenu (const QPoint& pos)
 {
 	QMenu myMenu;
 
-	ChatArea *chatArea = data(0, Qt::UserRole).value<ChatArea*>();
-	if (!chatArea) {
+	BackendChannel* channel = backendChannel();
+	if (!channel) {
 		return;
 	}
 
-	BackendChannel& channel = chatArea->getChannel();
-	BackendUser* user = chatArea->backend.getStorage().getUserById (channel.name);
+	BackendUser* user = backend.getStorage().getUserById (channel->name);
 
 	if (user) {
 		myMenu.addAction ("View Profile", [this, user] {
@@ -51,7 +49,7 @@ void DirectChannelItem::showContextMenu (const QPoint& pos)
 		myMenu.addSeparator();
 	}
 
-	addCommonContextMenuActions(myMenu, channel);
+	addCommonContextMenuActions(myMenu, *channel);
 	myMenu.exec (pos);
 }
 
