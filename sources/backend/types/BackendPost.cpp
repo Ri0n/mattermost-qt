@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -56,6 +56,13 @@ BackendPost::BackendPost (const QJsonObject& jsonObject, const Storage& storage)
 	hashtags = jsonObject.value("hashtags").toString();
 	pending_post_id = jsonObject.value("pending_post_id").toString();
 	hidden = jsonObject.value("type").toString().startsWith("system_");
+
+	// Mattermost adds these transient fields to root posts. They are exactly the
+	// metadata used by the web client to render the thread footer without first
+	// downloading the complete thread.
+	reply_count = jsonObject.value("reply_count").toVariant().toLongLong();
+	last_reply_at = jsonObject.value("last_reply_at").toVariant().toULongLong();
+	has_thread = reply_count > 0;
 
 	QJsonObject metadata = jsonObject.value("metadata").toObject();
 
