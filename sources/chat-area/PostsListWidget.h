@@ -56,11 +56,13 @@ public:
 	PostWidget* findPost (const QString& postId);
 	int findPostByIndex (const QString& postId, int startIndex);
 
-	// QListWidget::clear() is not virtual. ChatArea calls it through the concrete
-	// PostsListWidget type, so hiding it here lets us remember a stable visual
-	// anchor before the rows are destroyed and restore it when the chat is built
-	// again.
+	// QListWidget::clear(), scrollToItem() and scrollToBottom() are not virtual.
+	// ChatArea uses the concrete PostsListWidget type, so hiding them here lets
+	// us distinguish explicit navigation from automatic layout-driven scrolling.
 	void clear();
+	void scrollToItem(const QListWidgetItem* item,
+	                  QAbstractItemView::ScrollHint hint = QAbstractItemView::EnsureVisible);
+	void scrollToBottom();
 
 	static bool isPostItem (const QListWidgetItem* item)
 	{
@@ -83,28 +85,45 @@ public:
 	void postEditFinished ();
 
 	/**
-	 * If the widget is near the bottom when being resized,
-	 * keep it at the bottom
+	 * Preserve the last user-selected viewport across a resize. Kept for the
+	 * existing ChatArea call site; it no longer decides based on the current
+	 * scrollbar value, because that value may already have drifted automatically.
 	 */
 	void resizeToBottom ();
+
+	bool isAtBottom() const;
+	void commitCurrentViewportAsAnchor();
+
 	Backend*						backend;
 signals:
 	void postEditInitiated (BackendPost& post);
 	void scrolledToTop ();
+	// Emitted only for wheel/keyboard/scrollbar input, never for layout-driven
+	// scrollbar movement or automatic anchor restoration.
+	void userViewportChanged (bool atBottom);
 private:
 	struct SavedScrollAnchor {
 		QString postId;
 		int bottomOffset = 0;
+		bool atBottom = false;
 		bool valid = false;
 	};
 
 	QList<QListWidgetItem*> sortedSelectedItems () const;
 	void saveScrollAnchor();
 	void scheduleSavedScrollAnchorRestore();
-	void restoreSavedScrollAnchor();
+	void restoreSavedScrollAnchor(quint64 generation);
+	void noteUserScrollIntent();
+	void scheduleUserScrollAnchorUpdate();
+	void commitUserScrollAnchor();
+	void schedulePendingUserIntentReset();
+	bool isUserScrollInProgress() const;
 
 	void copySelectedItemsToClipboard (PostWidget::FormatType formatType);
 	void keyPressEvent (QKeyEvent* event)		override;
+	void wheelEvent (QWheelEvent* event) override;
+	void resizeEvent (QResizeEvent* event) override;
+	bool eventFilter(QObject* watched, QEvent* event) override;
 	void focusOutEvent (QFocusEvent* event)		override;
 	void showContextMenu (const QPoint &pos);
 private:
@@ -115,6 +134,12 @@ private:
 	bool							menuShown;
 	SavedScrollAnchor				savedScrollAnchor;
 	bool							savedScrollRestoreScheduled = false;
+	bool							userScrollAnchorUpdateScheduled = false;
+	bool							restoringSavedScroll = false;
+	bool							handlingUserScrollEvent = false;
+	bool							scrollBarUserGesture = false;
+	bool							pendingScrollBarUserIntent = false;
+	quint64							scrollIntentGeneration = 0;
 };
 
 } /* namespace Mattermost */
