@@ -25,9 +25,13 @@
 #include "GroupTeamItem.h"
 
 #include <QMenu>
-#include "channel-tree/channel-item/GroupChannelItem.h"
+
 #include "backend/Backend.h"
+#include "backend/types/BackendChannel.h"
+#include "channel-tree/ChannelTree.h"
+#include "channel-tree/channel-item/GroupChannelItem.h"
 #include "channel-tree-dialogs/TeamChannelsListDialog.h"
+#include "channel-tree-dialogs/UserSearchDialog.h"
 #include "channel-tree-dialogs/ViewTeamMembersListDialog.h"
 
 namespace Mattermost {
@@ -39,13 +43,10 @@ ChannelItem* GroupTeamItem::createChannelItem (Backend& backendRef, ChannelItemW
 
 void GroupTeamItem::showContextMenu (const QPoint& pos)
 {
-	// Create menu and insert some actions
 	QMenu myMenu;
 
 	myMenu.addAction ("View Team Members", [this] {
-
 		BackendTeam* team = backend.getStorage().getTeamById(teamId);
-
 		if (!team) {
 			return;
 		}
@@ -54,47 +55,80 @@ void GroupTeamItem::showContextMenu (const QPoint& pos)
 		dialog->show ();
 	});
 
-	myMenu.addAction ("Add user to the team", [this] {
-
-		BackendTeam* team = backend.getStorage().getTeamById(teamId);
-
-		std::vector<const BackendUser*> availableUsers;
-
-		for (auto& user: backend.getStorage().getAllUsers()) {
-
-			availableUsers.emplace_back (&user.second);
+	myMenu.addAction ("Start direct message", [this] {
+		QSet<QString> existingDirectUsers;
+		for (auto it = backend.getStorage().channels.cbegin();
+		     it != backend.getStorage().channels.cend(); ++it) {
+			const BackendChannel* channel = it.value();
+			if (channel && channel->type == BackendChannel::directChannel && !channel->name.isEmpty()) {
+				existingDirectUsers.insert(channel->name);
+			}
 		}
 
-		QSet<const BackendUser*> teamMembers = team->getAllMembers();
-
 		FilterListDialogConfig dialogCfg {
-			"Add user to team - Mattermost",
-			"Select a user to add to the '" + team->display_name + "' team:",
-			"Filter users by name:",
+			"Start direct message - Mattermost",
+			"Search for a user to message:",
+			"Search users by name:",
 			QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
-			" is already added to the team"
+			" already has a direct conversation"
 		};
 
-		UserListDialog* dialog = new UserListDialog (dialogCfg, availableUsers, &teamMembers, treeWidget());
-		dialog->show ();
+		auto* dialog = new UserSearchDialog(
+			backend, dialogCfg, UserSearchOptions {}, existingDirectUsers, treeWidget());
+		dialog->show();
 
-		QObject::connect (dialog, &UserListDialog::accepted, [this, team, dialog] {
+		QObject::connect(dialog, &UserSearchDialog::accepted, [this, dialog] {
 			const BackendUser* user = dialog->getSelectedUser();
-
 			if (!user) {
-				qDebug() << "dialog->getSelectedUser() returned nullptr";
 				return;
 			}
 
-			backend.addUserToTeam (*team, user->id);
+			if (const BackendChannel* existing = backend.getStorage().getDirectChannelByUserId(user->id)) {
+				if (auto* tree = static_cast<ChannelTree*>(treeWidget())) {
+					tree->openChannel(existing->id);
+				}
+				return;
+			}
+
+			backend.createDirectChannel(*user);
+		});
+	});
+
+	myMenu.addAction ("Add user to the team", [this] {
+		BackendTeam* team = backend.getStorage().getTeamById(teamId);
+		if (!team) {
+			return;
+		}
+
+		FilterListDialogConfig dialogCfg {
+			"Add user to team - Mattermost",
+			"Search for a user to add to the '" + team->display_name + "' team:",
+			"Search users by name:",
+			QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+			""
+		};
+
+		UserSearchOptions options;
+		options.notInTeamId = team->id;
+		auto* dialog = new UserSearchDialog(backend, dialogCfg, options, {}, treeWidget());
+		dialog->show();
+
+		QObject::connect(dialog, &UserSearchDialog::accepted, [this, team, dialog] {
+			const BackendUser* user = dialog->getSelectedUser();
+			if (!user) {
+				return;
+			}
+			backend.addUserToTeam(*team, user->id);
 		});
 	});
 
 	myMenu.addAction ("View Public Channels", [this] {
 		BackendTeam* team = backend.getStorage().getTeamById(teamId);
+		if (!team) {
+			return;
+		}
 
 		backend.retrieveTeamPublicChannels (team->id, [this, team] (std::list<BackendChannel>& channels) {
-
 			FilterListDialogConfig dialogCfg {
 				"Public Channels - Mattermost",
 				"Public Channels in team '" + team->display_name + "':",
