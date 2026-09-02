@@ -65,6 +65,12 @@ struct EmojiReplacement {
     Emoji emoji;
 };
 
+struct LinkReplacement {
+    int position = 0;
+    int length = 0;
+    QString href;
+};
+
 bool isEscaped(const QString& text, int position)
 {
     int backslashCount = 0;
@@ -268,6 +274,82 @@ QString promoteMultilineCodeSpans(const QString& text)
     return result;
 }
 
+bool rangeAlreadyFormattedAsLinkOrCode(QTextDocument& document, int position, int length)
+{
+    QTextCursor cursor(&document);
+    for (int i = 0; i < length; ++i) {
+        cursor.setPosition(position + i);
+        const QTextCharFormat format = cursor.charFormat();
+        if (format.isAnchor() || format.fontFixedPitch()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void linkifyBareUrls(QTextDocument& document)
+{
+    // QTextDocument's GitHub Markdown parser handles ordinary autolinks, but
+    // Qt 6.10 leaves some valid real-world URLs as plain text (notably long
+    // percent-encoded paths containing '+'). Run a conservative second pass on
+    // the already parsed document so Markdown links and code remain untouched.
+    static const QRegularExpression urlExpression(
+        QStringLiteral(R"(https?://[^\s<>"'`]+)"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    QList<LinkReplacement> replacements;
+    for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+        const QString blockText = block.text();
+        QRegularExpressionMatchIterator matches = urlExpression.globalMatch(blockText);
+        while (matches.hasNext()) {
+            const QRegularExpressionMatch match = matches.next();
+            QString href = match.captured(0);
+
+            // Sentence punctuation immediately after a URL is not part of the
+            // address. Do not strip URL-significant dots from the middle/end of
+            // a path such as a date; only obvious prose delimiters are removed.
+            while (!href.isEmpty()) {
+                const QChar tail = href.back();
+                if (tail == QLatin1Char(',') || tail == QLatin1Char(';')
+                    || tail == QLatin1Char('!') || tail == QLatin1Char('?')) {
+                    href.chop(1);
+                } else {
+                    break;
+                }
+            }
+            if (href.isEmpty()) {
+                continue;
+            }
+
+            const int position = block.position() + static_cast<int>(match.capturedStart(0));
+            const int length = href.size();
+            if (rangeAlreadyFormattedAsLinkOrCode(document, position, length)) {
+                continue;
+            }
+
+            replacements.push_back(LinkReplacement {position, length, href});
+        }
+    }
+
+    // Formatting does not change positions, nevertheless apply from the end so
+    // this remains safe if the implementation later needs textual cleanup.
+    std::sort(replacements.begin(), replacements.end(),
+              [](const LinkReplacement& left, const LinkReplacement& right) {
+        return left.position > right.position;
+    });
+
+    for (const LinkReplacement& replacement : replacements) {
+        QTextCursor cursor(&document);
+        cursor.setPosition(replacement.position);
+        cursor.setPosition(replacement.position + replacement.length, QTextCursor::KeepAnchor);
+        QTextCharFormat format;
+        format.setAnchor(true);
+        format.setAnchorHref(replacement.href);
+        format.setFontUnderline(true);
+        cursor.mergeCharFormat(format);
+    }
+}
+
 bool customEmojiImageFormat(const Emoji& emoji, QTextImageFormat& imageFormat)
 {
     if (!emoji.unicodeString.contains(QStringLiteral("<img"))) {
@@ -444,6 +526,11 @@ void buildMarkdownDocument(QTextDocument& document, const QString& text)
     QTextDocument::MarkdownFeatures features(QTextDocument::MarkdownDialectGitHub);
     features.setFlag(QTextDocument::MarkdownNoHTML);
     document.setMarkdown(promoteMultilineCodeSpans(text), features);
+
+    // Qt's GFM autolinker still misses some valid long percent-encoded URLs.
+    // Complete only bare http(s) links after Markdown parsing so explicit links
+    // and code spans keep their existing semantics.
+    linkifyBareUrls(document);
 
     // Emoji are applied after Markdown parsing. Custom emoji are inserted as
     // QTextImageFormat objects, so enabling raw user HTML is unnecessary.
