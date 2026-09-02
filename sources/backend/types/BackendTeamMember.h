@@ -45,9 +45,9 @@ public:
 	uint64_t			delete_at;
 	QString				explicit_roles;
 	QString				roles;
+	QString				userId;
 	const BackendUser*	user;
 	bool				isAdmin;
 };
 
 } /* namespace Mattermost */
-
