@@ -41,7 +41,9 @@
 
 namespace Mattermost {
 namespace {
-constexpr int PinnedNavigationQuietPeriodMs = 5000;
+// Zero means semantic navigation remains authoritative until the user actually
+// scrolls. Network/page/image latency must not decide when pinned navigation ends.
+constexpr int PinnedNavigationQuietPeriodMs = 0;
 }
 
 PinnedPostsList::PinnedPostsList(QWidget *parent)
@@ -137,7 +139,7 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
 
         // Keep the target authoritative before starting any asynchronous context
         // request. Sparse page materialization and image reflow may continue for
-        // a while after the visible jump; they must not restore the old bottom.
+        // arbitrarily long; only explicit user scrolling ends this navigation.
         chatArea->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
 
         // Context must be fetched even when the target object is already in the
@@ -151,8 +153,6 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
                 if (!guard || !loaded) {
                     return;
                 }
-                // Restart the quiet period after the context response: this is
-                // exactly when the sparse controller may rebuild the timeline.
                 guard->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
                 guard->ensurePostVisible(navigationId);
                 guard->goToPost(navigationId);
