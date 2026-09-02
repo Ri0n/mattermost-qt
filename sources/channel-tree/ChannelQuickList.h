@@ -19,9 +19,13 @@ class ChannelQuickList : public QTreeWidget
 {
     Q_OBJECT
 public:
+    enum Mode {
+        Recent,
+    };
+
     explicit ChannelQuickList(QWidget* parent = nullptr);
 
-    void initialize(Backend& backend);
+    void initialize(Backend& backend, Mode mode = Recent);
     void refresh();
 
 signals:
