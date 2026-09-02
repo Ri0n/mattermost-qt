@@ -37,7 +37,7 @@
 namespace Mattermost {
 namespace {
 
-constexpr int ContextPostsPerSide = 30;
+constexpr int ContextPostsPerSide = 15;
 
 struct AroundState {
     QPointer<BackendChannel> channel;
