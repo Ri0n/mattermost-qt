@@ -22,6 +22,8 @@
  * along with Mattermost-QT. if not, see https://www.gnu.org/licenses/.
  */
 
+#include <algorithm>
+
 #include <QJsonObject>
 #include <QDebug>
 #include <QJsonArray>
@@ -250,6 +252,66 @@ void BackendChannel::addPosts (const QJsonArray& orderArray, const QJsonObject& 
 	}
 
 	emit onNewPosts (allNewPosts);
+}
+
+void BackendChannel::mergePostContext(const QJsonArray& orderArray, const QJsonObject& postsObject)
+{
+	ChannelNewPosts allNewPosts;
+
+	// Mattermost PostList order is newest -> oldest. Process it in the opposite
+	// direction so every newly inserted row can reference the already-present
+	// previous row in its own visible timeline. That lets an active ChatArea
+	// insert arbitrary context without rebuilding the whole list.
+	for (auto orderIt = orderArray.crbegin(); orderIt != orderArray.crend(); ++orderIt) {
+		const QString newPostId = orderIt->toString();
+		if (newPostId.isEmpty() || postIdToPost.contains(newPostId)) {
+			continue;
+		}
+
+		const auto postIt = postsObject.constFind(newPostId);
+		if (postIt == postsObject.constEnd() || !postIt->isObject()) {
+			continue;
+		}
+
+		const QJsonObject postObject = postIt->toObject();
+		const uint64_t createAt = postObject.value(QStringLiteral("create_at"))
+			.toVariant().toULongLong();
+		const QString rootId = postObject.value(QStringLiteral("root_id")).toString();
+
+		auto position = posts.begin();
+		for (; position != posts.end(); ++position) {
+			if (position->create_at > createAt
+				|| (position->create_at == createAt && position->id > newPostId)) {
+				break;
+			}
+		}
+
+		QString previousPostId;
+		auto previous = position;
+		while (previous != posts.begin()) {
+			--previous;
+			const bool sameTimeline = rootId.isEmpty()
+				? (previous->root_id.isEmpty() && !previous->hidden)
+				: (previous->id == rootId || previous->root_id == rootId);
+			if (sameTimeline) {
+				previousPostId = previous->id;
+				break;
+			}
+		}
+
+		ChannelNewPostsChunk chunk;
+		chunk.previousPostId = previousPostId;
+		addPost(postObject, position, chunk, rootIdAndPostList, false);
+		if (!chunk.postsToAdd.empty()) {
+			// We are already iterating oldest -> newest, so do not use addChunk(),
+			// which intentionally reverses chunks produced by addPosts().
+			allNewPosts.postsToAdd.emplace_back(std::move(chunk));
+		}
+	}
+
+	if (!allNewPosts.postsToAdd.empty()) {
+		emit onNewPosts(allNewPosts);
+	}
 }
 
 void BackendChannel::addPinnedPosts (const QJsonArray& orderArray, const QJsonObject& postsObject)
