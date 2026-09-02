@@ -119,6 +119,74 @@ void PostTimelineService::loadChannelPage(BackendChannel& channel,
         }));
 }
 
+void PostTimelineService::loadChannelBefore(BackendChannel& channel,
+                                            const QString& beforePostId,
+                                            int perPage,
+                                            PageCallback callback)
+{
+    loadChannelCursor(channel, QStringLiteral("before"), beforePostId,
+                      perPage, std::move(callback));
+}
+
+void PostTimelineService::loadChannelAfter(BackendChannel& channel,
+                                           const QString& afterPostId,
+                                           int perPage,
+                                           PageCallback callback)
+{
+    loadChannelCursor(channel, QStringLiteral("after"), afterPostId,
+                      perPage, std::move(callback));
+}
+
+void PostTimelineService::loadChannelCursor(BackendChannel& channel,
+                                            const QString& direction,
+                                            const QString& cursorPostId,
+                                            int perPage,
+                                            PageCallback callback)
+{
+    if (cursorPostId.isEmpty()
+        || (direction != QLatin1String("before") && direction != QLatin1String("after"))) {
+        Page result;
+        if (callback) {
+            callback(result);
+        }
+        return;
+    }
+
+    const int safePerPage = std::max(1, perPage);
+    const QString path = QStringLiteral("channels/") + channel.id
+        + QStringLiteral("/posts?") + direction + QLatin1Char('=') + cursorPostId
+        + QStringLiteral("&per_page=") + QString::number(safePerPage)
+        + QStringLiteral("&skipFetchThreads=true&collapsedThreads=true");
+
+    QPointer<BackendChannel> channelGuard(&channel);
+    NetworkRequest request(path);
+    httpConnector.get(request, HttpResponseCallback(
+        [channelGuard, cursorPostId, callback = std::move(callback)](
+            QVariant status, const QJsonDocument& doc) mutable {
+            Page result;
+            result.success = status.toInt() == QNetworkReply::NoError && doc.isObject();
+            if (!result.success || !channelGuard) {
+                if (callback) {
+                    callback(result);
+                }
+                return;
+            }
+
+            const QJsonObject root = doc.object();
+            const QJsonObject posts = root.value(QStringLiteral("posts")).toObject();
+            ingest(*channelGuard, posts);
+            result.postIds = chronologicalOrder(posts);
+            // Some Mattermost versions include the cursor in context windows.
+            // It is an overlap marker, never a new logical row.
+            result.postIds.removeAll(cursorPostId);
+            result.prevPostId = root.value(QStringLiteral("prev_post_id")).toString();
+            result.nextPostId = root.value(QStringLiteral("next_post_id")).toString();
+            if (callback) {
+                callback(result);
+            }
+        }));
+}
+
 void PostTimelineService::loadThreadPage(BackendChannel& channel,
                                          const QString& rootId,
                                          int perPage,
