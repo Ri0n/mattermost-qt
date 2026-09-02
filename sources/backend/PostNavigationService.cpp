@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -95,7 +95,8 @@ PostNavigationService::PostNavigationService(Backend& sourceBackend)
 
 void PostNavigationService::loadAround(BackendChannel& channel,
                                        const QString& postId,
-                                       std::function<void(bool)> callback)
+                                       std::function<void(bool)> callback,
+                                       bool forceContext)
 {
     if (postId.isEmpty()) {
         if (callback) {
@@ -104,7 +105,7 @@ void PostNavigationService::loadAround(BackendChannel& channel,
         return;
     }
 
-    if (channel.postIdToPost.contains(postId)) {
+    if (!forceContext && channel.postIdToPost.contains(postId)) {
         if (callback) {
             callback(true);
         }
@@ -185,8 +186,10 @@ void PostNavigationService::loadAround(BackendChannel& channel,
             }
         } else {
             // This is only expected when navigating into an unusual hole in the
-            // currently loaded range. addPosts() can use the surrounding overlap
-            // to reconcile that range without duplicating known posts.
+            // currently loaded range, or when Attention explicitly requests a
+            // parent-channel context around an already cached thread root.
+            // addPosts() can use the surrounding overlap to reconcile that range
+            // without duplicating known posts.
             currentChannel.addPosts(order, posts);
         }
 
