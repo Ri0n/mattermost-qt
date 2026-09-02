@@ -71,6 +71,21 @@ void UserProfileService::clear()
     inFlightUserIds.clear();
     waiters.clear();
     flushScheduled = false;
+
+    // The legacy startup path happened to load the login user's avatar at the
+    // end of retrieveAllUsers(). With the global directory preload gone, make
+    // the two pieces of login-user state explicit and defer them one event-loop
+    // turn so MainWindow has installed its avatar/status signal handlers first.
+    QTimer::singleShot(0, this, [this] {
+        const BackendUser& loginUser = backend.getLoginUser();
+        if (loginUser.id.isEmpty()) {
+            return;
+        }
+        ensureStatuses(QStringList {loginUser.id});
+        if (loginUser.avatar.isNull()) {
+            backend.retrieveUserAvatar(loginUser.id);
+        }
+    });
 }
 
 void UserProfileService::ensureUser(const QString& userId,
