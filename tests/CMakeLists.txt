@@ -156,3 +156,21 @@ target_link_libraries(sidebar-item-delegate-test
 
 add_test(NAME sidebar-item-delegate-test COMMAND sidebar-item-delegate-test)
 set_tests_properties(sidebar-item-delegate-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(post-timeline-test
+    PostTimelineTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/backend/PostTimeline.cpp"
+)
+
+target_include_directories(post-timeline-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(post-timeline-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME post-timeline-test COMMAND post-timeline-test)
