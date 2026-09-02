@@ -62,6 +62,7 @@ private:
     void resolveReferences(BackendUser& user);
     void finishMemberProfiles(const QStringList& userIds,
                               std::function<void()> callback);
+    void refreshKnownUsersSince(qint64 since);
 
     Backend& backend;
     HTTPConnector httpConnector;
@@ -70,6 +71,7 @@ private:
     QSet<QString> inFlightUserIds;
     QSet<QString> inFlightAvatarKeys;
     QMap<QString, QVector<std::function<void(const BackendUser*)>>> waiters;
+    qint64 disconnectedAt = 0;
     bool flushScheduled = false;
 };
 
