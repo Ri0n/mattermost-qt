@@ -25,7 +25,6 @@ class ChatArea;
 struct ChannelNewPosts;
 class ChannelTimelineController;
 
-/** Created from ChatArea's late member initializer; returns null for threads. */
 ChannelTimelineController* createChannelTimelineController(ChatArea& area);
 
 class ChannelTimelineController : public QObject
@@ -34,10 +33,7 @@ class ChannelTimelineController : public QObject
 public:
     explicit ChannelTimelineController(ChatArea& area);
 
-    /** Materialize a cached context window around postId into the sparse view. */
     bool ensurePostVisible(const QString& postId);
-
-    /** Load the next older sequential page. Used by the legacy button/top signal. */
     void requestOlderPage();
 
 protected:
@@ -53,22 +49,23 @@ private:
     void requestPageForIndex(int logicalIndex, bool focusAfterLoad);
 
     void absorbNewPosts(const ChannelNewPosts& newPosts);
-    void flushDeferredExternalPosts();
+    void flushDeferredExternalPosts(bool renderAfter = true);
     void placeApproximateWindow(const QStringList& postIds,
-                                const QString& focusPostId = QString());
+                                const QString& focusPostId = QString(),
+                                bool renderAfter = true);
     int estimateLogicalIndex(uint64_t createAt) const;
     int gapPlacementForWindow(int estimatedCenter, int count) const;
 
     void scheduleViewportCheck();
     void checkViewport();
     void requestSeek(int logicalIndex);
+    int logicalIndexForNearbyGap(bool* viewportCenterInsideGap) const;
 
     void renderTimeline(const QString& focusPostId = QString());
     void updateGapHeights();
-    void scheduleMeasuredHeightUpdate(const QString& postId);
-    QListWidgetItem* gapAtViewportCenter() const;
-    int logicalIndexInsideGap(const QListWidgetItem* gapItem) const;
-    int nearbyGapLogicalIndex() const;
+    void scheduleMeasurementPass();
+    void measureRenderedPosts();
+    void schedulePaintResume(quint64 renderId);
 
     int authoritativeFirstIndex(int page, int pageSize) const;
     int channelRootPostCount() const;
@@ -76,6 +73,7 @@ private:
     ChatArea& area;
     PostTimeline timeline;
     QTimer seekTimer;
+    QTimer measurementTimer;
     QSet<int> loadedPages;
     QStringList deferredExternalPostIds;
 
@@ -85,9 +83,13 @@ private:
     int pendingSeekIndex = -1;
     int requestedPage = -1;
     int requestedFocusIndex = -1;
+    int lastAppliedGapRowHeight = 96;
 
     quint64 generation = 0;
+    quint64 renderGeneration = 0;
     bool active = false;
+    bool totalCountExact = false;
+    bool initialRenderDone = false;
     bool requestInFlight = false;
     bool viewportCheckScheduled = false;
     bool deferredExternalFlushScheduled = false;
