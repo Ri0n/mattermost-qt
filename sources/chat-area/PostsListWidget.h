@@ -93,6 +93,10 @@ public:
 
 	bool isAtBottom() const;
 	void commitCurrentViewportAsAnchor();
+	// Convert an "at bottom" anchor into the concrete last visible post. This is
+	// used before hiding a chat so messages arriving while it is inactive cannot
+	// silently move the saved reading position to the newer bottom.
+	void freezeCurrentViewportAnchor();
 
 	Backend*						backend;
 signals:
