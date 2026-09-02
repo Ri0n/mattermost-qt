@@ -113,6 +113,9 @@ private slots:
         const int offset = before.offsetWithinRow;
 
         timeline.setTotalCountPreservingNewest(240);
+        QCOMPARE(timeline.postIdAt(timeline.indexOf(QStringLiteral("tail-a"))),
+                 QStringLiteral("tail-a"));
+
         const int restoredIndex = timeline.totalCount() - 1 - distanceFromNewest;
         const qint64 restoredPixel = timeline.estimatedPixelForIndex(restoredIndex) + offset;
         const auto after = timeline.locatePixel(restoredPixel);
