@@ -37,7 +37,10 @@
 namespace Mattermost {
 namespace {
 
-constexpr int ContextPostsPerSide = 15;
+// Fetch a reserve large enough for the controller to build a ~31-row window
+// even when the target is close to one edge. Only the selected window is
+// materialized; the remainder stays in BackendChannel's idempotent cache.
+constexpr int ContextFetchPerSide = 30;
 
 struct AroundState {
     QPointer<BackendChannel> channel;
@@ -160,7 +163,7 @@ void PostNavigationService::loadAround(BackendChannel& channel,
     auto fetchPostList = [this, state, finishPart](const QString& direction) {
         const QString path = QStringLiteral("channels/") + state->channel->id
             + QStringLiteral("/posts?") + direction + QLatin1Char('=') + state->postId
-            + QStringLiteral("&per_page=") + QString::number(ContextPostsPerSide);
+            + QStringLiteral("&per_page=") + QString::number(ContextFetchPerSide);
         NetworkRequest request(path);
         httpConnector.get(request, HttpResponseCallback(
             [state, finishPart, direction](QVariant status, const QJsonDocument& doc) {
