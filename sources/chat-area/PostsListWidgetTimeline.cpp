@@ -2,39 +2,11 @@
 
 #include <algorithm>
 
-#include <QEvent>
-#include <QPointer>
 #include <QScrollBar>
 #include <QThread>
 #include <QTimer>
 
 namespace Mattermost {
-namespace {
-
-class NavigationHideFilter final : public QObject
-{
-public:
-    explicit NavigationHideFilter(PostsListWidget* source)
-        : QObject(source)
-        , list(source)
-    {
-        source->installEventFilter(this);
-    }
-
-protected:
-    bool eventFilter(QObject* watched, QEvent* event) override
-    {
-        if (list && watched == list && event->type() == QEvent::Hide) {
-            list->clearTimelineNavigationLock();
-        }
-        return QObject::eventFilter(watched, event);
-    }
-
-private:
-    QPointer<PostsListWidget> list;
-};
-
-} // namespace
 
 void PostsListWidget::lockTimelineNavigationToPost(const QString& postId,
                                                    int viewportTopOffset,
@@ -55,7 +27,6 @@ void PostsListWidget::lockTimelineNavigationToPost(const QString& postId,
 
     if (!timelineNavigationGeometryConnected) {
         timelineNavigationGeometryConnected = true;
-        new NavigationHideFilter(this);
 
         QScrollBar* bar = verticalScrollBar();
         connect(bar, &QScrollBar::rangeChanged, this,
