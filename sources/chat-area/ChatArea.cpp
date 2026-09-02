@@ -20,14 +20,19 @@
 #include "ChatArea.h"
 
 #include <QDockWidget>
-#include "channel-tree/ChannelItem.h"
-#include "ui_ChatArea.h"
-#include "post/PostWidget.h"
+#include <QPointer>
+#include <QPushButton>
+
+#include "PinnedPostsList.h"
 #include "backend/Backend.h"
+#include "backend/SidebarService.h"
+#include "backend/ThreadFollowService.h"
+#include "channel-tree/ChannelItem.h"
 #include "channel-tree/ChannelItemWidget.h"
 #include "channel-tree-dialogs/ViewChannelMembersListDialog.h"
-#include "PinnedPostsList.h"
 #include "log.h"
+#include "post/PostWidget.h"
+#include "ui_ChatArea.h"
 
 namespace Mattermost {
 
@@ -100,6 +105,13 @@ ChatArea::ChatArea (Backend& backend, BackendChannel& channel, ChannelItem* tree
 			ui->usersButton->setText (QString::number (this->channel.members.size()) + " members");
 		});
 	}
+
+	// ChatArea instances are lazy now, so pinned posts must be loaded when the
+	// corresponding channel is first materialized instead of relying on the old
+	// eager startup path. The response may arrive before init(); init() also
+	// samples channel.pinnedPosts, so neither ordering loses the button state.
+	backend.retrieveChannelPinnedPosts(channel);
+
 	if (initialize)
 		init();
 }
@@ -134,6 +146,17 @@ void ChatArea::init() {
 
 	connect (&channel, &BackendChannel::onNewPost, this, &ChatArea::appendChannelPost);
 
+	// Only genuine user scrolling is allowed to advance the read position after
+	// the initial explicit channel selection. Layout-driven scrollbar movement
+	// (images, Markdown reflow, resize, anchor restoration) never emits this
+	// signal, so it cannot accidentally mark messages as read.
+	signalConnections.push_back(connect(ui->listWidget, &PostsListWidget::userViewportChanged,
+	                                  this, [this](bool atBottom) {
+		if (atBottom) {
+			markChannelViewedIfAtBottom();
+		}
+	}));
+
 	//let the post creator know that the last sent / edited post has appeared so that the input box can be cleared
 	connect (&channel, &BackendChannel::onNewPost, ui->outgoingPostCreator, &OutgoingPostCreator::onPostReceived);
 	connect (&channel, &BackendChannel::onPostEdited, ui->outgoingPostCreator, &OutgoingPostCreator::onPostReceived);
@@ -144,7 +167,7 @@ void ChatArea::init() {
 		PostWidget* postWidget = ui->listWidget->findPost (post.id);
 		if (postWidget) {
 			postWidget->setEdited (post.message);
-			if (post.has_thread && !postWidget->threadButton && !isThread)
+			if (post.has_thread && !isThread)
 				postWidget->addThreadButton();
 			ui->listWidget->adjustSize();
 		}
@@ -458,6 +481,58 @@ ChatArea::ChatArea (Backend& backend, BackendChannel& channel, QString rootId, C
 		setTextEditWidgetHeight (height);
 	});
 
+	// Thread follow state is a per-user Mattermost resource. Query it lazily when
+	// the thread window opens and use the server's official PUT/DELETE endpoint
+	// instead of keeping another local preference.
+	if (channel.team && !rootId.isEmpty()) {
+		const QString teamId = channel.team->id;
+		auto* followButton = new QPushButton(tr("Follow"), this);
+		followButton->setEnabled(false);
+		followButton->setProperty("following", false);
+		ui->propertieslLayout->insertWidget(0, followButton);
+
+		QPointer<ChatArea> areaGuard(this);
+		QPointer<QPushButton> buttonGuard(followButton);
+		auto setButtonState = [areaGuard, buttonGuard](bool following) {
+			if (!areaGuard || !buttonGuard) {
+				return;
+			}
+			buttonGuard->setProperty("following", following);
+			buttonGuard->setText(following ? areaGuard->tr("Unfollow")
+			                              : areaGuard->tr("Follow"));
+			buttonGuard->setEnabled(true);
+		};
+
+		auto& followService = ThreadFollowService::instance(backend);
+		connect(&followService, &ThreadFollowService::followingChanged, followButton,
+		        [teamId, rootId, setButtonState](const QString& changedTeamId,
+		                                         const QString& changedThreadId,
+		                                         bool following) {
+			if (changedTeamId == teamId && changedThreadId == rootId) {
+				setButtonState(following);
+			}
+		});
+
+		followService.queryFollowing(teamId, rootId, setButtonState);
+		connect(followButton, &QPushButton::clicked, this,
+		        [this, teamId, rootId, buttonGuard, setButtonState] {
+			if (!buttonGuard) {
+				return;
+			}
+			const bool following = buttonGuard->property("following").toBool();
+			const bool desired = !following;
+			buttonGuard->setEnabled(false);
+			ThreadFollowService::instance(backend).setFollowing(
+				teamId, rootId, desired,
+				[buttonGuard, following, desired, setButtonState](bool success) {
+					if (!buttonGuard) {
+						return;
+					}
+					setButtonState(success ? desired : following);
+				});
+		});
+	}
+
 	//threads do not expose the channel-level pinned-posts panel
 	ui->pinnedPostsButton->hide();
 
@@ -516,6 +591,7 @@ void ChatArea::markChannelViewedIfAtBottom ()
 		return;
 	}
 	setUnreadMessagesCount(0);
+	SidebarService::instance(backend).markChannelViewedLocally(channel);
 	backend.markChannelAsViewed(channel);
 }
 
@@ -685,6 +761,12 @@ void ChatArea::handleUserTyping (const BackendUser& user)
 void ChatArea::onActivate ()
 {
 	backend.setCurrentChannel (channel);
+
+	// Channel selection itself is an explicit user action, so update the local
+	// unread model immediately. The currently selected filtered row is retained
+	// by MainWindow until selection changes; the websocket echo later reconciles
+	// the same state from the server without making the old row linger.
+	SidebarService::instance(backend).markChannelViewedLocally(channel);
 	backend.markChannelAsViewed (channel);
 	init();
 }
@@ -700,8 +782,8 @@ void ChatArea::onDeactivate ()
 
 void ChatArea::onMainWindowActivate ()
 {
-	setUnreadMessagesCount (0);
-	backend.markChannelAsViewed (channel);
+	// Merely restoring/focusing the application is not a reading gesture. In
+	// particular, automatic viewport restoration must never clear unread state.
 }
 
 void ChatArea::onMove (QPoint)
@@ -762,6 +844,10 @@ void ChatArea::setUnreadMessagesCount (uint32_t count)
 {
 	unreadMessagesCount = count;
 
+	if (!treeItem) {
+		return;
+	}
+
 	if (count == 0) {
 		treeItem->setText(1, "");
 	} else {
@@ -815,6 +901,7 @@ void ChatArea::goToPost (const QString& postId)
 
 	pendingPostId.clear();
 	ui->listWidget->scrollToItem(ui->listWidget->item(pos), QAbstractItemView::PositionAtTop);
+	ui->listWidget->highlightPost(postId);
 }
 
 void ChatArea::setTextEditWidgetHeight (int height)
