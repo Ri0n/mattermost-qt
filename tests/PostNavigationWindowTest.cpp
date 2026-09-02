@@ -1,6 +1,7 @@
 #include <QtTest>
 
 #include "backend/PostNavigationWindow.h"
+#include "backend/PostWindowSelection.h"
 
 using namespace Mattermost;
 
@@ -54,6 +55,30 @@ private slots:
         QCOMPARE(window.chronologicalIds,
                  QStringList({QStringLiteral("o1"), QStringLiteral("target"),
                               QStringLiteral("n1")}));
+    }
+
+    void fillsPinnedWindowWhenOnlyTwoNewerPostsExist()
+    {
+        QJsonArray before;
+        for (int i = 1; i <= 30; ++i) {
+            // Mattermost order: closest older post first, oldest last.
+            before.push_back(QStringLiteral("o%1").arg(i));
+        }
+        const QJsonArray after {
+            QStringLiteral("n2"), // newest first
+            QStringLiteral("n1"),
+        };
+
+        const PostNavigationWindow reserve = buildPostNavigationWindow(
+            after, QStringLiteral("target"), before);
+        const QStringList visible = selectPostWindow(
+            reserve.chronologicalIds, QStringLiteral("target"), 31);
+
+        QCOMPARE(visible.size(), 31);
+        QCOMPARE(visible.at(28), QStringLiteral("target"));
+        QCOMPARE(visible.at(29), QStringLiteral("n1"));
+        QCOMPARE(visible.at(30), QStringLiteral("n2"));
+        QCOMPARE(visible.first(), QStringLiteral("o28"));
     }
 
     void rejectsEmptyTarget()
