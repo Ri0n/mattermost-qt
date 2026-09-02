@@ -32,7 +32,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DQT_6=ON
           -DBUILD_TESTING=ON
-          -DWARNINGS_AS_ERRORS=OFF
+          -DWARNINGS_AS_ERRORS=ON
 
       - name: Build
         run: cmake --build build --parallel 4
@@ -59,7 +59,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DQT_6=OFF
           -DBUILD_TESTING=ON
-          -DWARNINGS_AS_ERRORS=OFF
+          -DWARNINGS_AS_ERRORS=ON
 
       - name: Build
         run: cmake --build build --parallel 4
@@ -95,7 +95,7 @@ jobs:
               -DCMAKE_BUILD_TYPE=Release \
               -DQT_6=OFF \
               -DBUILD_TESTING=ON \
-              -DWARNINGS_AS_ERRORS=OFF
+              -DWARNINGS_AS_ERRORS=ON
           RUN cmake --build build --parallel 4
           RUN ctest --test-dir build --output-on-failure
           EOF
@@ -127,7 +127,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DQT_6=ON
           -DBUILD_TESTING=ON
-          -DWARNINGS_AS_ERRORS=OFF
+          -DWARNINGS_AS_ERRORS=ON
 
       - name: Build
         run: cmake --build build --parallel 4
@@ -172,7 +172,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DQT_6=ON
           -DBUILD_TESTING=ON
-          -DWARNINGS_AS_ERRORS=OFF
+          -DWARNINGS_AS_ERRORS=ON
 
       - name: Build
         run: cmake --build build --parallel 4
