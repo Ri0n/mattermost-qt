@@ -159,8 +159,10 @@ void PostWidget::setAuthor(Backend& backend, const BackendUser* user)
 		}
 	}, Qt::UniqueConnection);
 
-	if (user->avatar.isNull()) {
-		backend.retrieveUserAvatar(user->id);
+	if (user->avatar.isNull()
+		|| user->avatar_picture_update != user->last_picture_update) {
+		UserProfileService::instance(backend).ensureAvatar(
+			*const_cast<BackendUser*>(user));
 	} else {
 		ui->authorAvatar->setPixmap(user->avatar);
 	}
@@ -188,7 +190,6 @@ void PostWidget::updateReactions ()
 		reactions.reset ();
 	}
 
-	//Add reactions, if any
 	if (!post.reactions.empty()) {
 		reactions = std::make_unique<PostReactionList> (this);
 
@@ -269,7 +270,6 @@ QString PostWidget::getMessageTimeString (uint64_t timestamp)
 	QDate postDate = postTime.date();
 
 	QString format;
-
 	if (currentDate.year() != postDate.year()) {
 		format = "dd MMM yyyy, hh:mm:ss";
 	} else if (currentDate.day() != postDate.day() || currentDate.month() != postDate.month()) {
