@@ -15,6 +15,8 @@
 #include <QPointer>
 #include <QString>
 
+#include "backend/PostTimeline.h"
+
 namespace Mattermost {
 
 class ChatArea;
@@ -39,7 +41,9 @@ private:
     QString rootId;
     QString cursorPostId;
     uint64_t cursorCreateAt = 0;
+    PostTimeline timeline;
     int expectedPostCount = 1;
+    int nextLogicalIndex = 0;
     int initialPagesRemaining = 0;
     bool requestInFlight = false;
     bool hasNext = true;
