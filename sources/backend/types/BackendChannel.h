@@ -81,6 +81,11 @@ public:
 
 	void prependPosts (const QJsonArray& orderArray, const QJsonObject& postsObject);
 	void addPosts (const QJsonArray& orderArray, const QJsonObject& postsObject);
+	// Merge an arbitrary server context window by identity/timestamp. Unlike
+	// addPosts(), this does not assume that the response is the newest channel
+	// edge and therefore does not infer deletions from gaps. It is used by
+	// pinned/Attention navigation around a specific post.
+	void mergePostContext (const QJsonArray& orderArray, const QJsonObject& postsObject);
 	void addPinnedPosts (const QJsonArray& orderArray, const QJsonObject& postsObject);
 	void editPost (BackendPost& newPost);
 	void addPostReaction (QString postId, QString userId, QString emojiName);

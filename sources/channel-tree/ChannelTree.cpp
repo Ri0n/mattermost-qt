@@ -30,8 +30,10 @@
 
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
+#include "backend/types/BackendChannel.h"
 #include "backend/types/BackendTeam.h"
 #include "chat-area/ChatArea.h"
+#include "channel-tree/ChannelIcons.h"
 #include "channel-tree/ChannelItem.h"
 #include "channel-tree/ChannelItemDelegate.h"
 #include "channel-tree/channel-item/DirectChannelItem.h"
@@ -269,6 +271,12 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
     item->setFlags((item->flags() | Qt::ItemIsDragEnabled) & ~Qt::ItemIsDropEnabled);
     item->setLabel(channel.display_name);
 
+    if (channel.type == BackendChannel::groupChannel) {
+        item->setIcon(ChannelIcons::groupConversation());
+    } else if (channel.type != BackendChannel::directChannel) {
+        item->setIcon(ChannelIcons::channel());
+    }
+
     if (channel.type == BackendChannel::directChannel) {
         BackendUser* user = backend.getStorage().getUserById(channel.name);
         if (user) {
@@ -321,9 +329,36 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
         }
     }
 
-    QObject::connect(&channel, &BackendChannel::onLeave, this,
-                     [this, &channel, item] {
-        removeChannelToItem(channel.id, item);
+    // A channel may appear in multiple sidebar categories and category refreshes
+    // routinely destroy/recreate the QTreeWidgetItem objects. Never capture a
+    // row pointer in the long-lived BackendChannel::onLeave connection. The
+    // member slot resolves the currently alive rows from channelToItemMap.
+    QObject::connect(&channel, &BackendChannel::onLeave,
+                     this, &ChannelTree::handleChannelLeave,
+                     Qt::UniqueConnection);
+
+    addChannelToItem(channel.id, item);
+    auto& sidebar = SidebarService::instance(backend);
+    item->setMuted(sidebar.isChannelMuted(channel));
+    item->setMentioned(sidebar.hasUnreadMention(channel.id));
+    return item;
+}
+
+void ChannelTree::handleChannelLeave()
+{
+    auto* channel = qobject_cast<BackendChannel*>(sender());
+    if (!channel) {
+        return;
+    }
+
+    const QString channelId = channel->id;
+    const QList<QTreeWidgetItem*> items = channelToItemMap.value(channelId);
+    for (QTreeWidgetItem* item : items) {
+        if (!item || item->data(0, ItemKindRole).toInt() != ChannelItemKind) {
+            continue;
+        }
+
+        removeChannelToItem(channelId, item);
         ChatArea* chatArea = item->data(0, Qt::UserRole).value<ChatArea*>();
         if (chatArea && chatAreaStackedWidget) {
             chatAreaStackedWidget->removeWidget(chatArea);
@@ -333,13 +368,9 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
         }
         delete chatArea;
         delete item;
-    });
+    }
 
-    addChannelToItem(channel.id, item);
-    auto& sidebar = SidebarService::instance(backend);
-    item->setMuted(sidebar.isChannelMuted(channel));
-    item->setMentioned(sidebar.hasUnreadMention(channel.id));
-    return item;
+    channelToItemMap.remove(channelId);
 }
 
 ChatArea* ChannelTree::ensureChatArea(QTreeWidgetItem* item)
@@ -540,7 +571,7 @@ void ChannelTree::removeChannelFromCategory(ChannelItem* item)
     }
 
     QTreeWidgetItem* sourceCategoryItem = item->parent();
-    QTreeWidgetItem* teamItem = sourceCategoryItem->parent();
+    QTreeWidgetItem* teamItem = sourceCategoryItem ? sourceCategoryItem->parent() : nullptr;
     const QString channelId = item->data(0, ItemIdRole).toString();
     BackendChannel* channel = backendForSidebar->getStorage().getChannelById(channelId);
     if (!teamItem || !channel) {

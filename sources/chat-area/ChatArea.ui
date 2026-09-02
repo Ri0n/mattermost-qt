@@ -128,7 +128,7 @@
           </widget>
          </item>
          <item alignment="Qt::AlignBottom">
-          <widget class="QLabel" name="statusLabel">
+          <widget class="Mattermost::ChannelHeaderTextLabel" name="statusLabel">
            <property name="sizePolicy">
             <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
              <horstretch>0</horstretch>
@@ -266,6 +266,11 @@
   </layout>
  </widget>
  <customwidgets>
+  <customwidget>
+   <class>Mattermost::ChannelHeaderTextLabel</class>
+   <extends>QLabel</extends>
+   <header>chat-area/ChannelHeaderTextLabel.h</header>
+  </customwidget>
   <customwidget>
    <class>Mattermost::PostsListWidget</class>
    <extends>QListWidget</extends>

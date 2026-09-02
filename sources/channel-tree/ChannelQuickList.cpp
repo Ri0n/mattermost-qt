@@ -17,6 +17,7 @@
 #include "backend/Storage.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendUser.h"
+#include "channel-tree/ChannelIcons.h"
 #include "channel-tree/ChannelItemDelegate.h"
 #include "channel-tree/ChannelTree.h"
 
@@ -32,6 +33,7 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setSelectionMode(QAbstractItemView::SingleSelection);
     setUniformRowHeights(true);
+    setContextMenuPolicy(Qt::CustomContextMenu);
     setItemDelegate(new ChannelItemDelegate(this));
     header()->setSectionResizeMode(0, QHeaderView::Stretch);
 
@@ -42,7 +44,21 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
         }
         const QString channelId = current->data(0, ChannelTree::ItemIdRole).toString();
         if (!channelId.isEmpty()) {
+            // ChannelTree/ChatArea owns read acknowledgement. It waits until
+            // the selected channel's newest content has actually been rendered.
             emit channelSelected(channelId);
+        }
+    });
+
+    connect(this, &QTreeWidget::customContextMenuRequested, this,
+            [this](const QPoint& pos) {
+        QTreeWidgetItem* item = itemAt(pos);
+        if (!item) {
+            return;
+        }
+        const QString channelId = item->data(0, ChannelTree::ItemIdRole).toString();
+        if (!channelId.isEmpty()) {
+            emit channelContextMenuRequested(channelId, viewport()->mapToGlobal(pos));
         }
     });
 }
@@ -138,6 +154,10 @@ void ChannelQuickList::refresh()
                 item->setData(0, ChannelTree::ItemStatusRole, user->status);
                 ensureDirectUserConnections(channel);
             }
+        } else if (channel.type == BackendChannel::groupChannel) {
+            item->setIcon(0, ChannelIcons::groupConversation());
+        } else {
+            item->setIcon(0, ChannelIcons::channel());
         }
 
         channelItems.insert(channel.id, item);

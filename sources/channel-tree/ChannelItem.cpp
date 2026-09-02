@@ -26,6 +26,7 @@
 
 #include <QMenu>
 
+#include "ChannelIcons.h"
 #include "ChannelItemWidget.h"
 #include "ChannelTree.h"
 #include "backend/Backend.h"
@@ -61,6 +62,20 @@ void ChannelItem::setLabel (const QString& label)
 	if (widget) {
 		widget->setLabel (label);
 	}
+
+    // Direct conversations get a real user avatar as soon as the profile is
+    // resolved. Give every other row a stable semantic icon immediately so
+    // public/private channels and group DMs do not look visually unfinished.
+    if (QTreeWidgetItem::icon(0).isNull()) {
+        if (BackendChannel* channel = backendChannel()) {
+            if (channel->type == BackendChannel::groupChannel) {
+                setIcon(ChannelIcons::groupConversation());
+            } else if (channel->type == BackendChannel::publicChannel
+                       || channel->type == BackendChannel::privateChannel) {
+                setIcon(ChannelIcons::channel());
+            }
+        }
+    }
 }
 
 void ChannelItem::setWidget (ChannelItemWidget* itemWidget)

@@ -49,6 +49,12 @@ public:
     void refreshThreads();
     void releaseSelectionRetention();
 
+    QString channelIdAt(const QPoint& pos) const
+    {
+        QTreeWidgetItem* item = itemAt(pos);
+        return item ? item->data(0, ChannelIdRole).toString() : QString();
+    }
+
 signals:
     void channelSelected(const QString& channelId);
     void threadSelected(const QString& channelId, const QString& rootPostId);

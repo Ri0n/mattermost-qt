@@ -24,6 +24,7 @@
 #include <QCloseEvent>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QPointer>
 #include <QSettings>
 #include <QSplitter>
 #include <QStyle>
@@ -38,6 +39,7 @@
 #include "./ui_mainwindow.h"
 #include "SettingsWindow.h"
 #include "backend/Backend.h"
+#include "backend/PostNavigationService.h"
 #include "backend/SidebarService.h"
 #include "backend/UserProfileService.h"
 #include "build-config.h"
@@ -89,10 +91,11 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 		QTimer::singleShot(0, this, &MainWindow::refreshSidebarViews);
 	});
 
-	// Do not wait for the server's channel_viewed websocket echo to update the
-	// local Recent/Attention indexes. A channel becomes viewed as soon as the
-	// user selects it. When the Channels unread filter is active, keep that
-	// selected row visible until selection or tab changes.
+	// Selection alone must not mark a channel as viewed. Reading state is driven
+	// by explicit user scrolling in PostsListWidget; layout-driven movement,
+	// resize and chat activation are deliberately ignored. When the Channels
+	// unread filter is active, keep the selected row visible until selection or
+	// tab changes even after it eventually becomes read.
 	connect(ui->channelList, &QTreeWidget::currentItemChanged, this,
 	        [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
 		if (!current || current->data(0, ChannelTree::ItemKindRole).toInt() != ChannelTree::ChannelItemKind) {
@@ -111,12 +114,6 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 		} else if (channelsTabVisible) {
 			retainedUnreadFilterChannelId.clear();
 		}
-
-		QTimer::singleShot(0, this, [this, channelId] {
-			if (BackendChannel* channel = backend.getStorage().getChannelById(channelId)) {
-				SidebarService::instance(backend).markChannelViewedLocally(*channel);
-			}
-		});
 	});
 
 	recentChannels->initialize(backend);
@@ -251,6 +248,7 @@ void MainWindow::setupChannelTabs ()
 
 	recentChannels = new ChannelQuickList(channelTabs);
 	attentionList = new AttentionList(channelTabs);
+	attentionList->setContextMenuPolicy(Qt::CustomContextMenu);
 
 	channelTabs->addTab(channelsPage, tr("Channels"));
 	channelTabs->addTab(recentChannels, tr("Recent"));
@@ -280,12 +278,47 @@ void MainWindow::setupChannelTabs ()
 	        this, &MainWindow::refreshChannelUnreadFilter);
 	connect(recentChannels, &ChannelQuickList::channelSelected,
 	        ui->channelList, &ChannelTree::openChannel);
+	connect(recentChannels, &ChannelQuickList::channelContextMenuRequested,
+	        ui->channelList, &ChannelTree::showChannelContextMenu);
 	connect(attentionList, &AttentionList::channelSelected,
 	        ui->channelList, &ChannelTree::openChannel);
+	connect(attentionList, &QTreeWidget::customContextMenuRequested, this,
+	        [this](const QPoint& pos) {
+		const QString channelId = attentionList->channelIdAt(pos);
+		if (!channelId.isEmpty()) {
+			ui->channelList->showChannelContextMenu(
+				channelId, attentionList->viewport()->mapToGlobal(pos));
+		}
+	});
 	connect(attentionList, &AttentionList::threadSelected,
 	        this, &MainWindow::openAttentionThread);
-	connect(attentionList, &AttentionList::attentionCountChanged,
-	        this, &MainWindow::setNotificationsCountVisualization);
+	connect(attentionList, &AttentionList::attentionCountChanged, this,
+	        [this](uint32_t count) {
+		setNotificationsCountVisualization(count);
+		const int index = channelTabs ? channelTabs->indexOf(attentionList) : -1;
+		if (index < 0) {
+			return;
+		}
+
+		const QString label = count == 0
+			? tr("Attention")
+			: tr("Attention") + QStringLiteral(" (%1)").arg(count);
+		channelTabs->setTabText(index, label);
+
+		if (count == 0) {
+			channelTabs->setTabIcon(index, QIcon());
+			channelTabs->setTabToolTip(index, QString());
+			return;
+		}
+
+		QIcon icon = QIcon::fromTheme(QStringLiteral("mail-unread"));
+		if (icon.isNull()) {
+			icon = style()->standardIcon(QStyle::SP_MessageBoxWarning);
+		}
+		channelTabs->setTabIcon(index, icon);
+		channelTabs->setTabToolTip(index,
+			tr("%1 item(s) need your attention").arg(count));
+	});
 	connect(channelTabs, &QTabWidget::currentChanged, this, [this](int index) {
 		QWidget* currentPage = channelTabs->widget(index);
 
@@ -380,28 +413,47 @@ void MainWindow::openAttentionThread (const QString& channelId, const QString& r
 		return;
 	}
 
-	ui->channelList->openChannel(channelId);
-	ChatArea* parentArea = ui->channelList->getCurrentPage();
-	if (!parentArea || &parentArea->getChannel() != channel) {
-		return;
-	}
+	// A thread can arrive through Attention before this client has ever opened
+	// its parent channel. The thread endpoint alone only materializes the thread
+	// posts and can leave the adjacent parent timeline empty. Load real channel
+	// context around the root first, then create/show the two chat areas.
+	QPointer<MainWindow> guard(this);
+	PostNavigationService::instance(backend).loadAround(
+		*channel, rootPostId,
+		[guard, channelId, rootPostId](bool success) {
+			if (!guard || !success) {
+				return;
+			}
 
-	ChatArea* threadArea = nullptr;
-	for (ChatArea* area : parentArea->threadsAreas) {
-		if (area && area->root_id == rootPostId) {
-			threadArea = area;
-			break;
-		}
-	}
+			BackendChannel* currentChannel = guard->backend.getStorage().getChannelById(channelId);
+			if (!currentChannel) {
+				return;
+			}
 
-	if (!threadArea) {
-		threadArea = new ChatArea(backend, *channel, rootPostId, parentArea);
-		parentArea->threadsAreas.insert(threadArea);
-	}
+			guard->ui->channelList->openChannel(channelId);
+			ChatArea* parentArea = guard->ui->channelList->getCurrentPage();
+			if (!parentArea || &parentArea->getChannel() != currentChannel) {
+				return;
+			}
 
-	threadArea->show();
-	threadArea->raise();
-	threadArea->activateWindow();
+			ChatArea* threadArea = nullptr;
+			for (ChatArea* area : parentArea->threadsAreas) {
+				if (area && area->root_id == rootPostId) {
+					threadArea = area;
+					break;
+				}
+			}
+
+			if (!threadArea) {
+				threadArea = new ChatArea(guard->backend, *currentChannel, rootPostId, parentArea);
+				parentArea->threadsAreas.insert(threadArea);
+			}
+
+			threadArea->show();
+			threadArea->raise();
+			threadArea->activateWindow();
+		},
+		true);
 }
 
 void MainWindow::createMenu ()
@@ -485,11 +537,10 @@ void MainWindow::changeEvent (QEvent* event)
 	if (event->type() == QEvent::ActivationChange) {
 		if (isActiveWindow()) {
 			ChatArea* currentPage = ui->channelList->getCurrentPage();
-
 			if (currentPage) {
-				auto& sidebar = SidebarService::instance(backend);
-				sidebar.setChannelMentioned(currentPage->getChannel().id, false);
-				sidebar.markChannelViewedLocally(currentPage->getChannel());
+				// Window activation is not evidence that the user scrolled through
+				// any new messages. PostsListWidget will explicitly mark the channel
+				// viewed if a user-driven scroll reaches the bottom.
 				currentPage->onMainWindowActivate ();
 			}
 		}
@@ -555,24 +606,20 @@ void MainWindow::messageNotify (BackendChannel& channel, const BackendPost& post
 	if (post.root_id.isEmpty()) {
 		/**
 		 * If the Mattermost window is active (has focus) and the current channel is active,
-		 * do not add notifications. We assume that the user is watching the chat window.
+		 * do not add a desktop notification. Do not mark it read here: automatic
+		 * append/reflow is not user scrolling and must not advance read state.
 		 */
 		if (isActiveWindow() && ui->channelList->isChannelActive (channel)) {
-			sidebar.setChannelMentioned(channel.id, false);
-			sidebar.markChannelViewedLocally(channel);
-			backend.markChannelAsViewed(channel);
 			return;
 		}
 	} else {
 		// A thread is a separate top-level window. Do not notify if that exact
-		// thread is already visible and focused.
+		// thread is already visible and focused, but likewise do not mark it read
+		// merely because a programmatic append made it visible.
 		ChatArea* parentArea = ui->channelList->getCurrentPage();
 		if (parentArea && &parentArea->getChannel() == &channel) {
 			for (ChatArea* threadArea : parentArea->threadsAreas) {
 				if (threadArea && threadArea->root_id == post.root_id && threadArea->isActiveWindow()) {
-					sidebar.setChannelMentioned(channel.id, false);
-					sidebar.markChannelViewedLocally(channel);
-					backend.markChannelAsViewed(channel);
 					return;
 				}
 			}

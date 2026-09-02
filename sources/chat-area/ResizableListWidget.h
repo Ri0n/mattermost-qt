@@ -25,6 +25,7 @@
 #pragma once
 
 #include <QListWidget>
+#include <QPersistentModelIndex>
 
 class ResizableListWidget: public QListWidget {
 public:
@@ -33,8 +34,17 @@ public:
     void setItemWidget(QListWidgetItem* item, QWidget* widget);
 
 protected:
+    struct ViewportAnchor {
+        QPersistentModelIndex index;
+        int bottomOffset = 0;
+        bool atBottom = false;
+    };
+
     void resizeEvent(QResizeEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
-    void scheduleItemResize(QListWidgetItem* item, QWidget* widget);
-    void scheduleAllItemResizes();
+    void scheduleItemResize(QListWidgetItem* item, QWidget* widget, bool preserveViewport = true);
+    void scheduleAllItemResizes(bool preserveViewport = false);
+
+    ViewportAnchor captureViewportAnchor() const;
+    void restoreViewportAnchor(const ViewportAnchor& anchor);
 };

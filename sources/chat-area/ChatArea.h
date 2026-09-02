@@ -21,6 +21,7 @@
 
 #include <QWidget>
 #include <QDate>
+#include <QPointer>
 #include <QSet>
 #include <QTreeWidgetItem>
 #include <QScrollBar>
@@ -87,6 +88,10 @@ public:
 	void onMainWindowActivate ();
 
 	void onMove (QPoint pos);
+
+	// A user explicitly chose this conversation. Acknowledge it as read only
+	// after the newest channel content has actually been materialized in the UI.
+	void requestExplicitReadAcknowledgement ();
 private:
 	void resizeEvent (QResizeEvent* event)		override;
 	void dragEnterEvent (QDragEnterEvent* event) override;
@@ -97,6 +102,9 @@ private:
 	void moveOnListTop ();
 	void setUnreadMessagesCount (uint32_t count);
 	void setTextEditWidgetHeight (int height);
+	void updatePinnedPostsButton ();
+	void markChannelViewedIfAtBottom ();
+	void tryExplicitReadAcknowledgement ();
 	
 	ChatArea*					parentArea;
 	QString						parentPostId;
@@ -108,7 +116,7 @@ public:
 	BackendChannel& 				channel;
 	ChannelItem* 					treeItem;
 	QString 						lastReadPostId;
-	QDockWidget*					pinnedPostsDockWidget;
+	QPointer<QDockWidget>			pinnedPostsDockWidget;
 	void						init();
 	void						deinit();
 
@@ -123,11 +131,11 @@ public:
 	bool							postsRetrieved;
 	//ChatArea can be created without initializing (useful for rarely used channels)
 	volatile bool						initialized;
+	bool							explicitReadPending = false;
+	QMetaObject::Connection			explicitReadPostsConnection;
 	QSet<ChatArea*> 					threadsAreas;
 	QString							root_id;
 	std::vector<QMetaObject::Connection> 		signalConnections;
-	double					scrollRatio;
 };
 
 } /* namespace Mattermost */
-

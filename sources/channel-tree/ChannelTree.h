@@ -28,7 +28,10 @@
 #include <QSet>
 #include <QTreeWidget>
 
+#include "ChannelTreeItem.h"
+
 class QDropEvent;
+class QMouseEvent;
 class QStackedWidget;
 class QTreeWidgetItem;
 
@@ -67,6 +70,7 @@ public:
 	virtual ~ChannelTree ();
 public:
 	bool isChannelActive (const BackendChannel& channel);
+	Backend* backendInstance() const { return backendForSidebar; }
 
 	void addTeam (Backend& backend, BackendTeam& team);
 	void populateSidebars(Backend& backend);
@@ -83,14 +87,36 @@ public:
 	void addChannelToItem (QString channelID, QTreeWidgetItem* item);
 	void removeChannelToItem (QString channelID, QTreeWidgetItem* item = nullptr);
 
+	// Recent and Attention are alternate views over the same channel objects.
+	// Route their context-menu requests back through the real ChannelItem so all
+	// actions and handlers stay identical to the Channels tab.
+	void showChannelContextMenu(const QString& channelID, const QPoint& globalPos)
+	{
+		auto it = channelToItemMap.constFind(channelID);
+		if (it == channelToItemMap.cend()) {
+			return;
+		}
+		for (QTreeWidgetItem* item : it.value()) {
+			if (!item || item->data(0, ItemKindRole).toInt() != ChannelItemKind) {
+				continue;
+			}
+			static_cast<ChannelTreeItem*>(item)->showContextMenu(globalPos);
+			return;
+		}
+	}
+
 	bool canRemoveChannelFromCategory(const ChannelItem* item) const;
 	void removeChannelFromCategory(ChannelItem* item);
 
 protected:
+	void currentChanged(const QModelIndex& current, const QModelIndex& previous) override;
+	void mousePressEvent(QMouseEvent* event) override;
 	void dropEvent(QDropEvent* event) override;
 
 private:
+	void markChannelViewed(QTreeWidgetItem* item);
 	void showContextMenu (const QPoint& pos);
+	void handleChannelLeave();
 	void refreshTeamSidebar(Backend& backend, BackendTeam& team);
 	void renderTeamSidebar(Backend& backend, TeamItem& teamItem,
 	                       const SidebarTeamState& state);

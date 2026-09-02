@@ -34,6 +34,7 @@ class PinnedPostsList;
 
 namespace Mattermost {
 
+class ChatArea;
 class PostWidget;
 
 class PinnedPostsList: public QWidget {
@@ -44,7 +45,10 @@ public:
 public:
 	void addPost (PostWidget* postWidget);
 private:
+	void closePanel();
+
 	Ui::PinnedPostsList *ui;
+	ChatArea* chatArea;
 };
 
 } /* namespace Mattermost */

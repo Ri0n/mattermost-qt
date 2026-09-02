@@ -6,7 +6,11 @@
 #include <QStyle>
 #include <QStyleOptionViewItem>
 
+#include "ChannelIcons.h"
 #include "ChannelTree.h"
+#include "backend/Backend.h"
+#include "backend/Storage.h"
+#include "backend/types/BackendChannel.h"
 
 namespace Mattermost {
 
@@ -123,7 +127,26 @@ void ChannelItemDelegate::paint(QPainter* painter,
     QStyleOptionViewItem base(option);
     initStyleOption(&base, index);
     const QString text = base.text;
-    const QIcon icon = base.icon;
+    QIcon icon = base.icon;
+
+    const auto* tree = qobject_cast<const ChannelTree*>(parent());
+    Backend* backend = tree ? tree->backendInstance() : nullptr;
+    const QString channelId = index.data(ChannelTree::ItemIdRole).toString();
+    BackendChannel* channel = backend && !channelId.isEmpty()
+        ? backend->getStorage().getChannelById(channelId) : nullptr;
+
+    // Direct rows get an avatar asynchronously. Ordinary channels and group
+    // conversations have no server image, so give them stable fallback glyphs
+    // without storing generated pixmaps in every duplicated category row.
+    if (icon.isNull() && channel) {
+        if (channel->type == BackendChannel::groupChannel) {
+            icon = ChannelIcons::groupConversation();
+        } else if (channel->type == BackendChannel::publicChannel
+                   || channel->type == BackendChannel::privateChannel) {
+            icon = ChannelIcons::channel();
+        }
+    }
+
     base.text.clear();
     base.icon = QIcon();
 
@@ -134,24 +157,30 @@ void ChannelItemDelegate::paint(QPainter* painter,
     int textLeft = contentRect.left();
 
     if (!icon.isNull()) {
-        const QRect avatarRect(textLeft,
-                               contentRect.center().y() - AvatarSize / 2,
-                               AvatarSize,
-                               AvatarSize);
-        const QPixmap avatar = icon.pixmap(AvatarSize, AvatarSize);
+        const QRect iconRect(textLeft,
+                             contentRect.center().y() - AvatarSize / 2,
+                             AvatarSize,
+                             AvatarSize);
+        const QPixmap pixmap = icon.pixmap(AvatarSize, AvatarSize);
+
+        // ItemStatusRole is populated only for direct conversations backed by a
+        // real BackendUser. Public/private channels and group conversations
+        // never receive this role, so they can never acquire a presence badge.
+        const QString status = index.data(ChannelTree::ItemStatusRole).toString();
 
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing, true);
-        QPainterPath clip;
-        clip.addEllipse(avatarRect);
-        painter->setClipPath(clip);
-        painter->drawPixmap(avatarRect, avatar);
+        if (!status.isEmpty()) {
+            QPainterPath clip;
+            clip.addEllipse(iconRect);
+            painter->setClipPath(clip);
+        }
+        painter->drawPixmap(iconRect, pixmap);
         painter->restore();
 
-        const QString status = index.data(ChannelTree::ItemStatusRole).toString();
         if (!status.isEmpty()) {
-            const QRect statusRect(avatarRect.right() - StatusSize + 2,
-                                   avatarRect.bottom() - StatusSize + 2,
+            const QRect statusRect(iconRect.right() - StatusSize + 2,
+                                   iconRect.bottom() - StatusSize + 2,
                                    StatusSize,
                                    StatusSize);
             const bool selected = option.state.testFlag(QStyle::State_Selected);
@@ -161,7 +190,7 @@ void ChannelItemDelegate::paint(QPainter* painter,
             drawStatusBadge(painter, statusRect, status, badgeBackground);
         }
 
-        textLeft = avatarRect.right() + 1 + ItemSpacing;
+        textLeft = iconRect.right() + 1 + ItemSpacing;
     }
 
     int textRight = contentRect.right();

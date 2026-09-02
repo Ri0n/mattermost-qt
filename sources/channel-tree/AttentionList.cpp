@@ -34,17 +34,20 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QSet>
+#include <QSignalBlocker>
 
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
 #include "backend/QByteArrayCreator.h"
 #include "backend/SidebarService.h"
 #include "backend/Storage.h"
+#include "backend/ThreadFollowService.h"
 #include "backend/UserProfileService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendTeam.h"
 #include "backend/types/BackendUser.h"
+#include "channel-tree/ChannelIcons.h"
 
 namespace Mattermost {
 
@@ -98,6 +101,8 @@ AttentionList::AttentionList(QWidget* parent)
         const QString channelId = current->data(0, ChannelIdRole).toString();
         if (type == ChannelEntry) {
             if (!channelId.isEmpty()) {
+                // ChannelTree/ChatArea owns read acknowledgement. It waits until
+                // the selected conversation's newest content is actually visible.
                 emit channelSelected(channelId);
             }
             return;
@@ -154,6 +159,15 @@ void AttentionList::releaseSelectionRetention()
     retainedChannelId.clear();
     retainedThreadId.clear();
     hasRetainedThread = false;
+
+    // Attention is a queue rather than a navigation history. Leaving the tab
+    // releases the sticky read row and also clears QTreeWidget's current item;
+    // when the user returns, nothing is opened until they explicitly choose it.
+    {
+        const QSignalBlocker blocker(this);
+        setCurrentItem(nullptr);
+        clearSelection();
+    }
     refresh();
 }
 
@@ -170,7 +184,11 @@ void AttentionList::initialize(Backend& sourceBackend)
             [this](BackendChannel& channel, const BackendPost& post) {
         notePost(channel, post);
         refresh();
-        if (!post.root_id.isEmpty() && isVisible()) {
+
+        // Followed-thread unread state is server-owned. Refresh it even while
+        // this tab is hidden so the Attention badge/icon changes immediately
+        // instead of only after the user opens the tab.
+        if (!post.root_id.isEmpty()) {
             scheduleThreadRefresh();
         }
     });
@@ -180,9 +198,21 @@ void AttentionList::initialize(Backend& sourceBackend)
         refresh();
     });
     connect(backend, &Backend::onWebSocketConnect, this, [this] {
-        if (isVisible()) {
-            scheduleThreadRefresh();
+        scheduleThreadRefresh();
+    });
+
+    auto& followService = ThreadFollowService::instance(*backend);
+    connect(&followService, &ThreadFollowService::followingChanged, this,
+            [this](const QString&, const QString& threadId, bool following) {
+        if (!following && retainedThreadId == threadId) {
+            retainedChannelId.clear();
+            retainedThreadId.clear();
+            hasRetainedThread = false;
+            const QSignalBlocker blocker(this);
+            setCurrentItem(nullptr);
+            clearSelection();
         }
+        scheduleThreadRefresh();
     });
 
     // Catch recipient-specific mention flags on posts that may have arrived
@@ -288,13 +318,14 @@ void AttentionList::refresh()
     QSet<QString> displayedThreadIds;
 
     // Direct/group conversations are attention items as conversations, not as
-    // thread rows.
+    // thread rows. Muted conversations never require attention.
     for (auto it = backend->getStorage().channels.cbegin();
          it != backend->getStorage().channels.cend(); ++it) {
         BackendChannel* channel = it.value();
         if (!channel
             || (channel->type != BackendChannel::directChannel
                 && channel->type != BackendChannel::groupChannel)
+            || sidebar.isChannelMuted(*channel)
             || !sidebar.isChannelUnread(*channel)) {
             continue;
         }
@@ -313,7 +344,8 @@ void AttentionList::refresh()
             || (thread.unreadReplies <= 0 && thread.unreadMentions <= 0)) {
             continue;
         }
-        if (!backend->getStorage().getChannelById(thread.channelId)) {
+        BackendChannel* threadChannel = backend->getStorage().getChannelById(thread.channelId);
+        if (!threadChannel || sidebar.isChannelMuted(*threadChannel)) {
             continue;
         }
 
@@ -328,12 +360,14 @@ void AttentionList::refresh()
 
     // A root mention has no server Thread row yet. Mattermost sends recipient-
     // specific mention information on the websocket event, so model it as a
-    // one-post synthetic thread until that channel is viewed.
+    // one-post synthetic thread until that channel is viewed. Muted channels
+    // are intentionally excluded from Attention here as well.
     for (auto it = syntheticMentions.cbegin(); it != syntheticMentions.cend(); ++it) {
         if (realThreadIds.contains(it.key())) {
             continue;
         }
-        if (!backend->getStorage().getChannelById(it->channelId)) {
+        BackendChannel* threadChannel = backend->getStorage().getChannelById(it->channelId);
+        if (!threadChannel || sidebar.isChannelMuted(*threadChannel)) {
             continue;
         }
         displayedThreadIds.insert(it.key());
@@ -352,14 +386,15 @@ void AttentionList::refresh()
         emit attentionCountChanged(attentionCount);
     }
 
-    // Preserve the selected item even if opening it already made it read. It
-    // is rendered as read and disappears only when another item is selected or
-    // when the user leaves the Attention tab.
+    // Preserve the selected item only when it merely became read. Muting is an
+    // explicit action that disqualifies the row immediately, so muted channels
+    // must never be resurrected by the sticky-selection rule.
     if (!retainedChannelId.isEmpty()) {
         if (retainedThreadId.isEmpty()) {
             if (!displayedChannelIds.contains(retainedChannelId)) {
                 BackendChannel* channel = backend->getStorage().getChannelById(retainedChannelId);
                 if (channel
+                    && !sidebar.isChannelMuted(*channel)
                     && (channel->type == BackendChannel::directChannel
                         || channel->type == BackendChannel::groupChannel)) {
                     DisplayEntry display;
@@ -371,7 +406,8 @@ void AttentionList::refresh()
                 }
             }
         } else if (hasRetainedThread && !displayedThreadIds.contains(retainedThreadId)) {
-            if (backend->getStorage().getChannelById(retainedThread.channelId)) {
+            BackendChannel* threadChannel = backend->getStorage().getChannelById(retainedThread.channelId);
+            if (threadChannel && !sidebar.isChannelMuted(*threadChannel)) {
                 DisplayEntry display;
                 display.type = ThreadEntryType;
                 display.thread = retainedThread;
@@ -430,6 +466,8 @@ void AttentionList::refresh()
                         UserProfileService::instance(*backend).ensureAvatar(*user);
                     }
                 }
+            } else if (channel.type == BackendChannel::groupChannel) {
+                item->setIcon(0, ChannelIcons::groupConversation());
             }
 
             if (selectedThread.isEmpty() && selectedChannel == channel.id) {
@@ -440,6 +478,7 @@ void AttentionList::refresh()
 
         const ThreadEntry& thread = display.thread;
         item->setText(0, threadLabel(thread));
+        item->setIcon(0, ChannelIcons::channel());
         item->setData(0, EntryTypeRole, static_cast<int>(ThreadEntryType));
         item->setData(0, ChannelIdRole, thread.channelId);
         item->setData(0, ThreadIdRole, thread.id);
@@ -458,6 +497,11 @@ void AttentionList::refresh()
 
     if (restoreItem) {
         setCurrentItem(restoreItem);
+    } else {
+        // QTreeWidget may otherwise keep/assign a current index while rows are
+        // rebuilt. Attention must never implicitly open its first item.
+        setCurrentItem(nullptr);
+        clearSelection();
     }
     refreshing = false;
 }

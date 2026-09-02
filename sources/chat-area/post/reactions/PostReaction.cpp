@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -44,10 +44,19 @@ PostReaction::PostReaction (const QString& emojiName, const QString& emojiValue,
     tooltip.chop (1);
     setToolTip (tooltip);
 
-	QPalette pal = palette();
-	pal.setColor(QPalette::Base, QColor (230,230,230));
-	setAutoFillBackground(true);
-    setPalette(pal);
+    // Match Mattermost's compact reaction chips: a subtle translucent neutral
+    // fill, a visible outline and rounded corners. WA_StyledBackground is
+    // required for QWidget itself to honor stylesheet backgrounds reliably.
+    setObjectName(QStringLiteral("postReaction"));
+    setAttribute(Qt::WA_StyledBackground, true);
+    ui->horizontalLayout->setContentsMargins(4, 1, 4, 1);
+    ui->horizontalLayout->setSpacing(2);
+    setStyleSheet(QStringLiteral(
+        "QWidget#postReaction {"
+        " border: 1px solid rgba(128, 128, 128, 140);"
+        " border-radius: 8px;"
+        " background-color: rgba(128, 128, 128, 76);"
+        " }"));
 }
 
 PostReaction::~PostReaction()
