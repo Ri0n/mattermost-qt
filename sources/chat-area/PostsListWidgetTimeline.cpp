@@ -7,6 +7,90 @@
 
 namespace Mattermost {
 
+void PostsListWidget::lockTimelineNavigationToPost(const QString& postId,
+                                                   int viewportTopOffset,
+                                                   int quietPeriodMs)
+{
+    if (postId.isEmpty()) {
+        clearTimelineNavigationLock();
+        return;
+    }
+
+    timelineNavigationPostId = postId;
+    timelineNavigationTopOffset = std::max(0, viewportTopOffset);
+    timelineNavigationQuietPeriodMs = std::max(250, quietPeriodMs);
+    touchTimelineNavigationLock();
+}
+
+void PostsListWidget::clearTimelineNavigationLock()
+{
+    ++timelineNavigationLockGeneration;
+    timelineNavigationPostId.clear();
+}
+
+void PostsListWidget::touchTimelineNavigationLock()
+{
+    if (timelineNavigationPostId.isEmpty()) {
+        return;
+    }
+
+    const quint64 generation = ++timelineNavigationLockGeneration;
+    const int quietPeriodMs = timelineNavigationQuietPeriodMs;
+    QTimer::singleShot(quietPeriodMs, this, [this, generation] {
+        if (generation == timelineNavigationLockGeneration) {
+            timelineNavigationPostId.clear();
+        }
+    });
+}
+
+bool PostsListWidget::restoreTimelineNavigationLock()
+{
+    if (timelineNavigationPostId.isEmpty()) {
+        return false;
+    }
+
+    const QString postId = timelineNavigationPostId;
+    const int rowIndex = findPostByIndex(postId, 0);
+    if (rowIndex < 0) {
+        return false;
+    }
+
+    const quint64 generation = ++scrollIntentGeneration;
+    const int viewportTopOffset = timelineNavigationTopOffset;
+    auto apply = [this, generation, postId, viewportTopOffset] {
+        if (generation != scrollIntentGeneration) {
+            return;
+        }
+
+        const int currentRow = findPostByIndex(postId, 0);
+        if (currentRow < 0) {
+            return;
+        }
+        QListWidgetItem* anchorItem = item(currentRow);
+        if (!anchorItem) {
+            return;
+        }
+
+        restoringSavedScroll = true;
+        QListWidget::scrollToItem(anchorItem, QAbstractItemView::PositionAtTop);
+        const QRect rect = visualItemRect(anchorItem);
+        if (rect.isValid()) {
+            const int delta = rect.top() - viewportTopOffset;
+            if (delta != 0) {
+                QScrollBar* bar = verticalScrollBar();
+                bar->setValue(bar->value() + delta);
+            }
+        }
+        restoringSavedScroll = false;
+        saveScrollAnchor();
+    };
+
+    apply();
+    QTimer::singleShot(0, this, apply);
+    touchTimelineNavigationLock();
+    return true;
+}
+
 void PostsListWidget::beginTimelineRebuild()
 {
     ++scrollIntentGeneration;
@@ -21,6 +105,8 @@ void PostsListWidget::beginTimelineRebuild()
     // A sparse-timeline rebuild owns viewport restoration as one transaction.
     // Do not let the ordinary clear()/insertPost() path capture and repeatedly
     // restore intermediate geometries while hundreds of rows are replaced.
+    // A semantic navigation lock is deliberately kept separately: if its target
+    // survives the rebuild, finishTimelineRebuild*() will make it authoritative.
     savedScrollAnchor = SavedScrollAnchor();
     QListWidget::clear();
     newMessagesSeparator = nullptr;
@@ -30,6 +116,10 @@ void PostsListWidget::beginTimelineRebuild()
 
 void PostsListWidget::finishTimelineRebuildAtBottom()
 {
+    if (restoreTimelineNavigationLock()) {
+        return;
+    }
+
     const quint64 generation = ++scrollIntentGeneration;
 
     auto apply = [this, generation] {
@@ -49,6 +139,10 @@ void PostsListWidget::finishTimelineRebuildAtBottom()
 bool PostsListWidget::finishTimelineRebuildAtPost(const QString& postId,
                                                    int viewportTopOffset)
 {
+    if (restoreTimelineNavigationLock()) {
+        return true;
+    }
+
     const int rowIndex = findPostByIndex(postId, 0);
     if (rowIndex < 0) {
         restoringSavedScroll = false;
@@ -94,6 +188,10 @@ bool PostsListWidget::finishTimelineRebuildAtPost(const QString& postId,
 
 void PostsListWidget::finishTimelineRebuildAtPixel(qint64 pixelOffset)
 {
+    if (restoreTimelineNavigationLock()) {
+        return;
+    }
+
     const quint64 generation = ++scrollIntentGeneration;
 
     auto apply = [this, generation, pixelOffset] {
