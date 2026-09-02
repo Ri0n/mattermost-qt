@@ -191,3 +191,20 @@ target_link_libraries(post-window-selection-test
 )
 
 add_test(NAME post-window-selection-test COMMAND post-window-selection-test)
+
+add_executable(post-navigation-window-test
+    PostNavigationWindowTest.cpp
+)
+
+target_include_directories(post-navigation-window-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(post-navigation-window-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME post-navigation-window-test COMMAND post-navigation-window-test)
