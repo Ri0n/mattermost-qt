@@ -288,13 +288,14 @@ void AttentionList::refresh()
     QSet<QString> displayedThreadIds;
 
     // Direct/group conversations are attention items as conversations, not as
-    // thread rows.
+    // thread rows. Muted conversations never require attention.
     for (auto it = backend->getStorage().channels.cbegin();
          it != backend->getStorage().channels.cend(); ++it) {
         BackendChannel* channel = it.value();
         if (!channel
             || (channel->type != BackendChannel::directChannel
                 && channel->type != BackendChannel::groupChannel)
+            || sidebar.isChannelMuted(*channel)
             || !sidebar.isChannelUnread(*channel)) {
             continue;
         }
@@ -313,7 +314,8 @@ void AttentionList::refresh()
             || (thread.unreadReplies <= 0 && thread.unreadMentions <= 0)) {
             continue;
         }
-        if (!backend->getStorage().getChannelById(thread.channelId)) {
+        BackendChannel* threadChannel = backend->getStorage().getChannelById(thread.channelId);
+        if (!threadChannel || sidebar.isChannelMuted(*threadChannel)) {
             continue;
         }
 
@@ -328,12 +330,14 @@ void AttentionList::refresh()
 
     // A root mention has no server Thread row yet. Mattermost sends recipient-
     // specific mention information on the websocket event, so model it as a
-    // one-post synthetic thread until that channel is viewed.
+    // one-post synthetic thread until that channel is viewed. Muted channels
+    // are intentionally excluded from Attention here as well.
     for (auto it = syntheticMentions.cbegin(); it != syntheticMentions.cend(); ++it) {
         if (realThreadIds.contains(it.key())) {
             continue;
         }
-        if (!backend->getStorage().getChannelById(it->channelId)) {
+        BackendChannel* threadChannel = backend->getStorage().getChannelById(it->channelId);
+        if (!threadChannel || sidebar.isChannelMuted(*threadChannel)) {
             continue;
         }
         displayedThreadIds.insert(it.key());
@@ -352,14 +356,15 @@ void AttentionList::refresh()
         emit attentionCountChanged(attentionCount);
     }
 
-    // Preserve the selected item even if opening it already made it read. It
-    // is rendered as read and disappears only when another item is selected or
-    // when the user leaves the Attention tab.
+    // Preserve the selected item only when it merely became read. Muting is an
+    // explicit action that disqualifies the row immediately, so muted channels
+    // must never be resurrected by the sticky-selection rule.
     if (!retainedChannelId.isEmpty()) {
         if (retainedThreadId.isEmpty()) {
             if (!displayedChannelIds.contains(retainedChannelId)) {
                 BackendChannel* channel = backend->getStorage().getChannelById(retainedChannelId);
                 if (channel
+                    && !sidebar.isChannelMuted(*channel)
                     && (channel->type == BackendChannel::directChannel
                         || channel->type == BackendChannel::groupChannel)) {
                     DisplayEntry display;
@@ -371,7 +376,8 @@ void AttentionList::refresh()
                 }
             }
         } else if (hasRetainedThread && !displayedThreadIds.contains(retainedThreadId)) {
-            if (backend->getStorage().getChannelById(retainedThread.channelId)) {
+            BackendChannel* threadChannel = backend->getStorage().getChannelById(retainedThread.channelId);
+            if (threadChannel && !sidebar.isChannelMuted(*threadChannel)) {
                 DisplayEntry display;
                 display.type = ThreadEntryType;
                 display.thread = retainedThread;
