@@ -7,14 +7,6 @@
  * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
- *
- * Mattermost-QT is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with Mattermost-QT. if not, see https://www.gnu.org/licenses/.
  */
 
 #pragma once
@@ -22,6 +14,7 @@
 #include <functional>
 
 #include <QObject>
+#include <QStringList>
 
 #include "HTTPConnector.h"
 
@@ -39,11 +32,20 @@ class PostNavigationService final: public QObject
 {
     Q_OBJECT
 public:
+    struct Context {
+        QStringList postIds; // chronological, oldest -> newest
+        bool reachedOldest = false;
+        bool reachedNewest = false;
+        bool success = false;
+    };
+
+    using ContextCallback = std::function<void(const Context&)>;
+
     static PostNavigationService& instance(Backend& backend);
 
     void loadAround(BackendChannel& channel,
                     const QString& postId,
-                    std::function<void(bool)> callback = {},
+                    ContextCallback callback = {},
                     bool forceContext = false);
 
 private:
