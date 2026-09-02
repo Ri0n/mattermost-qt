@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -87,12 +87,14 @@ ResizableListWidget::ViewportAnchor ResizableListWidget::captureViewportAnchor()
 
 void ResizableListWidget::restoreViewportAnchor(const ViewportAnchor& anchor)
 {
-    if (anchor.atBottom) {
-        scrollToBottom();
-        return;
-    }
-
+    // Even when the viewport happened to be at the bottom before a layout
+    // change, preserve the concrete row that was visible there. Treating
+    // "bottom" as a moving target makes newly inserted rows and delayed image
+    // reflow silently advance the reading position.
     if (!anchor.index.isValid()) {
+        if (anchor.atBottom) {
+            scrollToBottom();
+        }
         return;
     }
 
