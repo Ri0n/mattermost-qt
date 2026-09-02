@@ -6,7 +6,11 @@
 #include <QStyle>
 #include <QStyleOptionViewItem>
 
+#include "ChannelIcons.h"
 #include "ChannelTree.h"
+#include "backend/Backend.h"
+#include "backend/Storage.h"
+#include "backend/types/BackendChannel.h"
 
 namespace Mattermost {
 
@@ -123,7 +127,27 @@ void ChannelItemDelegate::paint(QPainter* painter,
     QStyleOptionViewItem base(option);
     initStyleOption(&base, index);
     const QString text = base.text;
-    const QIcon icon = base.icon;
+    QIcon icon = base.icon;
+
+    // Direct rows get an avatar asynchronously. Ordinary channels and group
+    // conversations have no server image, so give them stable fallback glyphs
+    // without storing generated pixmaps in every duplicated category row.
+    if (icon.isNull()) {
+        const auto* tree = qobject_cast<const ChannelTree*>(parent());
+        Backend* backend = tree ? tree->backendInstance() : nullptr;
+        const QString channelId = index.data(ChannelTree::ItemIdRole).toString();
+        BackendChannel* channel = backend && !channelId.isEmpty()
+            ? backend->getStorage().getChannelById(channelId) : nullptr;
+        if (channel) {
+            if (channel->type == BackendChannel::groupChannel) {
+                icon = ChannelIcons::groupConversation();
+            } else if (channel->type == BackendChannel::publicChannel
+                       || channel->type == BackendChannel::privateChannel) {
+                icon = ChannelIcons::channel();
+            }
+        }
+    }
+
     base.text.clear();
     base.icon = QIcon();
 
