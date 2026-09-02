@@ -99,6 +99,28 @@ private slots:
         QCOMPARE(timeline.loadedCount(), 2);
         QCOMPARE(timeline.estimatedRowHeight(), 123);
     }
+
+    void newestRelativeGapAnchorSurvivesOldestGrowth()
+    {
+        PostTimeline timeline(100);
+        timeline.reset(160);
+        timeline.placeWindow(80, {QStringLiteral("tail-a"), QStringLiteral("tail-b")});
+
+        const auto before = timeline.locatePixel(25 * 100 + 40);
+        QVERIFY(before.isValid());
+        QVERIFY(!before.loaded);
+        const int distanceFromNewest = timeline.totalCount() - 1 - before.logicalIndex;
+        const int offset = before.offsetWithinRow;
+
+        timeline.setTotalCountPreservingNewest(240);
+        const int restoredIndex = timeline.totalCount() - 1 - distanceFromNewest;
+        const qint64 restoredPixel = timeline.estimatedPixelForIndex(restoredIndex) + offset;
+        const auto after = timeline.locatePixel(restoredPixel);
+
+        QVERIFY(after.isValid());
+        QCOMPARE(timeline.totalCount() - 1 - after.logicalIndex, distanceFromNewest);
+        QCOMPARE(after.offsetWithinRow, offset);
+    }
 };
 
 QTEST_APPLESS_MAIN(PostTimelineTest)
