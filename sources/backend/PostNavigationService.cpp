@@ -28,6 +28,7 @@
 #include <QNetworkReply>
 #include <QPointer>
 #include <QSet>
+#include <QSignalBlocker>
 #include <QVariant>
 
 #include "Backend.h"
@@ -153,6 +154,12 @@ void PostNavigationService::loadAround(BackendChannel& channel,
         appendUniqueOrder(order, seen, state->beforeOrder);
 
         BackendChannel& currentChannel = *state->channel;
+        // This request is cache population for an explicit semantic jump, not a
+        // normal timeline page. Emitting onNewPosts here would make the sparse
+        // controller materialize the whole reserve (up to 61 rows) before it
+        // can select the intended ~31-row window. The pinned callback performs
+        // the one authoritative render immediately after the cache is complete.
+        const QSignalBlocker blocker(&currentChannel);
         currentChannel.mergePostContext(order, posts);
 
         if (state->callback) {
@@ -163,7 +170,8 @@ void PostNavigationService::loadAround(BackendChannel& channel,
     auto fetchPostList = [this, state, finishPart](const QString& direction) {
         const QString path = QStringLiteral("channels/") + state->channel->id
             + QStringLiteral("/posts?") + direction + QLatin1Char('=') + state->postId
-            + QStringLiteral("&per_page=") + QString::number(ContextFetchPerSide);
+            + QStringLiteral("&per_page=") + QString::number(ContextFetchPerSide)
+            + QStringLiteral("&skipFetchThreads=true&collapsedThreads=true");
         NetworkRequest request(path);
         httpConnector.get(request, HttpResponseCallback(
             [state, finishPart, direction](QVariant status, const QJsonDocument& doc) {
