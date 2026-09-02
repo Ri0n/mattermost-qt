@@ -7,9 +7,7 @@
 #include <QStyleOptionViewItem>
 
 #include "ChannelIcons.h"
-#include "ChannelTree.h"
-#include "backend/Backend.h"
-#include "backend/Storage.h"
+#include "SidebarItem.h"
 #include "backend/types/BackendChannel.h"
 
 namespace Mattermost {
@@ -98,6 +96,12 @@ void drawStatusBadge(QPainter* painter, const QRect& rect, const QString& status
     painter->restore();
 }
 
+BackendChannel::type channelType(const QModelIndex& index)
+{
+    return static_cast<BackendChannel::type>(
+        index.data(SidebarItem::ChannelTypeRole).toInt());
+}
+
 } // namespace
 
 ChannelItemDelegate::ChannelItemDelegate(QObject* parent)
@@ -109,7 +113,7 @@ QSize ChannelItemDelegate::sizeHint(const QStyleOptionViewItem& option,
                                     const QModelIndex& index) const
 {
     QSize hint = QStyledItemDelegate::sizeHint(option, index);
-    if (index.data(ChannelTree::ItemKindRole).toInt() == ChannelTree::ChannelItemKind) {
+    if (index.data(SidebarItem::KindRole).toInt() == SidebarItem::Channel) {
         hint.setHeight(ChannelRowHeight);
     }
     return hint;
@@ -119,7 +123,7 @@ void ChannelItemDelegate::paint(QPainter* painter,
                                 const QStyleOptionViewItem& option,
                                 const QModelIndex& index) const
 {
-    if (index.data(ChannelTree::ItemKindRole).toInt() != ChannelTree::ChannelItemKind) {
+    if (index.data(SidebarItem::KindRole).toInt() != SidebarItem::Channel) {
         QStyledItemDelegate::paint(painter, option, index);
         return;
     }
@@ -128,21 +132,16 @@ void ChannelItemDelegate::paint(QPainter* painter,
     initStyleOption(&base, index);
     const QString text = base.text;
     QIcon icon = base.icon;
+    const BackendChannel::type type = channelType(index);
 
-    const auto* tree = qobject_cast<const ChannelTree*>(parent());
-    Backend* backend = tree ? tree->backendInstance() : nullptr;
-    const QString channelId = index.data(ChannelTree::ItemIdRole).toString();
-    BackendChannel* channel = backend && !channelId.isEmpty()
-        ? backend->getStorage().getChannelById(channelId) : nullptr;
-
-    // Direct rows get an avatar asynchronously. Ordinary channels and group
-    // conversations have no server image, so give them stable fallback glyphs
-    // without storing generated pixmaps in every duplicated category row.
-    if (icon.isNull() && channel) {
-        if (channel->type == BackendChannel::groupChannel) {
+    // The row itself carries its BackendChannel::type. The delegate therefore
+    // behaves identically in Channels and Recent and never needs to inspect its
+    // parent widget or resolve a BackendChannel through Storage.
+    if (icon.isNull()) {
+        if (type == BackendChannel::groupChannel) {
             icon = ChannelIcons::groupConversation();
-        } else if (channel->type == BackendChannel::publicChannel
-                   || channel->type == BackendChannel::privateChannel) {
+        } else if (type == BackendChannel::publicChannel
+                   || type == BackendChannel::privateChannel) {
             icon = ChannelIcons::channel();
         }
     }
@@ -163,10 +162,12 @@ void ChannelItemDelegate::paint(QPainter* painter,
                              AvatarSize);
         const QPixmap pixmap = icon.pixmap(AvatarSize, AvatarSize);
 
-        // ItemStatusRole is populated only for direct conversations backed by a
-        // real BackendUser. Public/private channels and group conversations
-        // never receive this role, so they can never acquire a presence badge.
-        const QString status = index.data(ChannelTree::ItemStatusRole).toString();
+        // Presence has meaning only for a direct conversation with one concrete
+        // user. Even malformed model data cannot put a status badge on public,
+        // private or group-channel glyphs.
+        const QString status = type == BackendChannel::directChannel
+            ? index.data(SidebarItem::PresenceRole).toString()
+            : QString();
 
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing, true);
@@ -194,7 +195,7 @@ void ChannelItemDelegate::paint(QPainter* painter,
     }
 
     int textRight = contentRect.right();
-    if (index.data(ChannelTree::ItemMutedRole).toBool()) {
+    if (index.data(SidebarItem::MutedRole).toBool()) {
         const QRect muteRect(textRight - MuteIconSize + 1,
                              contentRect.center().y() - MuteIconSize / 2,
                              MuteIconSize,
@@ -205,13 +206,13 @@ void ChannelItemDelegate::paint(QPainter* painter,
 
     QRect textRect(textLeft, contentRect.top(), qMax(0, textRight - textLeft + 1), contentRect.height());
     QFont font = option.font;
-    const bool unread = index.data(ChannelTree::ItemUnreadRole).toBool();
-    const bool mentioned = index.data(ChannelTree::ItemMentionedRole).toBool();
+    const bool unread = index.data(SidebarItem::UnreadRole).toBool();
+    const bool mentioned = index.data(SidebarItem::MentionedRole).toBool();
     font.setBold(unread || mentioned);
     painter->setFont(font);
 
     const bool selected = option.state.testFlag(QStyle::State_Selected);
-    const bool muted = index.data(ChannelTree::ItemMutedRole).toBool();
+    const bool muted = index.data(SidebarItem::MutedRole).toBool();
     const QColor textColor = selected
         ? option.palette.color(QPalette::HighlightedText)
         : (muted ? option.palette.color(QPalette::Disabled, QPalette::Text)
