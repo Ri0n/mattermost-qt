@@ -1,11 +1,11 @@
 #include "PostTimelineService.h"
 
 #include <algorithm>
+#include <utility>
 
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QJsonObject>
 #include <QNetworkReply>
 #include <QVariant>
 
@@ -14,6 +14,53 @@
 #include "types/BackendChannel.h"
 
 namespace Mattermost {
+namespace {
+
+struct OrderedPost {
+    QString id;
+    uint64_t createAt = 0;
+};
+
+QStringList sortedPostIds(const QJsonObject& postsObject,
+                          const std::function<bool(const QString&, const QString&)>& include)
+{
+    QVector<OrderedPost> ordered;
+    ordered.reserve(postsObject.size());
+    for (auto it = postsObject.constBegin(); it != postsObject.constEnd(); ++it) {
+        if (!it->isObject()) {
+            continue;
+        }
+        const QJsonObject object = it->toObject();
+        const QString id = object.value(QStringLiteral("id")).toString(it.key());
+        if (id.isEmpty()) {
+            continue;
+        }
+        const QString rootId = object.value(QStringLiteral("root_id")).toString();
+        if (include && !include(id, rootId)) {
+            continue;
+        }
+        ordered.push_back(OrderedPost {
+            id,
+            object.value(QStringLiteral("create_at")).toVariant().toULongLong(),
+        });
+    }
+
+    std::sort(ordered.begin(), ordered.end(), [](const OrderedPost& lhs, const OrderedPost& rhs) {
+        if (lhs.createAt != rhs.createAt) {
+            return lhs.createAt < rhs.createAt;
+        }
+        return lhs.id < rhs.id;
+    });
+
+    QStringList result;
+    result.reserve(ordered.size());
+    for (const OrderedPost& post : ordered) {
+        result.push_back(post.id);
+    }
+    return result;
+}
+
+} // namespace
 
 PostTimelineService& PostTimelineService::instance(Backend& backend)
 {
@@ -151,95 +198,31 @@ void PostTimelineService::loadThread(BackendChannel& channel,
 QStringList PostTimelineService::chronologicalOrder(const QJsonObject& postsObject,
                                                      const QString& rootId)
 {
-    struct OrderedPost {
-        QString id;
-        uint64_t createAt = 0;
-    };
-
-    QVector<OrderedPost> ordered;
-    ordered.reserve(postsObject.size());
-    for (auto it = postsObject.constBegin(); it != postsObject.constEnd(); ++it) {
-        if (!it->isObject()) {
-            continue;
-        }
-        const QJsonObject object = it->toObject();
-        const QString id = object.value(QStringLiteral("id")).toString(it.key());
-        if (id.isEmpty()) {
-            continue;
-        }
-
-        const QString postRootId = object.value(QStringLiteral("root_id")).toString();
-        if (rootId.isEmpty()) {
-            if (!postRootId.isEmpty()) {
-                continue;
-            }
-        } else if (id != rootId && postRootId != rootId) {
-            continue;
-        }
-
-        ordered.push_back(OrderedPost {
-            id,
-            object.value(QStringLiteral("create_at")).toVariant().toULongLong(),
+    if (rootId.isEmpty()) {
+        return sortedPostIds(postsObject, [](const QString&, const QString& postRootId) {
+            return postRootId.isEmpty();
         });
     }
 
-    std::sort(ordered.begin(), ordered.end(), [](const OrderedPost& lhs, const OrderedPost& rhs) {
-        if (lhs.createAt != rhs.createAt) {
-            return lhs.createAt < rhs.createAt;
-        }
-        return lhs.id < rhs.id;
+    return sortedPostIds(postsObject, [&rootId](const QString& id, const QString& postRootId) {
+        return id == rootId || postRootId == rootId;
     });
+}
 
-    QStringList result;
-    result.reserve(ordered.size());
-    for (const OrderedPost& post : ordered) {
-        result.push_back(post.id);
-    }
-    return result;
+QStringList PostTimelineService::allChronologicalOrder(const QJsonObject& postsObject)
+{
+    return sortedPostIds(postsObject, {});
 }
 
 void PostTimelineService::ingest(BackendChannel& channel, const QJsonObject& postsObject)
 {
-    // BackendChannel::mergePostContext() is the idempotent ingestion path: it
-    // deduplicates by post ID and inserts new objects by timestamp without the
-    // newest-edge/deletion assumptions of the legacy addPosts() routine.
-    QStringList chronological = chronologicalOrder(postsObject, QStringLiteral("*all*"));
-    if (chronological.isEmpty()) {
-        // The special filter above intentionally matches nothing. Build an
-        // unfiltered order here instead; keep filtering only in Page.postIds.
-        struct OrderedPost {
-            QString id;
-            uint64_t createAt = 0;
-        };
-        QVector<OrderedPost> ordered;
-        ordered.reserve(postsObject.size());
-        for (auto it = postsObject.constBegin(); it != postsObject.constEnd(); ++it) {
-            if (!it->isObject()) {
-                continue;
-            }
-            const QJsonObject object = it->toObject();
-            const QString id = object.value(QStringLiteral("id")).toString(it.key());
-            if (!id.isEmpty()) {
-                ordered.push_back(OrderedPost {
-                    id,
-                    object.value(QStringLiteral("create_at")).toVariant().toULongLong(),
-                });
-            }
-        }
-        std::sort(ordered.begin(), ordered.end(), [](const OrderedPost& lhs, const OrderedPost& rhs) {
-            if (lhs.createAt != rhs.createAt) {
-                return lhs.createAt < rhs.createAt;
-            }
-            return lhs.id < rhs.id;
-        });
-        for (const OrderedPost& post : ordered) {
-            chronological.push_back(post.id);
-        }
-    }
-
+    // BackendChannel::mergePostContext() is the idempotent ingestion path. It
+    // expects Mattermost's newest -> oldest order, while the timeline itself is
+    // deliberately represented oldest -> newest.
+    const QStringList chronological = allChronologicalOrder(postsObject);
     QJsonArray newestFirst;
-    for (auto it = chronological.crbegin(); it != chronological.crend(); ++it) {
-        newestFirst.push_back(*it);
+    for (int i = chronological.size() - 1; i >= 0; --i) {
+        newestFirst.push_back(chronological.at(i));
     }
     channel.mergePostContext(newestFirst, postsObject);
 }
