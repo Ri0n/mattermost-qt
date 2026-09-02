@@ -51,6 +51,7 @@ BackendUser::BackendUser (const QJsonObject& jsonObject)
 	allow_marketing = jsonObject.value("allow_marketing").toBool();
 	notify_preps.deserialize (jsonObject.value("notify_props").toObject());
 	last_password_update = jsonObject.value("last_password_update").toVariant().toULongLong();
+	last_picture_update = jsonObject.value("last_picture_update").toVariant().toULongLong();
 	locale = jsonObject.value("locale").toString();
 	isLoginUser = false;
 }
@@ -100,6 +101,7 @@ void BackendUser::updateFrom (const BackendUser& other, QString& resultString)
 	CHECK_AND_UPDATE_PROPERTY (allow_marketing);
 	//CHECK_AND_UPDATE_PROPERTY (notify_preps);
 	CHECK_AND_UPDATE_PROPERTY (last_password_update);
+	CHECK_AND_UPDATE_PROPERTY (last_picture_update);
 	CHECK_AND_UPDATE_PROPERTY (locale);
 	CHECK_AND_UPDATE_PROPERTY (update_at);
 
