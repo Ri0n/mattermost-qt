@@ -18,16 +18,17 @@ bool ChatArea::ensurePostVisible(const QString& postId)
     }
 
     PostsListWidget* list = ui->listWidget;
-    if (list->findPost(postId)) {
+
+    // Explicit semantic navigation owns a bounded context window. Do this even
+    // when the target row is already present: the surrounding cache may have
+    // just been refreshed and the controller must establish the cursor edges
+    // that subsequent user scrolling extends from.
+    if (channelTimelineController
+        && channelTimelineController->ensurePinnedPostVisible(postId)) {
         return true;
     }
 
-    // In a virtualized channel the target must become part of the logical
-    // timeline, not merely be injected as an orphan QListWidget row. The
-    // controller uses the context that PostNavigationService has just cached,
-    // places it into the nearest estimated gap and rebuilds the viewport.
-    if (channelTimelineController
-        && channelTimelineController->ensurePostVisible(postId)) {
+    if (list->findPost(postId)) {
         return true;
     }
 
