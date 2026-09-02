@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -78,27 +78,9 @@ ChannelTree::ChannelTree (QWidget* parent)
 {
 	connect (this, &QTreeWidget::customContextMenuRequested, this, &ChannelTree::showContextMenu);
 
-	connect (this, &QTreeWidget::currentItemChanged, [this] (QTreeWidgetItem* item, QTreeWidgetItem*) {
-        if (!item || item->data(0, ItemKindRole).toInt() != ChannelItemKind) {
-            return;
-        }
-
-		ChatArea *newPage = item->data(0, Qt::UserRole).value<ChatArea*>();
-		if (!newPage) {
-			return;
-		}
-
-		if (newPage == getCurrentPage ()) {
-			return;
-		}
-
-        if (ChatArea* currentPage = getCurrentPage()) {
-            currentPage->onDeactivate ();
-        }
-		chatAreaStackedWidget->setCurrentWidget (newPage);
-		newPage->onActivate ();
-
-		qDebug() << "Item Activated: " << newPage->channel.display_name;
+	connect (this, &QTreeWidget::currentItemChanged, this,
+             [this] (QTreeWidgetItem* item, QTreeWidgetItem*) {
+        activateChannelItem(item);
 	});
 
     connect(this, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* item) {
@@ -161,10 +143,10 @@ void ChannelTree::addTeam (Backend& backend, BackendTeam& team)
 		delete item;
 	});
 
-    // Populate Storage first. The category renderer runs after all teams have
-    // completed, because DM/GM channels are returned in every team's channel list.
+    // Populate only channels at startup. Team members are loaded on demand by
+    // the dialogs that actually need them; downloading every member here is a
+    // large and unrelated startup request burst on big Mattermost instances.
 	backend.retrieveOwnChannelMembershipsForTeam (team, [] (BackendChannel&) {});
-	backend.retrieveTeamMembers (team);
 }
 
 void ChannelTree::populateSidebars(Backend& backend)
@@ -203,6 +185,7 @@ void ChannelTree::renderTeamSidebar(Backend& backend, TeamItem& teamItem,
     renderingSidebar = true;
     clearTeamSidebar(teamItem);
 
+    auto& sidebar = SidebarService::instance(backend);
     for (const auto& categoryId : state.order) {
         const SidebarCategory* category = state.category(categoryId);
         if (!category) {
@@ -212,7 +195,8 @@ void ChannelTree::renderTeamSidebar(Backend& backend, TeamItem& teamItem,
         QTreeWidgetItem* categoryItem = createCategoryItem(
             teamItem, category->id, categoryDisplayName(*category), category->collapsed);
 
-        for (const auto& channelId : category->channelIds) {
+        const QStringList visibleIds = sidebar.visibleChannelIds(*category);
+        for (const auto& channelId : visibleIds) {
             BackendChannel* channel = backend.getStorage().getChannelById(channelId);
             if (!channel) {
                 LOG_DEBUG("Sidebar channel not found in storage: " << channelId);
@@ -232,9 +216,11 @@ void ChannelTree::clearTeamSidebar(TeamItem& teamItem)
         QTreeWidgetItem* category = teamItem.takeChild(0);
         while (category->childCount() > 0) {
             QTreeWidgetItem* channelItem = category->takeChild(0);
+            const QString channelId = channelItem->data(0, ItemIdRole).toString();
+            removeChannelToItem(channelId, channelItem);
+
             ChatArea* chatArea = channelItem->data(0, Qt::UserRole).value<ChatArea*>();
             if (chatArea) {
-                removeChannelToItem(chatArea->channel.id, channelItem);
                 if (chatAreaStackedWidget) {
                     chatAreaStackedWidget->removeWidget(chatArea);
                 }
@@ -279,6 +265,7 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
     item->setData(0, ItemKindRole, ChannelItemKind);
     item->setData(0, ItemIdRole, channel.id);
     item->setData(0, ItemTeamIdRole, teamItem.teamId);
+    item->setData(0, Qt::UserRole, QVariant::fromValue(static_cast<ChatArea*>(nullptr)));
     item->setFlags((item->flags() | Qt::ItemIsDragEnabled) & ~Qt::ItemIsDropEnabled);
     item->setLabel(channel.display_name);
 
@@ -292,6 +279,12 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
 
             if (!connectedSidebarUsers.contains(user->id)) {
                 connectedSidebarUsers.insert(user->id);
+
+                // Avatars are low-priority requests and are now limited to the
+                // actually visible DM set rather than the entire user directory.
+                if (user->avatar.isNull()) {
+                    backend.retrieveUserAvatar(user->id);
+                }
 
                 connect(user, &BackendUser::onStatusChanged, this, [this, user] {
                     if (!backendForSidebar) {
@@ -328,21 +321,18 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
         }
     }
 
-    ChatArea* chatArea = new ChatArea(backend, channel, item, chatAreaStackedWidget, false);
-    chatAreaStackedWidget->addWidget(chatArea);
-    item->setData(0, Qt::UserRole, QVariant::fromValue(chatArea));
-
-    QObject::connect(&channel, &BackendChannel::onLeave, chatArea,
-                     [this, &channel, item, chatArea] {
+    QObject::connect(&channel, &BackendChannel::onLeave, this,
+                     [this, &channel, item] {
         removeChannelToItem(channel.id, item);
-        if (chatAreaStackedWidget) {
+        ChatArea* chatArea = item->data(0, Qt::UserRole).value<ChatArea*>();
+        if (chatArea && chatAreaStackedWidget) {
             chatAreaStackedWidget->removeWidget(chatArea);
         }
         if (QTreeWidgetItem* parent = item->parent()) {
             parent->removeChild(item);
         }
-        delete item;
         delete chatArea;
+        delete item;
     });
 
     addChannelToItem(channel.id, item);
@@ -350,6 +340,59 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
     item->setMuted(sidebar.isChannelMuted(channel));
     item->setMentioned(sidebar.hasUnreadMention(channel.id));
     return item;
+}
+
+ChatArea* ChannelTree::ensureChatArea(QTreeWidgetItem* item)
+{
+    if (!item || !backendForSidebar || !chatAreaStackedWidget
+        || item->data(0, ItemKindRole).toInt() != ChannelItemKind) {
+        return nullptr;
+    }
+
+    if (ChatArea* existing = item->data(0, Qt::UserRole).value<ChatArea*>()) {
+        return existing;
+    }
+
+    const QString channelId = item->data(0, ItemIdRole).toString();
+    BackendChannel* channel = backendForSidebar->getStorage().getChannelById(channelId);
+    if (!channel) {
+        LOG_DEBUG("Cannot create chat area: channel not found: " << channelId);
+        return nullptr;
+    }
+
+    auto* channelItem = static_cast<ChannelItem*>(item);
+    auto* chatArea = new ChatArea(*backendForSidebar, *channel, channelItem,
+                                  chatAreaStackedWidget, false);
+    chatAreaStackedWidget->addWidget(chatArea);
+    item->setData(0, Qt::UserRole, QVariant::fromValue(chatArea));
+    return chatArea;
+}
+
+void ChannelTree::activateChannelItem(QTreeWidgetItem* item)
+{
+    if (!item || item->data(0, ItemKindRole).toInt() != ChannelItemKind) {
+        return;
+    }
+
+    ChatArea* newPage = ensureChatArea(item);
+    if (!newPage) {
+        return;
+    }
+
+    if (newPage == getCurrentPage()) {
+        if (!newPage->isVisible()) {
+            chatAreaStackedWidget->setCurrentWidget(newPage);
+        }
+        return;
+    }
+
+    if (ChatArea* currentPage = getCurrentPage()) {
+        currentPage->onDeactivate();
+    }
+    chatAreaStackedWidget->setCurrentWidget(newPage);
+    newPage->onActivate();
+
+    qDebug() << "Item Activated: " << newPage->channel.display_name;
 }
 
 void ChannelTree::addGroupChannelsList (Backend& backend)
@@ -375,7 +418,12 @@ void ChannelTree::openChannel (QString channelID)
 		return;
 	}
 
-	setCurrentItem (it.value().front());
+    QTreeWidgetItem* item = it.value().front();
+    if (currentItem() == item) {
+        activateChannelItem(item);
+    } else {
+        setCurrentItem(item);
+    }
 }
 
 void ChannelTree::addChannelToItem (QString channelID, QTreeWidgetItem* item)
@@ -425,7 +473,7 @@ ChatArea* ChannelTree::getCurrentPage ()
     if (!chatAreaStackedWidget) {
         return nullptr;
     }
-	return static_cast<ChatArea*> (chatAreaStackedWidget->currentWidget());
+	return qobject_cast<ChatArea*> (chatAreaStackedWidget->currentWidget());
 }
 
 void ChannelTree::setCategoryCollapsed(QTreeWidgetItem* item, bool collapsed)
@@ -493,8 +541,9 @@ void ChannelTree::removeChannelFromCategory(ChannelItem* item)
 
     QTreeWidgetItem* sourceCategoryItem = item->parent();
     QTreeWidgetItem* teamItem = sourceCategoryItem->parent();
-    ChatArea* chatArea = item->data(0, Qt::UserRole).value<ChatArea*>();
-    if (!teamItem || !chatArea) {
+    const QString channelId = item->data(0, ItemIdRole).toString();
+    BackendChannel* channel = backendForSidebar->getStorage().getChannelById(channelId);
+    if (!teamItem || !channel) {
         return;
     }
 
@@ -506,17 +555,17 @@ void ChannelTree::removeChannelFromCategory(ChannelItem* item)
         return;
     }
 
-    const bool direct = chatArea->channel.type == BackendChannel::directChannel
-        || chatArea->channel.type == BackendChannel::groupChannel;
+    const bool direct = channel->type == BackendChannel::directChannel
+        || channel->type == BackendChannel::groupChannel;
     SidebarCategory* targetCategory = state->categoryByType(
         direct ? QStringLiteral("direct_messages") : QStringLiteral("channels"));
     if (!targetCategory || targetCategory->id == sourceCategory->id) {
         return;
     }
 
-    sourceCategory->channelIds.removeAll(chatArea->channel.id);
-    targetCategory->channelIds.removeAll(chatArea->channel.id);
-    targetCategory->channelIds.push_back(chatArea->channel.id);
+    sourceCategory->channelIds.removeAll(channelId);
+    targetCategory->channelIds.removeAll(channelId);
+    targetCategory->channelIds.push_back(channelId);
 
     QVector<SidebarCategory> updates {*sourceCategory, *targetCategory};
     SidebarService::instance(*backendForSidebar).updateCategories(teamId, updates,
@@ -552,10 +601,6 @@ void ChannelTree::dropEvent(QDropEvent* event)
             return;
         }
 
-        // Categories always remain direct children of their team. Treat a drop on
-        // another category row as before/after based on the cursor's vertical half,
-        // so the user does not have to hit the tiny gap between adjacent rows. A
-        // drop on one of that category's channels means "after this category".
         QTreeWidgetItem* anchorCategory = nullptr;
         bool insertAfter = false;
 
@@ -672,7 +717,28 @@ void ChannelTree::syncCategoryChannels(QTreeWidgetItem* firstCategory, QTreeWidg
         if (!category) {
             return;
         }
-        category->channelIds = channelIds(categoryItem);
+
+        const QStringList visibleIds = channelIds(categoryItem);
+        if (category->type == QStringLiteral("direct_messages") && backendForSidebar) {
+            // The UI intentionally contains only the visible/autoclosed subset.
+            // Preserve server-side hidden DMs when synchronizing a drag operation.
+            const QStringList previouslyVisible =
+                SidebarService::instance(*backendForSidebar).visibleChannelIds(*category);
+            QStringList merged;
+            for (const QString& id : category->channelIds) {
+                if (!previouslyVisible.contains(id)) {
+                    merged.push_back(id);
+                }
+            }
+            for (const QString& id : visibleIds) {
+                if (!merged.contains(id)) {
+                    merged.push_back(id);
+                }
+            }
+            category->channelIds = std::move(merged);
+        } else {
+            category->channelIds = visibleIds;
+        }
         updates.push_back(*category);
     };
 
