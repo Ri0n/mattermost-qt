@@ -137,3 +137,22 @@ target_link_libraries(backend-user-test
 
 add_test(NAME backend-user-test COMMAND backend-user-test)
 set_tests_properties(backend-user-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(sidebar-item-delegate-test
+    SidebarItemDelegateTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/channel-tree/ChannelItemDelegate.cpp"
+)
+
+target_include_directories(sidebar-item-delegate-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(sidebar-item-delegate-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+add_test(NAME sidebar-item-delegate-test COMMAND sidebar-item-delegate-test)
+set_tests_properties(sidebar-item-delegate-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
