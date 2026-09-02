@@ -43,6 +43,7 @@ public:
                     std::function<void(const BackendUser*)> callback = {});
     void ensureUsers(const QStringList& userIds,
                      std::function<void()> callback = {});
+    void ensureAvatar(BackendUser& user);
     void ensureStatuses(const QStringList& userIds,
                         std::function<void()> callback = {});
     void searchUsers(const UserSearchOptions& options,
@@ -67,6 +68,7 @@ private:
 
     QSet<QString> queuedUserIds;
     QSet<QString> inFlightUserIds;
+    QSet<QString> inFlightAvatarKeys;
     QMap<QString, QVector<std::function<void(const BackendUser*)>>> waiters;
     bool flushScheduled = false;
 };
