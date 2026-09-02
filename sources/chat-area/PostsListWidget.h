@@ -230,6 +230,7 @@ private:
 	int							timelineNavigationTopOffset = 0;
 	int							timelineNavigationQuietPeriodMs = 2000;
 	quint64							timelineNavigationLockGeneration = 0;
+	bool							timelineNavigationUserCancelConnected = false;
 };
 
 } /* namespace Mattermost */
