@@ -10,6 +10,9 @@ on:
 permissions:
   contents: read
 
+# Keep warnings visible but non-fatal for this diagnostic pass after the
+# windowed-timeline runtime refactor. Strict mode is restored before merge.
+
 jobs:
   qt6:
     name: Qt 6.10 / Ubuntu
