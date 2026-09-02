@@ -9,8 +9,10 @@
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
 
+#include <QJsonObject>
 #include <QObject>
 #include <QPointer>
 #include <QStringList>
@@ -78,6 +80,7 @@ private:
 
     static QStringList chronologicalOrder(const QJsonObject& postsObject,
                                           const QString& rootId = QString());
+    static QStringList allChronologicalOrder(const QJsonObject& postsObject);
     static void ingest(BackendChannel& channel, const QJsonObject& postsObject);
 
     Backend& backend;
