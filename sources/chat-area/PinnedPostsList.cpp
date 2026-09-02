@@ -132,18 +132,21 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
         QPointer<ChatArea> guard(chatArea);
         BackendChannel& channel = chatArea->getChannel();
 
-        // Set pendingPostId first. If the post is old, loadAround() emits the
-        // normal channel onNewPosts signal while merging context; ChatArea will
-        // then complete the pending navigation as soon as the row is inserted.
+        // Context must be fetched even when the target object is already in the
+        // backend cache. A cached post is not necessarily materialized as a row
+        // in the current channel view, which was the reason pinned navigation
+        // could leave pendingPostId forever without actually moving anywhere.
         chatArea->goToPost(navigationId);
-        if (!channel.postIdToPost.contains(navigationId)) {
-            PostNavigationService::instance(chatArea->getBackend()).loadAround(
-                channel, navigationId, [guard, navigationId](bool loaded) {
-                    if (guard && loaded) {
-                        guard->goToPost(navigationId);
-                    }
-                });
-        }
+        PostNavigationService::instance(chatArea->getBackend()).loadAround(
+            channel, navigationId,
+            [guard, navigationId](bool loaded) {
+                if (!guard || !loaded) {
+                    return;
+                }
+                guard->ensurePostVisible(navigationId);
+                guard->goToPost(navigationId);
+            },
+            true);
 
         closePanel();
     });
