@@ -168,7 +168,7 @@ void PostTimelineService::loadThread(BackendChannel& channel,
     QPointer<BackendChannel> channelGuard(&channel);
     NetworkRequest request(path);
     httpConnector.get(request, HttpResponseCallback(
-        [channelGuard, rootId, initialPage, callback = std::move(callback)](
+        [channelGuard, rootId, fromPost, initialPage, callback = std::move(callback)](
             QVariant status, const QJsonDocument& doc) mutable {
             Page result;
             result.success = status.toInt() == QNetworkReply::NoError && doc.isObject();
@@ -185,6 +185,13 @@ void PostTimelineService::loadThread(BackendChannel& channel,
             result.postIds = chronologicalOrder(posts, rootId);
             if (!initialPage) {
                 result.postIds.removeAll(rootId);
+            }
+            // Mattermost may include the `fromPost` cursor itself in the next
+            // page. It is an overlap marker, not a new logical row; passing it
+            // to PostTimeline::placeWindow() would relocate the existing post
+            // one index forward and manufacture an artificial gap.
+            if (!fromPost.isEmpty()) {
+                result.postIds.removeAll(fromPost);
             }
             result.prevPostId = root.value(QStringLiteral("prev_post_id")).toString();
             result.nextPostId = root.value(QStringLiteral("next_post_id")).toString();
@@ -220,8 +227,9 @@ void PostTimelineService::ingest(BackendChannel& channel, const QJsonObject& pos
     // expects Mattermost's newest -> oldest order, while the timeline itself is
     // deliberately represented oldest -> newest.
     const QStringList chronological = allChronologicalOrder(postsObject);
+    const int postCount = static_cast<int>(chronological.size());
     QJsonArray newestFirst;
-    for (int i = chronological.size() - 1; i >= 0; --i) {
+    for (int i = postCount - 1; i >= 0; --i) {
         newestFirst.push_back(chronological.at(i));
     }
     channel.mergePostContext(newestFirst, postsObject);
