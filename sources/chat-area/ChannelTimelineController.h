@@ -22,7 +22,7 @@ class QEvent;
 namespace Mattermost {
 
 class ChatArea;
-class ChannelNewPosts;
+struct ChannelNewPosts;
 class ChannelTimelineController;
 
 /** Created from ChatArea's late member initializer; returns null for threads. */
