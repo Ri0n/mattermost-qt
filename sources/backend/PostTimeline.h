@@ -1,17 +1,3 @@
-/**
- * @file PostTimeline.h
- * @brief Sparse logical post timeline used by virtualized channel/thread views.
- *
- * Copyright 2026 Sergei Ilinykh
- *
- * This file is part of Mattermost-QT.
- *
- * Mattermost-QT is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
- * (at your option) any later version.
- */
-
 #pragma once
 
 #include <QHash>
@@ -21,16 +7,6 @@
 
 namespace Mattermost {
 
-/**
- * Logical ordering of a potentially very large post stream.
- *
- * Only loaded posts occupy memory. Missing ranges are represented implicitly
- * as gaps whose pixel size is estimated from measured post heights. This keeps
- * scrollbar geometry useful before every post is downloaded and provides the
- * mapping needed to seek into an unloaded range.
- *
- * Logical indices are oldest -> newest for both channel and thread timelines.
- */
 class PostTimeline
 {
 public:
@@ -60,14 +36,13 @@ public:
 
     void reset(int totalCount = 0);
     void setTotalCount(int totalCount);
+    // Channel pages are indexed from the newest edge. When an estimated root
+    // count changes, shift existing rows by the delta so the newest edge stays
+    // fixed instead of appending/removing capacity on the wrong side.
+    void setTotalCountPreservingNewest(int totalCount);
     int totalCount() const { return logicalCount; }
     int loadedCount() const { return loadedByIndex.size(); }
 
-    /**
-     * Place an authoritative chronological window at exact logical indices.
-     * Existing occurrences of the same post IDs are relocated, so an ID can
-     * never exist at two positions in the same timeline.
-     */
     void placeWindow(int firstIndex, const QStringList& chronologicalPostIds);
 
     bool contains(const QString& postId) const;
@@ -83,6 +58,7 @@ public:
     PixelLocation locatePixel(qint64 pixelOffset) const;
 
 private:
+    void rebuildMeasuredHeightStats();
     int rowHeight(const QString& postId) const;
     qint64 estimatedGapHeight(int count) const;
 
