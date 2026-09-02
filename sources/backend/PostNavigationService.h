@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -43,7 +43,8 @@ public:
 
     void loadAround(BackendChannel& channel,
                     const QString& postId,
-                    std::function<void(bool)> callback = {});
+                    std::function<void(bool)> callback = {},
+                    bool forceContext = false);
 
 private:
     explicit PostNavigationService(Backend& backend);
