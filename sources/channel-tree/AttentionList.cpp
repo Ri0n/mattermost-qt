@@ -23,6 +23,7 @@
 #include "AttentionList.h"
 
 #include <algorithm>
+#include <utility>
 
 #include <QDateTime>
 #include <QFont>
@@ -31,6 +32,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
 
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
@@ -221,9 +223,6 @@ void AttentionList::refresh()
         uint64_t sortTime = 0;
     };
 
-    const QString selectedType = currentItem()
-        ? currentItem()->data(0, EntryTypeRole).toString()
-        : QString();
     const QString selectedChannel = currentItem()
         ? currentItem()->data(0, ChannelIdRole).toString()
         : QString();
@@ -272,10 +271,9 @@ void AttentionList::refresh()
         entries.push_back(std::move(display));
     }
 
-    // Mattermost only has a real Thread row after the conversation becomes a
-    // thread. A root post that directly mentions this user is still personal
-    // attention, so represent that recipient-specific websocket event as a
-    // one-post synthetic thread until the channel is viewed.
+    // A root mention has no server Thread row yet. Mattermost sends recipient-
+    // specific mention information on the websocket event, so model it as a
+    // one-post synthetic thread until that channel is viewed.
     for (auto it = syntheticMentions.cbegin(); it != syntheticMentions.cend(); ++it) {
         if (realThreadIds.contains(it.key())) {
             continue;
@@ -324,8 +322,13 @@ void AttentionList::refresh()
             if (channel.type == BackendChannel::directChannel) {
                 BackendUser* user = backend->getStorage().getUserById(channel.name);
                 if (!user) {
+                    QPointer<AttentionList> guard(this);
                     UserProfileService::instance(*backend).ensureUser(
-                        channel.name, [this](const BackendUser*) { refresh(); });
+                        channel.name, [guard](const BackendUser*) {
+                            if (guard) {
+                                guard->refresh();
+                            }
+                        });
                 } else {
                     if (!user->avatar.isNull()) {
                         item->setIcon(0, QIcon(user->avatar));
@@ -363,7 +366,6 @@ void AttentionList::refresh()
         setCurrentItem(restoreItem);
     }
     refreshing = false;
-    Q_UNUSED(selectedType);
 }
 
 void AttentionList::scheduleThreadRefresh()
@@ -499,6 +501,17 @@ void AttentionList::openThread(const QString& channelId,
         return;
     }
 
+    // A root mention intentionally behaves like a one-message tracked thread,
+    // but the Mattermost server has no actual Thread row until a reply exists.
+    // The root post is already in channel.posts from the websocket event, so it
+    // can be opened directly and must not hit the thread-read endpoint.
+    if (syntheticMentions.contains(threadId)) {
+        syntheticMentions.remove(threadId);
+        refresh();
+        emit threadSelected(channelId, threadId);
+        return;
+    }
+
     NetworkRequest request(
         QStringLiteral("posts/") + threadId + QStringLiteral("/thread?per_page=100"));
     httpConnector.get(request, HttpResponseCallback(
@@ -532,7 +545,6 @@ void AttentionList::markThreadRead(const QString& teamId, const QString& threadI
             ++it;
         }
     }
-    syntheticMentions.remove(threadId);
     refresh();
 
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
