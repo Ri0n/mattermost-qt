@@ -142,19 +142,18 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
         // arbitrarily long; only explicit user scrolling ends this navigation.
         chatArea->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
 
-        // Context must be fetched even when the target object is already in the
-        // backend cache. A cached post is not necessarily materialized as a row
-        // in the current channel view, which was the reason pinned navigation
-        // could leave pendingPostId forever without actually moving anywhere.
         chatArea->goToPost(navigationId);
         PostNavigationService::instance(chatArea->getBackend()).loadAround(
             channel, navigationId,
-            [guard, navigationId](bool loaded) {
-                if (!guard || !loaded) {
+            [guard, navigationId](const PostNavigationService::Context& context) {
+                if (!guard || !context.success) {
                     return;
                 }
                 guard->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
-                guard->ensurePostVisible(navigationId);
+                guard->ensurePinnedPostVisible(navigationId,
+                                               context.postIds,
+                                               context.reachedOldest,
+                                               context.reachedNewest);
                 guard->goToPost(navigationId);
             },
             true);
