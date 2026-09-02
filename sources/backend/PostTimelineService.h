@@ -46,6 +46,18 @@ public:
                          int perPage,
                          PageCallback callback);
 
+    /** Extend an arbitrary channel window toward older posts from a known post. */
+    void loadChannelBefore(BackendChannel& channel,
+                           const QString& beforePostId,
+                           int perPage,
+                           PageCallback callback);
+
+    /** Extend an arbitrary channel window toward newer posts from a known post. */
+    void loadChannelAfter(BackendChannel& channel,
+                          const QString& afterPostId,
+                          int perPage,
+                          PageCallback callback);
+
     /**
      * Fetch replies after a thread cursor. Empty cursor starts at the root.
      * Mattermost always includes the root in paginated thread responses; the
@@ -70,6 +82,12 @@ public:
 
 private:
     explicit PostTimelineService(Backend& backend);
+
+    void loadChannelCursor(BackendChannel& channel,
+                           const QString& direction,
+                           const QString& cursorPostId,
+                           int perPage,
+                           PageCallback callback);
 
     void loadThread(BackendChannel& channel,
                     const QString& rootId,
