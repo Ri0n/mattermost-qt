@@ -1,0 +1,170 @@
+name: Packages
+
+on:
+  workflow_dispatch:
+  # Keep the packaging workflow testable while this PR is under review. This
+  # trigger is removed after the packaging jobs have been verified once.
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+env:
+  QT_WINDOWS_VERSION: "6.10.3"
+
+jobs:
+  debian:
+    name: DEB / Ubuntu ${{ matrix.ubuntu-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ubuntu-version: "22.04"
+            runner: ubuntu-22.04
+            qt6: "OFF"
+          - ubuntu-version: "24.04"
+            runner: ubuntu-24.04
+            qt6: "ON"
+          - ubuntu-version: "26.04"
+            runner: ubuntu-26.04
+            qt6: "ON"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          packages=(build-essential dpkg-dev fakeroot)
+          if [[ "${{ matrix.qt6 }}" == "ON" ]]; then
+            packages+=(qt6-base-dev qt6-websockets-dev)
+          else
+            packages+=(qtbase5-dev libqt5websockets5-dev)
+          fi
+          sudo apt-get install -y --no-install-recommends "${packages[@]}"
+
+      - name: Configure
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQT_6=${{ matrix.qt6 }} \
+            -DBUILD_TESTING=ON \
+            -DWARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build build --parallel 4
+
+      - name: Unit tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Build DEB
+        shell: bash
+        run: |
+          set -euo pipefail
+          cpack --config build/CPackConfig.cmake -G DEB -B package
+          test -n "$(find package -maxdepth 1 -type f -name '*.deb' -print -quit)"
+
+      - name: Upload DEB
+        uses: actions/upload-artifact@v7
+        with:
+          name: mattermost-qt-deb-ubuntu-${{ matrix.ubuntu-version }}-amd64
+          path: package/*.deb
+          if-no-files-found: error
+          compression-level: 0
+
+  windows:
+    name: Windows x64 installer
+    runs-on: windows-2025
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_WINDOWS_VERSION }}
+          modules: qtwebsockets
+          cache: true
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install NSIS
+        run: |
+          choco install nsis -y --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $nsisDir = "${env:ProgramFiles(x86)}\NSIS"
+          if (-not (Test-Path (Join-Path $nsisDir "makensis.exe"))) {
+            throw "makensis.exe was not installed in $nsisDir"
+          }
+          $nsisDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DQT_6=ON `
+            -DBUILD_TESTING=ON `
+            -DWARNINGS_AS_ERRORS=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build
+        run: |
+          cmake --build build --parallel 4
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Unit tests
+        run: |
+          ctest --test-dir build --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify deployed runtime
+        run: |
+          $stage = Join-Path $env:GITHUB_WORKSPACE "stage"
+          cmake --install build --prefix "$stage"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $required = @(
+            (Join-Path $stage "bin/mattermost-qt.exe"),
+            (Join-Path $stage "bin/Qt6Core.dll"),
+            (Join-Path $stage "bin/Qt6Widgets.dll"),
+            (Join-Path $stage "bin/Qt6Network.dll"),
+            (Join-Path $stage "bin/Qt6WebSockets.dll"),
+            (Join-Path $stage "plugins/platforms/qwindows.dll")
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) {
+              throw "Qt deployment is incomplete: missing $path"
+            }
+          }
+
+      - name: Build NSIS installer
+        run: |
+          cpack --config build/CPackConfig.cmake -G NSIS -B package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Get-ChildItem package -File -Filter "*.exe" | Select-Object -First 1)) {
+            throw "CPack did not produce an NSIS installer"
+          }
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: mattermost-qt-windows-x64-installer
+          path: package/*.exe
+          if-no-files-found: error
+          compression-level: 0

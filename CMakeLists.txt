@@ -123,6 +123,20 @@ if(NOT ANDROID)
 	install(TARGETS "${APPID}" RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 endif()
 
+# Qt's deployment API runs windeployqt at install/package time and copies the
+# Qt runtime, plugins and the MSVC runtime into CPack's staging tree. Keeping
+# deployment in the install rules means a normal `cmake --install` and the
+# Windows installer contain the same runtime payload.
+if(WIN32 AND QT_VERSION_MAJOR EQUAL 6)
+	qt_generate_deploy_app_script(
+		TARGET "${APPID}"
+		OUTPUT_SCRIPT qt_deploy_script
+		NO_TRANSLATIONS
+		NO_UNSUPPORTED_PLATFORM_ERROR
+	)
+	install(SCRIPT "${qt_deploy_script}")
+endif()
+
 if(UNIX)
 	set(SRC_ICONS_DIR "resources/icons/application-dark")
 	set(SRC_ICON_PREFIX "${APPID}-dark")
@@ -150,9 +164,21 @@ endif()
 set(CPACK_PACKAGE_NAME "${APPID}")
 set(CPACK_PACKAGE_VENDOR "mattermost-qt")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Native Qt client for Mattermost")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/Ri0n/mattermost-qt")
 set(CPACK_PACKAGE_CONTACT "Mattermost Qt Maintainers <maintainers@mattermost-qt.invalid>")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/COPYING.LESSER")
+set(CPACK_PACKAGE_EXECUTABLES "${APPID}" "Mattermost Qt")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Mattermost Qt Maintainers <maintainers@mattermost-qt.invalid>")
 set(CPACK_DEBIAN_PACKAGE_SECTION "net")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+
+if(WIN32)
+	set(CPACK_PACKAGE_INSTALL_DIRECTORY "Mattermost Qt")
+	set(CPACK_NSIS_DISPLAY_NAME "Mattermost Qt")
+	set(CPACK_NSIS_PACKAGE_NAME "Mattermost Qt")
+	set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+endif()
+
 include(CPack)
