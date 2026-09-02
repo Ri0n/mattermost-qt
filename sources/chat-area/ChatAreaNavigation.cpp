@@ -2,6 +2,7 @@
 
 #include <QListWidgetItem>
 
+#include "ChannelTimelineController.h"
 #include "PostsListWidget.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
@@ -21,6 +22,17 @@ bool ChatArea::ensurePostVisible(const QString& postId)
         return true;
     }
 
+    // In a virtualized channel the target must become part of the logical
+    // timeline, not merely be injected as an orphan QListWidget row. The
+    // controller uses the context that PostNavigationService has just cached,
+    // places it into the nearest estimated gap and rebuilds the viewport.
+    if (channelTimelineController
+        && channelTimelineController->ensurePostVisible(postId)) {
+        return true;
+    }
+
+    // Compatibility fallback for a ChatArea that has not activated its sparse
+    // controller yet (for example during construction/deactivation races).
     BackendPost* post = channel.postIdToPost.value(postId, nullptr);
     // Replies are intentionally hidden from the main channel timeline. Pinned
     // reply navigation resolves to its root before reaching this method.
