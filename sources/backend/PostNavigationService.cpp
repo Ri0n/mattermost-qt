@@ -137,7 +137,9 @@ void PostNavigationService::loadAround(BackendChannel& channel,
 
         // Mattermost PostList order is newest -> oldest. Build the same order
         // as the webapp's getPostsAround(): posts after target, target itself,
-        // then posts before it.
+        // then posts before it. BackendChannel::mergePostContext() is designed
+        // specifically for this arbitrary window and does not apply the
+        // newest-edge/deletion assumptions of the legacy reconnect addPosts().
         QJsonArray order;
         QSet<QString> seen;
         appendUniqueOrder(order, seen, state->afterOrder);
@@ -148,50 +150,7 @@ void PostNavigationService::loadAround(BackendChannel& channel,
         appendUniqueOrder(order, seen, state->beforeOrder);
 
         BackendChannel& currentChannel = *state->channel;
-        const uint64_t targetCreateAt = state->targetPost.value(QStringLiteral("create_at"))
-            .toVariant().toULongLong();
-
-        if (currentChannel.posts.empty()) {
-            currentChannel.prependPosts(order, posts);
-        } else if (targetCreateAt != 0
-                   && targetCreateAt < currentChannel.posts.front().create_at) {
-            // The existing BackendChannel::addPosts() is a reconnect/newest-edge
-            // merge and expects its response to overlap the newest local post.
-            // A posts-around response for an old pin instead overlaps our oldest
-            // edge. Strip that already-loaded overlap and prepend only genuinely
-            // older rows so ordering and post identity remain correct.
-            const uint64_t oldestLoadedAt = currentChannel.posts.front().create_at;
-            QJsonArray olderOrder;
-            QJsonObject olderPosts;
-
-            for (const QJsonValue& value : order) {
-                const QString id = value.toString();
-                if (id.isEmpty() || currentChannel.postIdToPost.contains(id)) {
-                    continue;
-                }
-
-                const QJsonObject post = posts.value(id).toObject();
-                const uint64_t createAt = post.value(QStringLiteral("create_at"))
-                    .toVariant().toULongLong();
-                if (createAt == 0 || createAt >= oldestLoadedAt) {
-                    continue;
-                }
-
-                olderOrder.push_back(id);
-                olderPosts.insert(id, post);
-            }
-
-            if (!olderOrder.isEmpty()) {
-                currentChannel.prependPosts(olderOrder, olderPosts);
-            }
-        } else {
-            // This is only expected when navigating into an unusual hole in the
-            // currently loaded range, or when Attention explicitly requests a
-            // parent-channel context around an already cached thread root.
-            // addPosts() can use the surrounding overlap to reconcile that range
-            // without duplicating known posts.
-            currentChannel.addPosts(order, posts);
-        }
+        currentChannel.mergePostContext(order, posts);
 
         if (state->callback) {
             state->callback(currentChannel.postIdToPost.contains(state->postId));
