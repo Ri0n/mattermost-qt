@@ -74,7 +74,7 @@ void ChannelQuickList::refresh()
     for (auto it = backend->getStorage().channels.begin();
          it != backend->getStorage().channels.end(); ++it) {
         BackendChannel* channel = it.value();
-        if (!channel || !sidebar.isChannelTracked(channel->id)) {
+        if (!channel) {
             continue;
         }
 
@@ -82,8 +82,11 @@ void ChannelQuickList::refresh()
         const bool muted = sidebar.isChannelMuted(*channel);
         const bool mentioned = sidebar.hasUnreadMention(channel->id);
 
-        // Mattermost's Quick Switcher doesn't show muted channels in its
-        // Unread group, even when they contain a mention.
+        // ActivityTracker is populated from our channel memberships. Checking
+        // isChannelTracked() here used to walk every team/category and rebuild
+        // visibleChannelIds() for every single channel, turning a refresh into
+        // near-quadratic work on large accounts. The mode-specific predicates
+        // below already express the required membership/activity state.
         if (mode == Unreads && (!unread || muted)) {
             continue;
         }
