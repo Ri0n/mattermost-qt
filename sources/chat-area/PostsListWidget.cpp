@@ -110,7 +110,7 @@ PostsListWidget::PostsListWidget (QWidget* parent)
 		} else if (savedScrollAnchor.valid) {
 			// A scrollbar value changed without corresponding user input. This is
 			// a layout/programmatic movement and must never become the new reading
-			// position. Put the user's anchor back after the layout settles.
+			// position. Put the user's anchor (or sticky bottom) back after layout.
 			scheduleSavedScrollAnchorRestore();
 		}
 	});
@@ -178,8 +178,8 @@ void PostsListWidget::freezeCurrentViewportAnchor()
 		saveScrollAnchor();
 	}
 	if (savedScrollAnchor.valid) {
-		// "At bottom" is useful read-state information, but it is never a moving
-		// scroll target. Preserve the concrete post that was visible now.
+		// Hiding a chat must freeze a concrete reading position. Messages arriving
+		// while the page is inactive must not keep advancing an old sticky bottom.
 		savedScrollAnchor.atBottom = false;
 	}
 }
@@ -187,6 +187,17 @@ void PostsListWidget::freezeCurrentViewportAnchor()
 void PostsListWidget::noteUserScrollIntent()
 {
 	++scrollIntentGeneration;
+
+	// User input immediately detaches both semantic navigation and sticky bottom.
+	// If the gesture ends at the real bottom, commitUserScrollAnchor() enables
+	// bottom following again from the final scrollbar position.
+	if (!timelineNavigationPostId.isEmpty()) {
+		clearTimelineNavigationLock();
+	}
+	if (savedScrollAnchor.valid) {
+		savedScrollAnchor.atBottom = false;
+	}
+
 	pendingScrollBarUserIntent = true;
 	schedulePendingUserIntentReset();
 }
@@ -213,7 +224,8 @@ void PostsListWidget::scheduleUserScrollAnchorUpdate()
 void PostsListWidget::commitUserScrollAnchor()
 {
 	// A stale automatic restore may still be queued from before the input event.
-	// Advancing the generation makes that callback harmless.
+	// Advancing the generation makes that callback harmless. saveScrollAnchor()
+	// samples the final physical bottom state; that becomes the sticky marker.
 	++scrollIntentGeneration;
 	saveScrollAnchor();
 	if (savedScrollAnchor.valid) {
@@ -239,6 +251,11 @@ void PostsListWidget::clear()
 
 void PostsListWidget::scheduleSavedScrollAnchorRestore()
 {
+	if (!timelineNavigationPostId.isEmpty()) {
+		scheduleTimelineNavigationRestore();
+		return;
+	}
+
 	if (!savedScrollAnchor.valid || savedScrollRestoreScheduled) {
 		return;
 	}
@@ -260,7 +277,26 @@ void PostsListWidget::scheduleSavedScrollAnchorRestore()
 
 void PostsListWidget::restoreSavedScrollAnchor(quint64 generation)
 {
+	if (!timelineNavigationPostId.isEmpty()) {
+		scheduleTimelineNavigationRestore();
+		return;
+	}
+
 	if (!savedScrollAnchor.valid || generation != scrollIntentGeneration) {
+		return;
+	}
+
+	// atBottom is an explicit "follow latest" marker, not merely diagnostic
+	// geometry. While it is set, every automatic layout/new-message restore keeps
+	// the newest content visible. Semantic navigation and user scroll clear it.
+	if (savedScrollAnchor.atBottom) {
+		restoringSavedScroll = true;
+		QListWidget::scrollToBottom();
+		restoringSavedScroll = false;
+		saveScrollAnchor();
+		if (savedScrollAnchor.valid) {
+			savedScrollAnchor.atBottom = true;
+		}
 		return;
 	}
 
@@ -322,35 +358,49 @@ void PostsListWidget::scrollToItem(const QListWidgetItem* listItem, QAbstractIte
 	}
 
 	// An explicit scrollToItem() is semantic navigation (go to pinned post,
-	// unread separator, quote, etc.), not a layout side effect. It becomes the
-	// new durable viewport just like a user scroll, but does not emit the
-	// userViewportChanged read-tracking signal.
+	// unread separator, quote, etc.). It always detaches from sticky bottom.
 	++scrollIntentGeneration;
+	if (savedScrollAnchor.valid) {
+		savedScrollAnchor.atBottom = false;
+	}
 	restoringSavedScroll = true;
 	QListWidget::scrollToItem(listItem, hint);
 	restoringSavedScroll = false;
 	commitCurrentViewportAsAnchor();
+	if (savedScrollAnchor.valid) {
+		savedScrollAnchor.atBottom = false;
+	}
 	QTimer::singleShot(0, this, [this] {
 		commitCurrentViewportAsAnchor();
+		if (savedScrollAnchor.valid) {
+			savedScrollAnchor.atBottom = false;
+		}
 	});
 }
 
 void PostsListWidget::scrollToBottom()
 {
-	if (savedScrollAnchor.valid) {
-		// This method is used by layout/population/new-post code. Once a viewport
-		// has been established, automatic calls must never advance it, even if the
-		// user happened to be at the old bottom before new content appeared.
+	if (!timelineNavigationPostId.isEmpty()) {
+		scheduleTimelineNavigationRestore();
+		return;
+	}
+
+	if (savedScrollAnchor.valid && !savedScrollAnchor.atBottom) {
+		// Automatic callers (new-post/layout/population) are allowed to move to
+		// the newest edge only while the explicit sticky-bottom marker is set.
 		scheduleSavedScrollAnchorRestore();
 		return;
 	}
 
-	// First population has no user viewport yet. The historical behaviour is to
-	// open at the bottom; make that initial position the durable concrete anchor.
+	// Initial population, or an already sticky viewport: remain attached to the
+	// newest edge and establish that state as the durable anchor.
 	restoringSavedScroll = true;
 	QListWidget::scrollToBottom();
 	restoringSavedScroll = false;
 	commitCurrentViewportAsAnchor();
+	if (savedScrollAnchor.valid) {
+		savedScrollAnchor.atBottom = true;
+	}
 }
 
 void PostsListWidget::insertPost (int position, PostWidget* postWidget)
@@ -602,6 +652,8 @@ bool PostsListWidget::eventFilter(QObject* watched, QEvent* event)
 /*
  * get selected items in the order, in which they appear in the PostsListWidget
  */
+QList<QListWidgetItem*> PostsListListWidget_dummy_for_formatting;
+
 QList<QListWidgetItem*> PostsListWidget::sortedSelectedItems () const
 {
 	auto cmp = [this] (const QListWidgetItem* lhs, const QListWidgetItem* rhs) {
@@ -746,6 +798,11 @@ void PostsListWidget::showContextMenu (const QPoint& pos)
 
 void PostsListWidget::resizeToBottom ()
 {
+	if (!timelineNavigationPostId.isEmpty()) {
+		scheduleTimelineNavigationRestore();
+		return;
+	}
+
 	if (savedScrollAnchor.valid) {
 		scheduleSavedScrollAnchorRestore();
 		return;
@@ -756,6 +813,9 @@ void PostsListWidget::resizeToBottom ()
 		QListWidget::scrollToBottom ();
 		restoringSavedScroll = false;
 		commitCurrentViewportAsAnchor();
+		if (savedScrollAnchor.valid) {
+			savedScrollAnchor.atBottom = true;
+		}
 	}
 }
 
