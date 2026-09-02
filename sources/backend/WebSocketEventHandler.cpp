@@ -27,6 +27,7 @@
 #include <QJsonDocument>
 #include "Backend.h"
 #include "Storage.h"
+#include "UserProfileService.h"
 #include "log.h"
 
 namespace Mattermost {
@@ -181,12 +182,28 @@ void WebSocketEventHandler::handleEvent (const UserUpdatedEvent& event)
 	 */
 	if (!user) {
 		LOG_DEBUG ("User updated: new user " << event.userID());
-		storage.addUser (event.userObject);
+		user = storage.addUser (event.userObject);
 	} else {
+		const uint64_t previousPictureVersion = user->last_picture_update;
+		const bool avatarWasLoaded = !user->avatar.isNull();
+
 		QString updatedPropertiesString;
 		user->updateFrom (BackendUser (event.userObject), updatedPropertiesString);
 		LOG_DEBUG ("User updated: existing user " << user->getDisplayName()
 		           << ". Modified properties:\n" << updatedPropertiesString);
+
+		if (avatarWasLoaded && previousPictureVersion != user->last_picture_update) {
+			UserProfileService::instance(backend).ensureAvatar(*user);
+		}
+	}
+
+	if (!user) {
+		return;
+	}
+
+	if (BackendChannel* directChannel = storage.getDirectChannelByUserId(user->id)) {
+		directChannel->display_name = user->getDisplayName();
+		emit directChannel->onUpdated();
 	}
 }
 
