@@ -26,11 +26,9 @@ namespace ChannelIcons {
 
 inline QIcon channel()
 {
-    QIcon themed = QIcon::fromTheme(QStringLiteral("irc-channel-active"));
-    if (!themed.isNull()) {
-        return themed;
-    }
-
+    // Do not use theme icons such as "irc-channel-active" here: depending on
+    // the desktop theme they can encode an active/online state. Channels do not
+    // have presence; only direct conversations with real users do.
     QPixmap pixmap(24, 24);
     pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
