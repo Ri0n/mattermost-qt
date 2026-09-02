@@ -1,6 +1,8 @@
 #include "ThreadTimelineController.h"
 
 #include <algorithm>
+#include <climits>
+#include <cstdlib>
 
 #include <QAbstractItemView>
 #include <QListWidgetItem>
@@ -33,6 +35,18 @@ int countCachedThreadPosts(const BackendChannel& channel, const QString& rootId)
         }
     }
     return count;
+}
+
+int expectedThreadPostCount(const BackendPost* root,
+                            const BackendChannel& channel,
+                            const QString& rootId)
+{
+    if (!root) {
+        return std::max(1, countCachedThreadPosts(channel, rootId));
+    }
+
+    const int64_t boundedReplies = std::min<int64_t>(root->reply_count, INT_MAX - 1);
+    return std::max(1, static_cast<int>(boundedReplies) + 1);
 }
 
 } // namespace
@@ -71,11 +85,8 @@ void ThreadTimelineController::start()
     }
 
     BackendPost* root = area.channel.postIdToPost.value(rootId, nullptr);
-    if (root) {
-        expectedPostCount = std::max(1, static_cast<int>(root->reply_count + 1));
-    } else {
-        expectedPostCount = std::max(1, countCachedThreadPosts(area.channel, rootId));
-    }
+    expectedPostCount = expectedThreadPostCount(root, area.channel, rootId);
+
     timeline.reset(expectedPostCount);
     if (root) {
         timeline.placeWindow(0, QStringList {rootId});
@@ -105,21 +116,26 @@ void ThreadTimelineController::start()
             return;
         }
 
-        ++expectedPostCount;
+        if (expectedPostCount < INT_MAX) {
+            ++expectedPostCount;
+        }
         timeline.setTotalCount(expectedPostCount);
         // A websocket reply is the new logical end. Keep it visible as a real
         // row even when the middle of the thread is still represented by a gap.
         timeline.placeWindow(expectedPostCount - 1, QStringList {post.id});
-        renderTimeline();
+        renderTimeline(post.id, false);
     });
     connect(&area.channel, &BackendChannel::onPostEdited, this,
             [this](BackendPost& post) {
-        if (post.id == rootId) {
-            expectedPostCount = std::max(
-                expectedPostCount, static_cast<int>(post.reply_count + 1));
-            timeline.setTotalCount(expectedPostCount);
-            updateGapHeights();
+        if (post.id != rootId) {
+            return;
         }
+
+        expectedPostCount = std::max(
+            expectedPostCount,
+            expectedThreadPostCount(&post, area.channel, rootId));
+        timeline.setTotalCount(expectedPostCount);
+        updateGapHeights();
     });
 
     requestNextPage();
@@ -171,23 +187,26 @@ void ThreadTimelineController::requestNextPage()
                 return;
             }
 
-            const int neededCount = guard->nextLogicalIndex + pageIds.size();
+            const int pageSize = static_cast<int>(pageIds.size());
+            const int neededCount = guard->nextLogicalIndex > INT_MAX - pageSize
+                ? INT_MAX : guard->nextLogicalIndex + pageSize;
             if (neededCount > guard->timeline.totalCount()) {
                 guard->expectedPostCount = std::max(guard->expectedPostCount, neededCount);
                 guard->timeline.setTotalCount(guard->expectedPostCount);
             }
             guard->timeline.placeWindow(guard->nextLogicalIndex, pageIds);
-            guard->nextLogicalIndex += pageIds.size();
+            guard->nextLogicalIndex = neededCount;
 
             guard->cursorPostId = newCursor;
             if (BackendPost* cursorPost = guard->area.channel.postIdToPost.value(newCursor, nullptr)) {
                 guard->cursorCreateAt = cursorPost->create_at;
             }
 
+            const int responseSize = static_cast<int>(page.postIds.size());
             // has_next is authoritative on modern servers. The full-page check
             // keeps pagination working against older servers that omit it; at
             // worst an exact multiple causes one harmless empty request.
-            guard->hasNext = page.hasNext || page.postIds.size() >= ThreadPageSize;
+            guard->hasNext = page.hasNext || responseSize >= ThreadPageSize;
 
             guard->renderTimeline();
 
@@ -240,9 +259,10 @@ void ThreadTimelineController::requestSeek(int logicalIndex)
                 return;
             }
 
-            const int firstIndex = std::min(logicalIndex,
-                                            std::max(0, guard->timeline.totalCount()
-                                                           - page.postIds.size()));
+            const int pageSize = static_cast<int>(page.postIds.size());
+            const int firstIndex = std::min(
+                logicalIndex,
+                std::max(0, guard->timeline.totalCount() - pageSize));
             guard->timeline.placeWindow(firstIndex, page.postIds);
             guard->renderTimeline(page.postIds.front(), true);
         });
@@ -332,8 +352,8 @@ void ThreadTimelineController::renderTimeline(const QString& focusPostId, bool f
             // Deliberately do not set text, icon, background or itemWidget().
             // It contributes geometry only; the list viewport background shows
             // through the entire unloaded region.
-            gapItem->setSizeHint(QSize(0, static_cast<int>(std::min<qint64>(
-                                            span.estimatedHeight, INT_MAX))));
+            const qint64 boundedHeight = std::min<qint64>(span.estimatedHeight, INT_MAX);
+            gapItem->setSizeHint(QSize(0, static_cast<int>(boundedHeight)));
             list->addItem(gapItem);
             continue;
         }
@@ -386,7 +406,8 @@ void ThreadTimelineController::updateGapHeights()
 
         const int count = item->data(ItemRole::gapCount).toInt();
         const qint64 estimatedHeight = static_cast<qint64>(std::max(0, count)) * average;
-        item->setSizeHint(QSize(0, static_cast<int>(std::min<qint64>(estimatedHeight, INT_MAX))));
+        const qint64 boundedHeight = std::min<qint64>(estimatedHeight, INT_MAX);
+        item->setSizeHint(QSize(0, static_cast<int>(boundedHeight)));
     }
 }
 
