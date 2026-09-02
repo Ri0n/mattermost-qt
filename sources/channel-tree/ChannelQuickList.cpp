@@ -44,14 +44,9 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
         }
         const QString channelId = current->data(0, ChannelTree::ItemIdRole).toString();
         if (!channelId.isEmpty()) {
+            // ChannelTree/ChatArea owns read acknowledgement. It waits until
+            // the selected channel's newest content has actually been rendered.
             emit channelSelected(channelId);
-
-            if (backend) {
-                if (BackendChannel* channel = backend->getStorage().getChannelById(channelId)) {
-                    SidebarService::instance(*backend).markChannelViewedLocally(*channel);
-                    backend->markChannelAsViewed(*channel);
-                }
-            }
         }
     });
 
