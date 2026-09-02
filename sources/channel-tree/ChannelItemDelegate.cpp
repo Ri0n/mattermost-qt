@@ -35,7 +35,6 @@ void drawStatusBadge(QPainter* painter, const QRect& rect, const QString& status
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, true);
 
-    // A one-pixel halo keeps the badge readable where it overlaps the avatar.
     painter->setPen(Qt::NoPen);
     painter->setBrush(backgroundColor);
     painter->drawEllipse(QRectF(rect).adjusted(-1.0, -1.0, 1.0, 1.0));
@@ -83,9 +82,6 @@ void drawStatusBadge(QPainter* painter, const QRect& rect, const QString& status
         painter->drawLine(QPointF(badgeRect.left() + 2.0, badgeRect.center().y()),
                           QPointF(badgeRect.right() - 2.0, badgeRect.center().y()));
     } else {
-        // Mattermost's offline marker is a dark center with a green outline.
-        // Treat unknown server states as offline rather than silently dropping
-        // the status indicator.
         QPen pen(OnlineColor);
         pen.setWidthF(1.25);
         painter->setPen(pen);
@@ -96,10 +92,9 @@ void drawStatusBadge(QPainter* painter, const QRect& rect, const QString& status
     painter->restore();
 }
 
-BackendChannel::type channelType(const QModelIndex& index)
+int channelType(const QModelIndex& index)
 {
-    return static_cast<BackendChannel::type>(
-        index.data(SidebarItem::ChannelTypeRole).toInt());
+    return index.data(SidebarItem::ChannelTypeRole).toInt();
 }
 
 } // namespace
@@ -132,11 +127,8 @@ void ChannelItemDelegate::paint(QPainter* painter,
     initStyleOption(&base, index);
     const QString text = base.text;
     QIcon icon = base.icon;
-    const BackendChannel::type type = channelType(index);
+    const int type = channelType(index);
 
-    // The row itself carries its BackendChannel::type. The delegate therefore
-    // behaves identically in Channels and Recent and never needs to inspect its
-    // parent widget or resolve a BackendChannel through Storage.
     if (icon.isNull()) {
         if (type == BackendChannel::groupChannel) {
             icon = ChannelIcons::groupConversation();
@@ -162,9 +154,6 @@ void ChannelItemDelegate::paint(QPainter* painter,
                              AvatarSize);
         const QPixmap pixmap = icon.pixmap(AvatarSize, AvatarSize);
 
-        // Presence has meaning only for a direct conversation with one concrete
-        // user. Even malformed model data cannot put a status badge on public,
-        // private or group-channel glyphs.
         const QString status = type == BackendChannel::directChannel
             ? index.data(SidebarItem::PresenceRole).toString()
             : QString();
