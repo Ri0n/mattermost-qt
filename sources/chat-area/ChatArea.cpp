@@ -522,7 +522,7 @@ ChatArea::ChatArea (Backend& backend, BackendChannel& channel, QString rootId, C
 			const bool following = buttonGuard->property("following").toBool();
 			const bool desired = !following;
 			buttonGuard->setEnabled(false);
-			ThreadFollowService::instance(backend).setFollowing(
+			ThreadFollowService::instance(this->backend).setFollowing(
 				teamId, rootId, desired,
 				[buttonGuard, following, desired, setButtonState](bool success) {
 					if (!buttonGuard) {
@@ -761,13 +761,6 @@ void ChatArea::handleUserTyping (const BackendUser& user)
 void ChatArea::onActivate ()
 {
 	backend.setCurrentChannel (channel);
-
-	// Channel selection itself is an explicit user action, so update the local
-	// unread model immediately. The currently selected filtered row is retained
-	// by MainWindow until selection changes; the websocket echo later reconciles
-	// the same state from the server without making the old row linger.
-	SidebarService::instance(backend).markChannelViewedLocally(channel);
-	backend.markChannelAsViewed (channel);
 	init();
 }
 
