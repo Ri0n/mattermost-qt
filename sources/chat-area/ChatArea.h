@@ -23,6 +23,7 @@
 #include <QDate>
 #include <QPointer>
 #include <QSet>
+#include <QStringList>
 #include <QTreeWidgetItem>
 #include <QScrollBar>
 
@@ -81,6 +82,10 @@ public:
 	 * rendered; this bridges backend identity with the current materialized UI.
 	 */
 	bool ensurePostVisible (const QString& postId);
+	bool ensurePinnedPostVisible(const QString& postId,
+	                             const QStringList& contextPostIds,
+	                             bool reachedOldest,
+	                             bool reachedNewest);
 
 	/**
 	 * Temporarily make a semantic navigation target authoritative for viewport
