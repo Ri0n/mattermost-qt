@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include <QScrollBar>
+#include <QThread>
 #include <QTimer>
 
 namespace Mattermost {
@@ -11,6 +12,8 @@ void PostsListWidget::lockTimelineNavigationToPost(const QString& postId,
                                                    int viewportTopOffset,
                                                    int quietPeriodMs)
 {
+    Q_ASSERT(QThread::currentThread() == thread());
+
     if (postId.isEmpty()) {
         clearTimelineNavigationLock();
         return;
@@ -22,16 +25,32 @@ void PostsListWidget::lockTimelineNavigationToPost(const QString& postId,
                 [this](bool) { clearTimelineNavigationLock(); });
     }
 
+    if (!timelineNavigationGeometryConnected) {
+        timelineNavigationGeometryConnected = true;
+        QScrollBar* bar = verticalScrollBar();
+        connect(bar, &QScrollBar::rangeChanged, this,
+                [this](int, int) { scheduleTimelineNavigationRestore(); });
+        connect(bar, &QScrollBar::valueChanged, this,
+                [this](int) {
+            if (!restoringSavedScroll && !isUserScrollInProgress()) {
+                scheduleTimelineNavigationRestore();
+            }
+        });
+    }
+
     timelineNavigationPostId = postId;
     timelineNavigationTopOffset = std::max(0, viewportTopOffset);
-    timelineNavigationQuietPeriodMs = std::max(250, quietPeriodMs);
+    timelineNavigationQuietPeriodMs = std::max(0, quietPeriodMs);
     touchTimelineNavigationLock();
+    scheduleTimelineNavigationRestore();
 }
 
 void PostsListWidget::clearTimelineNavigationLock()
 {
+    Q_ASSERT(QThread::currentThread() == thread());
     ++timelineNavigationLockGeneration;
     timelineNavigationPostId.clear();
+    timelineNavigationRestoreScheduled = false;
 }
 
 void PostsListWidget::touchTimelineNavigationLock()
@@ -42,6 +61,10 @@ void PostsListWidget::touchTimelineNavigationLock()
 
     const quint64 generation = ++timelineNavigationLockGeneration;
     const int quietPeriodMs = timelineNavigationQuietPeriodMs;
+    if (quietPeriodMs <= 0) {
+        return;
+    }
+
     QTimer::singleShot(quietPeriodMs, this, [this, generation] {
         if (generation == timelineNavigationLockGeneration) {
             timelineNavigationPostId.clear();
@@ -49,8 +72,31 @@ void PostsListWidget::touchTimelineNavigationLock()
     });
 }
 
+void PostsListWidget::scheduleTimelineNavigationRestore()
+{
+    if (timelineNavigationPostId.isEmpty()
+        || timelineNavigationRestoreScheduled
+        || restoringSavedScroll
+        || isUserScrollInProgress()) {
+        return;
+    }
+
+    timelineNavigationRestoreScheduled = true;
+    QTimer::singleShot(0, this, [this] {
+        timelineNavigationRestoreScheduled = false;
+        if (timelineNavigationPostId.isEmpty()
+            || restoringSavedScroll
+            || isUserScrollInProgress()) {
+            return;
+        }
+        restoreTimelineNavigationLock();
+    });
+}
+
 bool PostsListWidget::restoreTimelineNavigationLock()
 {
+    Q_ASSERT(QThread::currentThread() == thread());
+
     if (timelineNavigationPostId.isEmpty()) {
         return false;
     }
@@ -99,6 +145,8 @@ bool PostsListWidget::restoreTimelineNavigationLock()
 
 void PostsListWidget::beginTimelineRebuild()
 {
+    Q_ASSERT(QThread::currentThread() == thread());
+
     ++scrollIntentGeneration;
     restoringSavedScroll = true;
 
@@ -122,6 +170,8 @@ void PostsListWidget::beginTimelineRebuild()
 
 void PostsListWidget::finishTimelineRebuildAtBottom()
 {
+    Q_ASSERT(QThread::currentThread() == thread());
+
     if (restoreTimelineNavigationLock()) {
         return;
     }
@@ -145,6 +195,8 @@ void PostsListWidget::finishTimelineRebuildAtBottom()
 bool PostsListWidget::finishTimelineRebuildAtPost(const QString& postId,
                                                    int viewportTopOffset)
 {
+    Q_ASSERT(QThread::currentThread() == thread());
+
     if (restoreTimelineNavigationLock()) {
         return true;
     }
@@ -194,6 +246,8 @@ bool PostsListWidget::finishTimelineRebuildAtPost(const QString& postId,
 
 void PostsListWidget::finishTimelineRebuildAtPixel(qint64 pixelOffset)
 {
+    Q_ASSERT(QThread::currentThread() == thread());
+
     if (restoreTimelineNavigationLock()) {
         return;
     }
