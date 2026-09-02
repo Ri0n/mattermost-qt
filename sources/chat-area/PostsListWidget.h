@@ -168,6 +168,16 @@ public:
 	bool finishTimelineRebuildAtPost(const QString& postId, int viewportTopOffset);
 	void finishTimelineRebuildAtPixel(qint64 pixelOffset);
 
+	/**
+	 * Keep a semantic navigation target fixed while sparse pages and attachment
+	 * geometry settle. The lock is automatically released after a quiet period;
+	 * every timeline rebuild that still contains the target extends that period.
+	 */
+	void lockTimelineNavigationToPost(const QString& postId,
+	                                  int viewportTopOffset = 0,
+	                                  int quietPeriodMs = 2000);
+	void clearTimelineNavigationLock();
+
 	Backend*						backend;
 signals:
 	void postEditInitiated (BackendPost& post);
@@ -192,6 +202,8 @@ private:
 	void commitUserScrollAnchor();
 	void schedulePendingUserIntentReset();
 	bool isUserScrollInProgress() const;
+	bool restoreTimelineNavigationLock();
+	void touchTimelineNavigationLock();
 
 	void copySelectedItemsToClipboard (PostWidget::FormatType formatType);
 	void keyPressEvent (QKeyEvent* event)		override;
@@ -214,6 +226,10 @@ private:
 	bool							scrollBarUserGesture = false;
 	bool							pendingScrollBarUserIntent = false;
 	quint64							scrollIntentGeneration = 0;
+	QString							timelineNavigationPostId;
+	int							timelineNavigationTopOffset = 0;
+	int							timelineNavigationQuietPeriodMs = 2000;
+	quint64							timelineNavigationLockGeneration = 0;
 };
 
 } /* namespace Mattermost */
