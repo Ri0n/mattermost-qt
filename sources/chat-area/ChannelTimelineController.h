@@ -33,7 +33,10 @@ public:
     explicit ChannelTimelineController(ChatArea& area);
 
     bool ensurePostVisible(const QString& postId);
-    bool ensurePinnedPostVisible(const QString& postId);
+    bool ensurePinnedPostVisible(const QString& postId,
+                                 const QStringList& contextPostIds,
+                                 bool reachedOldest,
+                                 bool reachedNewest);
     void beginContextNavigation(const QString& postId);
     void requestOlderPage();
 
