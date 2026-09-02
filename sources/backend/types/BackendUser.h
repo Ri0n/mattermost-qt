@@ -63,6 +63,7 @@ public:
 public:
 	QString 			id;
 	QPixmap				avatar;
+	uint64_t			avatar_picture_update = 0;
 	uint64_t 			create_at;
 	uint64_t			update_at;
 	uint64_t 			delete_at;
