@@ -16,7 +16,6 @@
 
 #include "backend/PostTimeline.h"
 
-class QListWidgetItem;
 class QEvent;
 
 namespace Mattermost {
@@ -40,6 +39,22 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    struct ViewportAnchor {
+        enum Kind {
+            None,
+            Bottom,
+            Post,
+            Gap,
+        } kind = None;
+
+        QString postId;
+        int postTopOffset = 0;
+        int distanceFromNewest = -1;
+        int offsetWithinEstimatedRow = 0;
+
+        bool isValid() const { return kind != None; }
+    };
+
     void tryStart();
     void start();
     void deactivate();
@@ -56,12 +71,17 @@ private:
     int estimateLogicalIndex(uint64_t createAt) const;
     int gapPlacementForWindow(int estimatedCenter, int count) const;
 
+    ViewportAnchor captureViewportAnchor() const;
+    void restoreViewportAnchor(const ViewportAnchor& anchor,
+                               const QString& focusPostId = QString());
+
     void scheduleViewportCheck();
     void checkViewport();
     void requestSeek(int logicalIndex);
-    int logicalIndexForNearbyGap(bool* viewportCenterInsideGap) const;
+    int logicalIndexNearViewport(int extraScreens, bool* centerInsideGap) const;
 
-    void renderTimeline(const QString& focusPostId = QString());
+    void renderTimeline(const QString& focusPostId = QString(),
+                        const ViewportAnchor& anchor = ViewportAnchor());
     void updateGapHeights();
     void scheduleMeasurementPass();
     void measureRenderedPosts();
@@ -92,7 +112,6 @@ private:
     bool initialRenderDone = false;
     bool requestInFlight = false;
     bool viewportCheckScheduled = false;
-    bool deferredExternalFlushScheduled = false;
     bool rebuilding = false;
 };
 
