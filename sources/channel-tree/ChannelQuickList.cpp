@@ -17,6 +17,7 @@
 #include "backend/Storage.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendUser.h"
+#include "channel-tree/ChannelIcons.h"
 #include "channel-tree/ChannelItemDelegate.h"
 #include "channel-tree/ChannelTree.h"
 
@@ -151,6 +152,10 @@ void ChannelQuickList::refresh()
                 item->setData(0, ChannelTree::ItemStatusRole, user->status);
                 ensureDirectUserConnections(channel);
             }
+        } else if (channel.type == BackendChannel::groupChannel) {
+            item->setIcon(0, ChannelIcons::groupConversation());
+        } else {
+            item->setIcon(0, ChannelIcons::channel());
         }
 
         channelItems.insert(channel.id, item);
