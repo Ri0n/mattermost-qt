@@ -44,6 +44,7 @@ public:
     void setMentioned (bool mentioned);
     void setStatus (const QString& status);
 protected:
+    BackendChannel* backendChannel() const;
     void addCommonContextMenuActions(QMenu& menu, BackendChannel& channel);
 
     Backend& 			backend;
