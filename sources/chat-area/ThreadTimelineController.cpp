@@ -22,12 +22,10 @@
 namespace Mattermost {
 namespace {
 
-constexpr int ThreadPageSize = 80;
-constexpr int SmallThreadPrefetchPages = 2;
-constexpr int LargeThreadPrefetchPages = 3;
+constexpr int ThreadPageSize = 30;
 constexpr int SeekDebounceMs = 120;
 constexpr int MeasurementDebounceMs = 180;
-constexpr int GapPrefetchScreens = 3;
+constexpr int GapPrefetchScreens = 1;
 
 int countCachedThreadPosts(const BackendChannel& channel, const QString& rootId)
 {
@@ -106,14 +104,12 @@ void ThreadTimelineController::start()
     }
     lastAppliedGapRowHeight = timeline.estimatedRowHeight();
 
-    initialPagesRemaining = expectedPostCount > ThreadPageSize * SmallThreadPrefetchPages
-        ? LargeThreadPrefetchPages
-        : std::min(SmallThreadPrefetchPages,
-                   std::max(1, (expectedPostCount + ThreadPageSize - 1) / ThreadPageSize));
+    // A single 30-post page is roughly three screens. Render as soon as it
+    // arrives; all later pages are loaded only when the viewport approaches the
+    // sparse gap instead of blocking thread opening with 160-240 widgets.
+    initialPagesRemaining = 1;
 
-    // Show a known root immediately. The following initial 2-3 pages are
-    // accumulated and rendered as one transaction instead of rebuilding after
-    // every response.
+    // Show a known root immediately while the first compact page is in flight.
     renderTimeline(root ? rootId : QString(), true);
 
     QScrollBar* scrollBar = area.ui->listWidget->verticalScrollBar();
