@@ -79,6 +79,7 @@ signals:
 
 private:
     void setAuthor(Backend& backend, const BackendUser* user);
+    void updateAuthorAvatar();
 
     Ui::PostWidget*						ui;
     std::unique_ptr<PostQuoteFrame>		quoteFrame;
