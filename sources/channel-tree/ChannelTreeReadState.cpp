@@ -3,6 +3,7 @@
 #include <QMouseEvent>
 #include <QTimer>
 
+#include "backend/types/BackendChannel.h"
 #include "chat-area/ChatArea.h"
 
 namespace Mattermost {
