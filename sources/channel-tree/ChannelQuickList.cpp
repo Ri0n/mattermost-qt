@@ -47,7 +47,7 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
     });
 }
 
-void ChannelQuickList::initialize(Backend& sourceBackend)
+void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
 {
     backend = &sourceBackend;
     refresh();
