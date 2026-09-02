@@ -43,7 +43,7 @@ public:
                     std::function<void(const BackendUser*)> callback = {});
     void ensureUsers(const QStringList& userIds,
                      std::function<void()> callback = {});
-    void ensureAvatar(BackendUser& user);
+    void ensureAvatar(const BackendUser& user);
     void ensureStatuses(const QStringList& userIds,
                         std::function<void()> callback = {});
     void searchUsers(const UserSearchOptions& options,
