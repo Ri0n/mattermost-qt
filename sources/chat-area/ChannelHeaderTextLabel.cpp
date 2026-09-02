@@ -164,11 +164,24 @@ void ChannelHeaderTextLabel::positionPopover()
     const QPoint labelPos = mapTo(host, QPoint(0, 0));
     const int left = std::max(4, labelPos.x() - 4);
     const int availableWidth = std::max(120, host->width() - left - 4);
-    const int wantedWidth = std::max(320, width() + 8);
+
+    // Measure with a throw-away document instead of the QTextBrowser's current
+    // viewport. On the first hover QTextBrowser can still carry the default
+    // pre-show viewport width, which made document()->size() report a wildly
+    // inflated height. The second hover happened after layout and therefore
+    // appeared correct. A standalone document makes both passes deterministic.
+    QTextDocument measure;
+    measure.setDefaultFont(popover->font());
+    measure.setDocumentMargin(4);
+    measure.setHtml(formattedText);
+
+    const int naturalWidth = static_cast<int>(std::ceil(measure.idealWidth())) + 10;
+    const int labelWidth = std::max(1, width() + 8);
+    const int wantedWidth = std::max(220, std::min(naturalWidth, labelWidth));
     const int popupWidth = std::min(wantedWidth, availableWidth);
 
-    popover->document()->setTextWidth(std::max(1, popupWidth - 10));
-    const int documentHeight = static_cast<int>(std::ceil(popover->document()->size().height())) + 10;
+    measure.setTextWidth(std::max(1, popupWidth - 10));
+    const int documentHeight = static_cast<int>(std::ceil(measure.size().height())) + 10;
 
     // Start on top of the compact line and expand downwards. The overlap avoids
     // a mouse gap between the reference label and the interactive overlay.
@@ -176,6 +189,9 @@ void ChannelHeaderTextLabel::positionPopover()
     const int availableHeight = std::max(80, host->height() - top - 4);
     const int popupHeight = std::min(std::max(height() + 8, documentHeight), availableHeight);
 
+    // Apply the final text width before showing the browser so its first layout
+    // already matches the geometry we just measured.
+    popover->document()->setTextWidth(std::max(1, popupWidth - 10));
     popover->setGeometry(left, top, popupWidth, popupHeight);
     popover->raise();
 }
