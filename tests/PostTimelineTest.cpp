@@ -124,6 +124,42 @@ private slots:
         QCOMPARE(timeline.totalCount() - 1 - after.logicalIndex, distanceFromNewest);
         QCOMPARE(after.offsetWithinRow, offset);
     }
+
+    void cursorPrependOverlapDoesNotMoveExistingRows()
+    {
+        PostTimeline timeline;
+        timeline.reset(20);
+        timeline.placeWindow(10, {QStringLiteral("p10"), QStringLiteral("p11"), QStringLiteral("p12")});
+
+        // A cursor API may repeat its boundary post. After stripping the cursor,
+        // placing the older rows immediately before it must preserve the loaded
+        // window's logical identity and produce one contiguous span.
+        timeline.placeWindow(8, {QStringLiteral("p8"), QStringLiteral("p9")});
+
+        QCOMPARE(timeline.indexOf(QStringLiteral("p10")), 10);
+        QCOMPARE(timeline.indexOf(QStringLiteral("p11")), 11);
+        QCOMPARE(timeline.indexOf(QStringLiteral("p12")), 12);
+        QCOMPARE(timeline.loadedCount(), 5);
+        QCOMPARE(timeline.spans().at(1).postIds,
+                 QStringList({QStringLiteral("p8"), QStringLiteral("p9"),
+                              QStringLiteral("p10"), QStringLiteral("p11"),
+                              QStringLiteral("p12")}));
+    }
+
+    void cursorAppendOverlapDoesNotMoveExistingRows()
+    {
+        PostTimeline timeline;
+        timeline.reset(20);
+        timeline.placeWindow(5, {QStringLiteral("p5"), QStringLiteral("p6"), QStringLiteral("p7")});
+
+        timeline.placeWindow(8, {QStringLiteral("p8"), QStringLiteral("p9")});
+
+        QCOMPARE(timeline.indexOf(QStringLiteral("p5")), 5);
+        QCOMPARE(timeline.indexOf(QStringLiteral("p7")), 7);
+        QCOMPARE(timeline.indexOf(QStringLiteral("p8")), 8);
+        QCOMPARE(timeline.indexOf(QStringLiteral("p9")), 9);
+        QCOMPARE(timeline.loadedCount(), 5);
+    }
 };
 
 QTEST_APPLESS_MAIN(PostTimelineTest)
