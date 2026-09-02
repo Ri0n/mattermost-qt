@@ -652,8 +652,6 @@ bool PostsListWidget::eventFilter(QObject* watched, QEvent* event)
 /*
  * get selected items in the order, in which they appear in the PostsListWidget
  */
-QList<QListWidgetItem*> PostsListListWidget_dummy_for_formatting;
-
 QList<QListWidgetItem*> PostsListWidget::sortedSelectedItems () const
 {
 	auto cmp = [this] (const QListWidgetItem* lhs, const QListWidgetItem* rhs) {
