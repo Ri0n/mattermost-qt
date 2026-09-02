@@ -114,7 +114,7 @@ AttachedImageFile::AttachedImageFile (Backend& backend, const BackendFile& file,
                 return;
             }
 
-            AttachmentService::instance(backend).retrieveFile(fileId, [saveFileDestination](const QByteArray& fileContents) {
+            AttachmentService::instance(this->backend).retrieveFile(fileId, [saveFileDestination](const QByteArray& fileContents) {
                 QFile destFile(saveFileDestination);
                 if (!destFile.open(QIODevice::WriteOnly)) {
                     qWarning() << "Cannot save image to" << saveFileDestination << ":" << destFile.errorString();
