@@ -158,6 +158,16 @@ public:
 	// silently move the saved reading position to the newer bottom.
 	void freezeCurrentViewportAnchor();
 
+	/**
+	 * Sparse timeline controllers replace a large part of the QListWidget in one
+	 * operation. Suppress the ordinary per-row anchor restoration while that
+	 * transaction is in progress, then establish exactly one final viewport.
+	 */
+	void beginTimelineRebuild();
+	void finishTimelineRebuildAtBottom();
+	bool finishTimelineRebuildAtPost(const QString& postId, int viewportTopOffset);
+	void finishTimelineRebuildAtPixel(qint64 pixelOffset);
+
 	Backend*						backend;
 signals:
 	void postEditInitiated (BackendPost& post);
