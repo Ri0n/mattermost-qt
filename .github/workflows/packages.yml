@@ -2,11 +2,6 @@ name: Packages
 
 on:
   workflow_dispatch:
-  # Keep the packaging workflow testable while this PR is under review. This
-  # trigger is removed after the packaging jobs have been verified once.
-  pull_request:
-    branches:
-      - master
 
 permissions:
   contents: read
