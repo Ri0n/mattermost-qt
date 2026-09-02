@@ -10,6 +10,8 @@ on:
 permissions:
   contents: read
 
+# Strict validation after the pinned-navigation and virtualized-paint fixes.
+
 jobs:
   qt6:
     name: Qt 6.10 / Ubuntu
