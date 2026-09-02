@@ -91,8 +91,8 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 
 	// Do not wait for the server's channel_viewed websocket echo to update the
 	// local Recent/Attention indexes. A channel becomes viewed as soon as the
-	// user selects it. Defer the update by one event-loop turn so a sidebar
-	// refresh cannot delete/hide the item while its selection signal is handled.
+	// user selects it. When the Channels unread filter is active, keep that
+	// selected row visible until selection or tab changes.
 	connect(ui->channelList, &QTreeWidget::currentItemChanged, this,
 	        [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
 		if (!current || current->data(0, ChannelTree::ItemKindRole).toInt() != ChannelTree::ChannelItemKind) {
@@ -102,6 +102,16 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 		if (channelId.isEmpty()) {
 			return;
 		}
+
+		const bool channelsTabVisible = channelTabs && channelsPage
+			&& channelTabs->currentWidget() == channelsPage;
+		if (channelsTabVisible && unreadFilterButton && unreadFilterButton->isChecked()) {
+			retainedUnreadFilterChannelId = channelId;
+			QTimer::singleShot(0, this, &MainWindow::refreshChannelUnreadFilter);
+		} else if (channelsTabVisible) {
+			retainedUnreadFilterChannelId.clear();
+		}
+
 		QTimer::singleShot(0, this, [this, channelId] {
 			if (BackendChannel* channel = backend.getStorage().getChannelById(channelId)) {
 				SidebarService::instance(backend).markChannelViewedLocally(*channel);
@@ -109,7 +119,7 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 		});
 	});
 
-	recentChannels->initialize(backend, ChannelQuickList::Recent);
+	recentChannels->initialize(backend);
 	attentionList->initialize(backend);
 
 	sidebar.clear();
@@ -145,9 +155,6 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 
 	connect (&backend, &Backend::onChannelViewed, [this] (const BackendChannel& channel) {
 		SidebarService::instance(backend).setChannelMentioned(channel.id, false);
-		if (channelsWithNewPosts.remove (&channel)) {
-			setNotificationsCountVisualization (channelsWithNewPosts.size());
-		}
 	});
 
 	/*
@@ -156,11 +163,6 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	connect (&backend, &Backend::onAddedToTeam, [this](BackendTeam& team) {
 		ui->channelList->addTeam (backend, team);
 	});
-
-	/*
-	 * On new post - set window and tray notifications
-	 */
-	connect (&backend, &Backend::onUnreadPostsAtStartup, this, &MainWindow::unreadMessagesNotify);
 
 	// The old startup path downloaded every active user on the server before it
 	// even asked for our teams. Large installations easily turn that into dozens
@@ -220,7 +222,7 @@ void MainWindow::setupChannelTabs ()
 	channelTabs->setSizePolicy(ui->channelList->sizePolicy());
 	channelTabs->setStyleSheet(QStringLiteral("QTabWidget::pane { border: 0; }"));
 
-	auto* channelsPage = new QWidget(channelTabs);
+	channelsPage = new QWidget(channelTabs);
 	auto* channelsLayout = new QVBoxLayout(channelsPage);
 	channelsLayout->setContentsMargins(0, 0, 0, 0);
 	channelsLayout->setSpacing(0);
@@ -282,8 +284,21 @@ void MainWindow::setupChannelTabs ()
 	        ui->channelList, &ChannelTree::openChannel);
 	connect(attentionList, &AttentionList::threadSelected,
 	        this, &MainWindow::openAttentionThread);
+	connect(attentionList, &AttentionList::attentionCountChanged,
+	        this, &MainWindow::setNotificationsCountVisualization);
 	connect(channelTabs, &QTabWidget::currentChanged, this, [this](int index) {
-		if (attentionList && channelTabs->widget(index) == attentionList) {
+		QWidget* currentPage = channelTabs->widget(index);
+
+		if (attentionList && currentPage != attentionList) {
+			attentionList->releaseSelectionRetention();
+		}
+
+		if (currentPage != channelsPage && !retainedUnreadFilterChannelId.isEmpty()) {
+			retainedUnreadFilterChannelId.clear();
+			refreshChannelUnreadFilter();
+		}
+
+		if (attentionList && currentPage == attentionList) {
 			attentionList->refresh();
 			attentionList->refreshThreads();
 		}
@@ -308,6 +323,11 @@ void MainWindow::refreshChannelUnreadFilter ()
 	}
 
 	const bool unreadOnly = unreadFilterButton->isChecked();
+	if (!unreadOnly) {
+		retainedUnreadFilterChannelId.clear();
+	}
+	const bool channelsTabVisible = channelTabs && channelsPage
+		&& channelTabs->currentWidget() == channelsPage;
 	auto& sidebar = SidebarService::instance(backend);
 
 	for (int teamIndex = 0; teamIndex < ui->channelList->topLevelItemCount(); ++teamIndex) {
@@ -334,9 +354,11 @@ void MainWindow::refreshChannelUnreadFilter ()
 				if (unreadOnly) {
 					const QString channelId = channelItem->data(0, ChannelTree::ItemIdRole).toString();
 					BackendChannel* channel = backend.getStorage().getChannelById(channelId);
+					const bool retained = channelsTabVisible
+						&& channelId == retainedUnreadFilterChannelId;
 					visible = channel
-						&& sidebar.isChannelUnread(*channel)
-						&& !sidebar.isChannelMuted(*channel);
+						&& !sidebar.isChannelMuted(*channel)
+						&& (sidebar.isChannelUnread(*channel) || retained);
 				}
 
 				channelItem->setHidden(!visible);
@@ -469,10 +491,6 @@ void MainWindow::changeEvent (QEvent* event)
 				sidebar.setChannelMentioned(currentPage->getChannel().id, false);
 				sidebar.markChannelViewedLocally(currentPage->getChannel());
 				currentPage->onMainWindowActivate ();
-
-				if (channelsWithNewPosts.remove (&currentPage->getChannel())) {
-					setNotificationsCountVisualization (channelsWithNewPosts.size());
-				}
 			}
 		}
 	} else {
@@ -575,10 +593,6 @@ void MainWindow::messageNotify (BackendChannel& channel, const BackendPost& post
 	notificationManager->show(title, post.message,
 	                          NotificationTarget {channel.id, post.id, post.root_id});
 	qApp->alert (nullptr, 0);
-
-	//update the count of new channels in the taskbar and tray icon
-	channelsWithNewPosts.insert(&channel);
-	setNotificationsCountVisualization (channelsWithNewPosts.size());
 }
 
 void MainWindow::activateNotification (const NotificationTarget& target)
@@ -632,27 +646,24 @@ void MainWindow::activateNotification (const NotificationTarget& target)
 
 void MainWindow::unreadMessagesNotify (const BackendChannel& channel)
 {
-	if (SidebarService::instance(backend).isChannelMuted(channel)) {
-		return;
-	}
-
-	//update the count of new channels in the taskbar and tray icon
-	channelsWithNewPosts.insert(&channel);
-	setNotificationsCountVisualization (channelsWithNewPosts.size());
+	Q_UNUSED(channel);
+	// The tray/window badge is derived from AttentionList's logical unread
+	// state. Startup channel-unread notifications must not maintain a separate,
+	// stale counter.
 }
 
 void MainWindow::setNotificationsCountVisualization (uint32_t notificationsCount)
 {
-	//set the count in the window's taskbar element
+	// The title and tray badge represent logical Attention items, not a separate
+	// set of channels that happened to trigger desktop notifications.
 	if (notificationsCount == 0) {
 		setWindowTitle (qApp->applicationName());
 	} else {
-		setWindowTitle ("(" + QString::number (channelsWithNewPosts.size()) + ") " + qApp->applicationName());
+		setWindowTitle ("(" + QString::number (notificationsCount) + ") " + qApp->applicationName());
 	}
 
-	//set the count in the tray icon
-	notificationsCount = std::min (notificationsCount, 6u);
-	QString iconName (":/icons/img/icon" + QString::number(notificationsCount) + ".ico");
+	const uint32_t iconCount = std::min (notificationsCount, 6u);
+	QString iconName (":/icons/img/icon" + QString::number(iconCount) + ".ico");
 	trayIcon.setIcon(QIcon(iconName));
 }
 
