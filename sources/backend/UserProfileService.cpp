@@ -193,6 +193,50 @@ void UserProfileService::ensureStatuses(const QStringList& userIds,
     (*fetchNext)();
 }
 
+void UserProfileService::searchUsers(
+    const UserSearchOptions& options,
+    std::function<void(QVector<const BackendUser*>)> callback)
+{
+    QJsonObject payload {
+        {QStringLiteral("term"), options.term},
+        {QStringLiteral("allow_inactive"), options.allowInactive},
+        {QStringLiteral("limit"), std::max(1, options.limit)},
+    };
+
+    if (!options.teamId.isEmpty()) {
+        payload.insert(QStringLiteral("team_id"), options.teamId);
+    }
+    if (!options.notInTeamId.isEmpty()) {
+        payload.insert(QStringLiteral("not_in_team_id"), options.notInTeamId);
+    }
+    if (!options.inChannelId.isEmpty()) {
+        payload.insert(QStringLiteral("in_channel_id"), options.inChannelId);
+    }
+    if (!options.notInChannelId.isEmpty()) {
+        payload.insert(QStringLiteral("not_in_channel_id"), options.notInChannelId);
+    }
+
+    NetworkRequest request(QStringLiteral("users/search"));
+    httpConnector.post(request, QByteArrayCreator(payload),
+                       HttpResponseCallback([this, callback](const QJsonDocument& doc) {
+        QVector<const BackendUser*> users;
+        users.reserve(doc.array().size());
+
+        for (const auto& value : doc.array()) {
+            BackendUser* user = backend.getStorage().addUser(value.toObject());
+            if (!user) {
+                continue;
+            }
+            resolveReferences(*user);
+            users.push_back(user);
+        }
+
+        if (callback) {
+            callback(std::move(users));
+        }
+    }));
+}
+
 void UserProfileService::scheduleFlush()
 {
     if (flushScheduled) {
