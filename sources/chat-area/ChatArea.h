@@ -74,6 +74,13 @@ public:
 	void goToPost (const QString& postId);
 
 	/**
+	 * Ensure a cached root post has a visible row in the normal channel view.
+	 * Context navigation can cache the target before its surrounding chunks are
+	 * rendered; this bridges backend identity with the current materialized UI.
+	 */
+	bool ensurePostVisible (const QString& postId);
+
+	/**
 	 * Called when the chat area is being selected from the channels menu (so that it's contents is shown)
 	 */
 	void onActivate ();
