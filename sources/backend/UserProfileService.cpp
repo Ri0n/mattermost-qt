@@ -110,7 +110,7 @@ void UserProfileService::ensureUsers(const QStringList& userIds,
         return;
     }
 
-    const auto remaining = std::make_shared<int>(ids.size());
+    const auto remaining = std::make_shared<int>(static_cast<int>(ids.size()));
     const auto completed = std::make_shared<bool>(false);
 
     for (const QString& userId : ids) {
@@ -156,7 +156,8 @@ void UserProfileService::ensureStatuses(const QStringList& userIds,
 
         QJsonArray payload;
         QStringList batch;
-        const int batchSize = std::min(MaxStatusesPerRequest, pending->size());
+        const int batchSize = std::min(
+            MaxStatusesPerRequest, static_cast<int>(pending->size()));
         batch.reserve(batchSize);
         for (int i = 0; i < batchSize; ++i) {
             const QString userId = pending->takeFirst();
@@ -212,9 +213,10 @@ void UserProfileService::flushProfiles()
     }
 
     QStringList batch;
-    batch.reserve(std::min(MaxProfilesPerRequest, queuedUserIds.size()));
+    batch.reserve(std::min(
+        MaxProfilesPerRequest, static_cast<int>(queuedUserIds.size())));
     auto it = queuedUserIds.begin();
-    while (it != queuedUserIds.end() && batch.size() < MaxProfilesPerRequest) {
+    while (it != queuedUserIds.end() && static_cast<int>(batch.size()) < MaxProfilesPerRequest) {
         const QString userId = *it;
         it = queuedUserIds.erase(it);
         inFlightUserIds.insert(userId);
