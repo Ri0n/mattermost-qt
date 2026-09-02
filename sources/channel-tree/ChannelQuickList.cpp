@@ -91,12 +91,6 @@ void ChannelQuickList::refresh()
             continue;
         }
 
-        // The original Recent group excludes the conversation that is already
-        // open, since it is a switch target rather than a history display.
-        if (mode == Recent && backend->getCurrentChannel() == channel) {
-            continue;
-        }
-
         const uint64_t sortTime = mode == Recent
             ? sidebar.channelRecentTime(*channel)
             : sidebar.channelActivityTime(*channel);
@@ -126,14 +120,20 @@ void ChannelQuickList::refresh()
                                            rhs.channel->display_name) < 0;
     });
 
-    // The original Quick Switcher limits its Recent group to 20 entries.
+    // Keep the list compact like Mattermost's Quick Switcher, but unlike the
+    // transient switcher this is a persistent navigation tab: the conversation
+    // that is currently open must remain visible instead of disappearing after
+    // the user selects it.
     if (mode == Recent && candidates.size() > 20) {
         candidates.resize(20);
     }
 
-    const QString selectedChannelId = currentItem()
-        ? currentItem()->data(0, ChannelTree::ItemIdRole).toString()
-        : QString();
+    QString selectedChannelId;
+    if (BackendChannel* currentChannel = backend->getCurrentChannel()) {
+        selectedChannelId = currentChannel->id;
+    } else if (currentItem()) {
+        selectedChannelId = currentItem()->data(0, ChannelTree::ItemIdRole).toString();
+    }
 
     refreshing = true;
     clear();
