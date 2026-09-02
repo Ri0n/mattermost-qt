@@ -25,13 +25,11 @@
 namespace Mattermost {
 namespace {
 
-constexpr int ChannelPageSize = 80;
-constexpr int SmallChannelPrefetchPages = 2;
-constexpr int LargeChannelPrefetchPages = 3;
+constexpr int ChannelPageSize = 30;
 constexpr int SeekDebounceMs = 120;
 constexpr int MeasurementDebounceMs = 180;
-constexpr int GapPrefetchScreens = 3;
-constexpr int ContextPostsPerSide = 30;
+constexpr int GapPrefetchScreens = 1;
+constexpr int ContextPostsPerSide = 15;
 
 QStringList uniqueChronologicalRootIds(const BackendChannel& channel,
                                        const QStringList& candidateIds)
@@ -221,19 +219,10 @@ void ChannelTimelineController::start()
         scheduleMeasurementPass();
     });
 
-    if (totalCountExact) {
-        const int pages = std::max(1,
-            (expectedPostCount + ChannelPageSize - 1) / ChannelPageSize);
-        initialPageTarget = std::min(
-            pages,
-            expectedPostCount > ChannelPageSize * SmallChannelPrefetchPages
-                ? LargeChannelPrefetchPages
-                : SmallChannelPrefetchPages);
-    } else {
-        initialPageTarget = SmallChannelPrefetchPages;
-    }
-    initialPageTarget = std::max(1, initialPageTarget);
-
+    // One page is enough for roughly three screens on the current UI. Paint it
+    // immediately; additional pages are true prefetch and are requested only
+    // when the viewport approaches an unloaded gap.
+    initialPageTarget = 1;
     continueInitialPrefetch();
 }
 
@@ -752,9 +741,6 @@ int ChannelTimelineController::logicalIndexNearViewport(int extraScreens,
         return center.logicalIndex;
     }
 
-    // Probe several screens before the viewport instead of waiting until the
-    // giant gap item itself reaches y=0. This makes wheel scrolling continuously
-    // prefetch into an approaching sparse region.
     const qint64 margin = static_cast<qint64>(viewportHeight)
         * std::max(1, extraScreens);
     const qint64 probes[] = {
@@ -897,10 +883,6 @@ void ChannelTimelineController::updateGapHeights()
 
     PostsListWidget* list = area.ui->listWidget;
     const ViewportAnchor anchor = captureViewportAnchor();
-    // A gap-only viewport has no concrete QWidget anchor. Changing the height of
-    // that same giant item while the user is inside it is exactly the visible
-    // oscillation we want to avoid. The next materialized page will rebuild it
-    // with the refined estimate anyway.
     if (anchor.kind == ViewportAnchor::Gap) {
         return;
     }
@@ -961,8 +943,6 @@ void ChannelTimelineController::measureRenderedPosts()
     const int average = timeline.estimatedRowHeight();
     const int baseline = std::max(1, lastAppliedGapRowHeight);
     const int difference = std::abs(average - lastAppliedGapRowHeight);
-    // A 20% threshold avoids continuously resizing a huge sparse gap as a few
-    // image previews finish layout one by one.
     if (difference * 5 >= baseline) {
         updateGapHeights();
     }
