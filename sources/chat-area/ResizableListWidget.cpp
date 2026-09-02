@@ -28,9 +28,9 @@
 
 #include <QEvent>
 #include <QLayout>
-#include <QPersistentModelIndex>
 #include <QPointer>
 #include <QResizeEvent>
+#include <QScrollBar>
 #include <QTimer>
 
 namespace {
@@ -52,10 +52,68 @@ void ResizableListWidget::setItemWidget(QListWidgetItem* item, QWidget* widget)
         widget->minimumSizeHint().height()
     });
     item->setSizeHint(QSize(std::max(1, viewport()->width()), initialHeight));
-    scheduleItemResize(item, widget);
+
+    // Initial row setup happens while a chat is being populated. Do not anchor
+    // the viewport here: the caller may still need to scroll to unread posts or
+    // restore a previously saved chat position after all rows are present.
+    scheduleItemResize(item, widget, false);
 }
 
-void ResizableListWidget::scheduleItemResize(QListWidgetItem* item, QWidget* widget)
+ResizableListWidget::ViewportAnchor ResizableListWidget::captureViewportAnchor() const
+{
+    ViewportAnchor anchor;
+    const QScrollBar* scrollBar = verticalScrollBar();
+    anchor.atBottom = scrollBar->maximum() - scrollBar->value() <= 2;
+
+    if (count() == 0 || viewport()->height() <= 0) {
+        return anchor;
+    }
+
+    const QRect viewportRect = viewport()->rect();
+    for (int row = count() - 1; row >= 0; --row) {
+        QListWidgetItem* listItem = item(row);
+        const QRect rect = visualItemRect(listItem);
+        if (!rect.isValid() || !rect.intersects(viewportRect)) {
+            continue;
+        }
+
+        anchor.index = indexFromItem(listItem);
+        anchor.bottomOffset = viewportRect.bottom() - rect.bottom();
+        break;
+    }
+
+    return anchor;
+}
+
+void ResizableListWidget::restoreViewportAnchor(const ViewportAnchor& anchor)
+{
+    if (anchor.atBottom) {
+        scrollToBottom();
+        return;
+    }
+
+    if (!anchor.index.isValid()) {
+        return;
+    }
+
+    QListWidgetItem* listItem = itemFromIndex(anchor.index);
+    if (!listItem) {
+        return;
+    }
+
+    const QRect rect = visualItemRect(listItem);
+    if (!rect.isValid()) {
+        return;
+    }
+
+    const int targetBottom = viewport()->rect().bottom() - anchor.bottomOffset;
+    const int delta = rect.bottom() - targetBottom;
+    if (delta != 0) {
+        verticalScrollBar()->setValue(verticalScrollBar()->value() + delta);
+    }
+}
+
+void ResizableListWidget::scheduleItemResize(QListWidgetItem* item, QWidget* widget, bool preserveViewport)
 {
     if (!item || !widget || widget->property(RowResizePendingProperty).toBool()) {
         return;
@@ -65,7 +123,7 @@ void ResizableListWidget::scheduleItemResize(QListWidgetItem* item, QWidget* wid
     QPointer<QWidget> guardedWidget(widget);
     widget->setProperty(RowResizePendingProperty, true);
 
-    QTimer::singleShot(0, this, [this, index, guardedWidget] {
+    QTimer::singleShot(0, this, [this, index, guardedWidget, preserveViewport] {
         if (!guardedWidget) {
             return;
         }
@@ -80,6 +138,8 @@ void ResizableListWidget::scheduleItemResize(QListWidgetItem* item, QWidget* wid
             guardedWidget->setProperty(RowResizePendingProperty, false);
             return;
         }
+
+        const ViewportAnchor anchor = preserveViewport ? captureViewportAnchor() : ViewportAnchor{};
 
         const int rowWidth = std::max(1, viewport()->width());
         if (guardedWidget->width() != rowWidth) {
@@ -101,16 +161,25 @@ void ResizableListWidget::scheduleItemResize(QListWidgetItem* item, QWidget* wid
 
         currentItem->setSizeHint(QSize(rowWidth, targetHeight));
         guardedWidget->setProperty(RowResizePendingProperty, false);
+
+        if (preserveViewport) {
+            // QListView may defer applying the new size hint until the current
+            // event has returned. Restore the same bottom-most visible row once
+            // that layout pass has completed.
+            QTimer::singleShot(0, this, [this, anchor] {
+                restoreViewportAnchor(anchor);
+            });
+        }
     });
 }
 
-void ResizableListWidget::scheduleAllItemResizes()
+void ResizableListWidget::scheduleAllItemResizes(bool preserveViewport)
 {
     for (int i = 0; i < count(); ++i) {
         QListWidgetItem* listItem = item(i);
         QWidget* widget = itemWidget(listItem);
         if (widget) {
-            scheduleItemResize(listItem, widget);
+            scheduleItemResize(listItem, widget, preserveViewport);
         }
     }
 }
@@ -123,7 +192,7 @@ bool ResizableListWidget::eventFilter(QObject* watched, QEvent* event)
             for (int i = 0; i < count(); ++i) {
                 QListWidgetItem* listItem = item(i);
                 if (itemWidget(listItem) == widget) {
-                    scheduleItemResize(listItem, widget);
+                    scheduleItemResize(listItem, widget, true);
                     break;
                 }
             }
@@ -135,6 +204,15 @@ bool ResizableListWidget::eventFilter(QObject* watched, QEvent* event)
 
 void ResizableListWidget::resizeEvent(QResizeEvent* event)
 {
+    // Capture before QAbstractItemView recomputes row geometry. At this point
+    // the viewport still represents the old layout, so the bottom-most visible
+    // row is the right visual anchor for a window/splitter resize.
+    const ViewportAnchor anchor = captureViewportAnchor();
+
     QListWidget::resizeEvent(event);
-    scheduleAllItemResizes();
+    scheduleAllItemResizes(false);
+
+    QTimer::singleShot(0, this, [this, anchor] {
+        restoreViewportAnchor(anchor);
+    });
 }
