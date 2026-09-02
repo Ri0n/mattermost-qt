@@ -120,6 +120,8 @@ void ChatArea::init() {
 	if (initialized)
 		return;
 
+	const bool sparseTimeline = channelTimelineController != nullptr;
+
 	//save all lambda slot connections, they cannot be disconnected without this
 
 	signalConnections.push_back( connect (&channel, &BackendChannel::onViewed,this, [this] {
@@ -136,8 +138,12 @@ void ChatArea::init() {
 	})
 	);
 
-
-	connect (&channel, &BackendChannel::onNewPosts, this,  &ChatArea::fillChannelPosts);
+	// With sparse history the controller is the sole bulk materializer. Keeping
+	// this legacy connection would make every REST page render twice: once here
+	// and once when the sparse model rebuilds the viewport.
+	if (!sparseTimeline) {
+		connect (&channel, &BackendChannel::onNewPosts, this, &ChatArea::fillChannelPosts);
+	}
 
 	signalConnections.push_back( connect (&channel, &BackendChannel::onPinnedPostsReceived,this, [this] () {
 		updatePinnedPostsButton();
@@ -223,15 +229,16 @@ void ChatArea::init() {
 	})
 	);
 
-
-	// dirty solution to non-scrollable window
-	signalConnections.push_back( connect (ui->loadOldPosts, &QPushButton::clicked, this,[this] {
-		if (!gettingOlderPosts && !channel.posts.empty()) {
-			gettingOlderPosts = true;
-			backend.retrieveChannelOlderPosts (channel, 140);
-		}
-	})
-	);
+	if (!sparseTimeline) {
+		// Legacy fallback for builds/views that do not install a sparse controller.
+		signalConnections.push_back( connect (ui->loadOldPosts, &QPushButton::clicked, this,[this] {
+			if (!gettingOlderPosts && !channel.posts.empty()) {
+				gettingOlderPosts = true;
+				backend.retrieveChannelOlderPosts (channel, 140);
+			}
+		})
+		);
+	}
 
 	signalConnections.push_back( connect (ui->usersButton, &QPushButton::clicked, this,[this] {
 		ViewChannelMembersListDialog* dialog = new ViewChannelMembersListDialog (this->backend, this->channel, this);
@@ -269,52 +276,42 @@ void ChatArea::init() {
 	})
 	);
 
-	/*
-	 * First, get the first unread post (if any). So that a separator can be inserted before it
-	 */
+	if (!sparseTimeline) {
+		/*
+		 * Legacy initial population. Sparse timelines intentionally bypass this
+		 * path so opening a channel creates exactly one 30-post widget window.
+		 */
+		int elapsedDaysSinceLastNewPost = INT32_MAX;
+		QDate currentDate = QDateTime::currentDateTime().date();
+		if (postsRetrieved){
+			int insertPos = 0;
+			for(auto& post: channel.posts ) {
+				if (post.root_id.isEmpty()){
+					int elapsedDaysSinceThisNewPost = post.getCreationTime ().date().daysTo (currentDate);
+					if (elapsedDaysSinceThisNewPost != elapsedDaysSinceLastNewPost) {
+						elapsedDaysSinceLastNewPost = elapsedDaysSinceThisNewPost;
+						ui->listWidget->addDaySeparator (insertPos, elapsedDaysSinceThisNewPost);
+						++insertPos;
+					}
 
-	//elapsed days since the last post that was added from the new posts packet
-	int elapsedDaysSinceLastNewPost = INT32_MAX;
-	QDate currentDate = QDateTime::currentDateTime().date();
-	if (postsRetrieved){
-		int insertPos = 0;
-		for(auto& post: channel.posts ) {
-		if (post.root_id.isEmpty()){
+					ui->listWidget->insertPost (insertPos, new PostWidget (backend, post, ui->listWidget, this, nullptr));
+					++insertPos;
 
-			int elapsedDaysSinceThisNewPost = post.getCreationTime ().date().daysTo (currentDate);
-
-			/**
-			 * Add a day separator, if the next added post is from a day, different from the previous added post.
-			 * Day separator is always added for the first new post.
-			 */
-			if (elapsedDaysSinceThisNewPost != elapsedDaysSinceLastNewPost) {
-
-				elapsedDaysSinceLastNewPost = elapsedDaysSinceThisNewPost;
-				ui->listWidget->addDaySeparator (insertPos, elapsedDaysSinceThisNewPost);
-				++insertPos;
+					if (post.id == lastReadPostId) {
+						ui->listWidget->addNewMessagesSeparator ();
+						++insertPos;
+					}
+				}
 			}
-
-			ui->listWidget->insertPost (insertPos, new PostWidget (backend, post, ui->listWidget, this, nullptr));
-			++insertPos;
-
-			if (post.id == lastReadPostId) {
-				ui->listWidget->addNewMessagesSeparator ();
-				++insertPos;
-			}
+			ui->listWidget->updateGeometry();
+			ui->listWidget->resizeToBottom();
+		} else {
+			backend.retrieveChannelPosts (channel, 0, 100);
+			postsRetrieved = true;
 		}
-
-
-		}
-		ui->listWidget->updateGeometry();
-		// PostsListWidget owns the durable post-id/offset anchor. Requesting a
-		// resize restoration here is intentionally independent of scrollbar ratio.
-		ui->listWidget->resizeToBottom();
 	} else {
-		// backend.retrieveChannelUnreadPost (channel, [this] (const QString& postId){
-		// 	lastReadPostId = postId;
-		// });
-
-		backend.retrieveChannelPosts (channel, 0, 100);
+		// Prevent any later legacy fallback from treating the sparse first page as
+		// an uninitialized channel and issuing another initial REST request.
 		postsRetrieved = true;
 	}
 
@@ -327,15 +324,17 @@ void ChatArea::init() {
 
 	initialized = true;
 
-	//when scrolling to top, get older posts
-	signalConnections.push_back( connect (ui->listWidget, &PostsListWidget::scrolledToTop, this, [this] {
-		if (!gettingOlderPosts && !channel.posts.empty()) {
-			//do not spam requests
-			gettingOlderPosts = true;
-			backend.retrieveChannelOlderPosts (channel, 40);
-		}
-	})
-	);
+	if (!sparseTimeline) {
+		// Legacy fallback only. ChannelTimelineController owns this trigger for the
+		// normal sparse path.
+		signalConnections.push_back( connect (ui->listWidget, &PostsListWidget::scrolledToTop, this, [this] {
+			if (!gettingOlderPosts && !channel.posts.empty()) {
+				gettingOlderPosts = true;
+				backend.retrieveChannelOlderPosts (channel, 40);
+			}
+		})
+		);
+	}
 
 	if (!pendingPostId.isEmpty()) {
 		goToPost(pendingPostId);
@@ -390,43 +389,39 @@ ChatArea::ChatArea (Backend& backend, BackendChannel& channel, QString rootId, C
 	setTextEditWidgetHeight (texteditDefaultHeight);
 
 	ui->userAvatar->hide();
-	int insertPos = 0;
-	BackendPost* lastRootPost = nullptr;
-	QDate currentDate = QDateTime::currentDateTime().date();
-	int elapsedDaysSinceLastNewPost = INT32_MAX;
-	// thread messages are already retrieved, we just need to display them
-	for(auto& post: channel.posts ) {
-		if (post.root_id == rootId || post.id == rootId){
 
-			int elapsedDaysSinceThisNewPost = post.getCreationTime ().date().daysTo (currentDate);
+	// ThreadTimelineController owns thread history from the first paint. Do not
+	// construct an arbitrary cached subset only to destroy it on the next event
+	// loop turn. Keep the legacy path solely as a fallback if no controller was
+	// installed.
+	if (!threadTimelineController) {
+		int insertPos = 0;
+		BackendPost* lastRootPost = nullptr;
+		QDate currentDate = QDateTime::currentDateTime().date();
+		int elapsedDaysSinceLastNewPost = INT32_MAX;
+		for(auto& post: channel.posts ) {
+			if (post.root_id == rootId || post.id == rootId){
+				int elapsedDaysSinceThisNewPost = post.getCreationTime ().date().daysTo (currentDate);
+				if (elapsedDaysSinceThisNewPost != elapsedDaysSinceLastNewPost) {
+					elapsedDaysSinceLastNewPost = elapsedDaysSinceThisNewPost;
+					ui->listWidget->addDaySeparator (insertPos, elapsedDaysSinceThisNewPost);
+					++insertPos;
+				}
 
-			/**
-			 * Add a day separator, if the next added post is from a day, different from the previous added post.
-			 * Day separator is always added for the first new post.
-			 */
-			if (elapsedDaysSinceThisNewPost != elapsedDaysSinceLastNewPost) {
-
-				elapsedDaysSinceLastNewPost = elapsedDaysSinceThisNewPost;
-				ui->listWidget->addDaySeparator (insertPos, elapsedDaysSinceThisNewPost);
+				ui->listWidget->insertPost (insertPos, new PostWidget (backend, post, ui->listWidget, this, lastRootPost));
+				lastRootPost = post.rootPost;
 				++insertPos;
-			}
 
-			ui->listWidget->insertPost (insertPos, new PostWidget (backend, post, ui->listWidget, this, lastRootPost));
-			lastRootPost = post.rootPost;
-			++insertPos;
-
-			if (post.id == lastReadPostId) {
-				ui->listWidget->addNewMessagesSeparator ();
-				++insertPos;
+				if (post.id == lastReadPostId) {
+					ui->listWidget->addNewMessagesSeparator ();
+					++insertPos;
+				}
 			}
 		}
 
+		connect (&channel, &BackendChannel::onNewPosts, this, &ChatArea::fillChannelPosts);
+		connect (&channel, &BackendChannel::onNewPost, this, &ChatArea::appendChannelPost);
 	}
-
-	connect (&channel, &BackendChannel::onNewPosts, this,  &ChatArea::fillChannelPosts);
-
-
-	connect (&channel, &BackendChannel::onNewPost, this, &ChatArea::appendChannelPost);
 
 	//let the post creator know that the last sent / edited post has appeared so that the input box can be cleared
 	connect (&channel, &BackendChannel::onNewPost, ui->outgoingPostCreator, &OutgoingPostCreator::onPostReceived);
@@ -461,7 +456,6 @@ ChatArea::ChatArea (Backend& backend, BackendChannel& channel, QString rootId, C
 		}
 	});
 
-	
 	//initiate editing of post, when edit is selected from the context menu
 	connect (ui->listWidget, &PostsListWidget::postEditInitiated, ui->outgoingPostCreator, &OutgoingPostCreator::postEditInitiated);
 
@@ -656,10 +650,6 @@ void ChatArea::fillChannelPosts (const ChannelNewPosts& newPosts)
 
 			int elapsedDaysSinceThisNewPost = post->getCreationTime ().date().daysTo (currentDate);
 
-			/**
-			 * Add a day separator, if the next added post is from a day, different from the previous added post.
-			 * Day separator is always added for the first new post.
-			 */
 			if (elapsedDaysSinceThisNewPost != elapsedDaysSinceLastNewPost) {
 
 				elapsedDaysSinceLastNewPost = elapsedDaysSinceThisNewPost;
@@ -680,8 +670,8 @@ void ChatArea::fillChannelPosts (const ChannelNewPosts& newPosts)
 		}
 	}
 
-	 if (postSeq > 20)
-	 	areaIsFilled = true;	// all loaded posts may be hidden thread posts, allow load on scroll
+	if (postSeq > 20)
+		areaIsFilled = true;	// all loaded posts may be hidden thread posts, allow load on scroll
 
 	if (!gettingOlderPosts && !newPosts.postsToAdd.empty()) {
 		lastPostDate = newPosts.postsToAdd.back().postsToAdd.back()->getCreationTime ().date();
@@ -689,9 +679,6 @@ void ChatArea::fillChannelPosts (const ChannelNewPosts& newPosts)
 
 	gettingOlderPosts = false;
 
-	/**
-	 * If existing posts and new posts are from the same day, remove the day separator (if any) from the existing posts list
-	 */
 	if (elapsedDaysSinceLastNewPost == elapsedDaysSinceFirstExistingPost && daySeparatorOnTop) {
 		delete (daySeparatorOnTop);
 		daySeparatorOnTop = nullptr;
@@ -738,9 +725,6 @@ void ChatArea::appendChannelPost (BackendPost& post)
 	if (!pendingPostId.isEmpty()) {
 		goToPost(pendingPostId);
 	}
-
-	//if(!isThread)
-	//	moveOnListTop ();
 
 	//do not add unread messages count if the Chat Area is on focus
 	if (chatAreaHasFocus) {
@@ -802,11 +786,6 @@ void ChatArea::moveOnListTop ()
 
 	ChannelItemWidget* thisItemWidget = static_cast<ChannelItemWidget*> (tree->itemWidget(treeItem, 0));
 
-
-	/**
-	 * takeChild will delete the widget because the tree owns the widget.
-	 * Therefore, create a new widget and set it as ItemWidget
-	 */
 	ChannelItemWidget* newItemWidget = new ChannelItemWidget (thisItemWidget->parentWidget());
 	newItemWidget->setLabel (channel.display_name);
 
