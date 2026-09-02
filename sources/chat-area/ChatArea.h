@@ -21,6 +21,7 @@
 
 #include <QWidget>
 #include <QDate>
+#include <QPointer>
 #include <QSet>
 #include <QTreeWidgetItem>
 #include <QScrollBar>
@@ -108,7 +109,7 @@ public:
 	BackendChannel& 				channel;
 	ChannelItem* 					treeItem;
 	QString 						lastReadPostId;
-	QDockWidget*					pinnedPostsDockWidget;
+	QPointer<QDockWidget>			pinnedPostsDockWidget;
 	void						init();
 	void						deinit();
 
