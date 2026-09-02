@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -27,7 +27,7 @@
 #include <QPointer>
 
 #include "ui_AttachedVideoFile.h"
-#include "backend/Backend.h"
+#include "backend/AttachmentService.h"
 #include "backend/types/BackendFile.h"
 
 namespace Mattermost {
@@ -58,7 +58,7 @@ void AttachedVideoFile::mousePressEvent(QMouseEvent*)
 {
     const QString fileId = file.id;
     QPointer<AttachedVideoFile> self(this);
-    backend.retrieveFile(fileId, [self](const QByteArray& data) {
+    AttachmentService::instance(backend).retrieveFile(fileId, [self](const QByteArray& data) {
         if (!self) {
             return;
         }
