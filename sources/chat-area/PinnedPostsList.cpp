@@ -35,6 +35,7 @@
 
 #include "ChatArea.h"
 #include "backend/PostNavigationService.h"
+#include "backend/types/BackendChannel.h"
 #include "post/PostWidget.h"
 #include "ui_PinnedPostsList.h"
 
