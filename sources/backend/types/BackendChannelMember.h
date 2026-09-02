@@ -25,6 +25,7 @@
 #pragma once
 
 #include <QJsonObject>
+#include <QString>
 
 namespace Mattermost {
 
@@ -39,6 +40,7 @@ public:
 	uint64_t			last_viewed_at;
 	uint32_t			msg_count;
 	uint32_t			mention_count;
+	QString				userId;
 	const BackendUser*	user;
 	bool				isAdmin;
 };
