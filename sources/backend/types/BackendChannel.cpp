@@ -262,8 +262,8 @@ void BackendChannel::mergePostContext(const QJsonArray& orderArray, const QJsonO
 	// direction so every newly inserted row can reference the already-present
 	// previous row in its own visible timeline. That lets an active ChatArea
 	// insert arbitrary context without rebuilding the whole list.
-	for (auto orderIt = orderArray.crbegin(); orderIt != orderArray.crend(); ++orderIt) {
-		const QString newPostId = orderIt->toString();
+	for (int orderIndex = orderArray.size() - 1; orderIndex >= 0; --orderIndex) {
+		const QString newPostId = orderArray.at(orderIndex).toString();
 		if (newPostId.isEmpty() || postIdToPost.contains(newPostId)) {
 			continue;
 		}
