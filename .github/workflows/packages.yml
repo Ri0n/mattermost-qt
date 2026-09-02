@@ -145,7 +145,7 @@ jobs:
             (Join-Path $stage "bin/Qt6Widgets.dll"),
             (Join-Path $stage "bin/Qt6Network.dll"),
             (Join-Path $stage "bin/Qt6WebSockets.dll"),
-            (Join-Path $stage "bin/platforms/qwindows.dll")
+            (Join-Path $stage "plugins/platforms/qwindows.dll")
           )
           foreach ($path in $required) {
             if (-not (Test-Path $path)) {
