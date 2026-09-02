@@ -20,6 +20,16 @@ void PostTimeline::reset(int totalCount)
     measuredHeightCount = 0;
 }
 
+void PostTimeline::rebuildMeasuredHeightStats()
+{
+    measuredHeightSum = 0;
+    measuredHeightCount = 0;
+    for (auto it = measuredHeights.cbegin(); it != measuredHeights.cend(); ++it) {
+        measuredHeightSum += it.value();
+        ++measuredHeightCount;
+    }
+}
+
 void PostTimeline::setTotalCount(int totalCount)
 {
     const int newCount = std::max(0, totalCount);
@@ -33,13 +43,39 @@ void PostTimeline::setTotalCount(int totalCount)
         measuredHeights.remove(it.value());
         it = loadedByIndex.erase(it);
     }
+    rebuildMeasuredHeightStats();
+}
 
-    measuredHeightSum = 0;
-    measuredHeightCount = 0;
-    for (auto it = measuredHeights.cbegin(); it != measuredHeights.cend(); ++it) {
-        measuredHeightSum += it.value();
-        ++measuredHeightCount;
+void PostTimeline::setTotalCountPreservingNewest(int totalCount)
+{
+    const int newCount = std::max(0, totalCount);
+    if (newCount == logicalCount) {
+        return;
     }
+
+    const int delta = newCount - logicalCount;
+    QMap<int, QString> shifted;
+    QHash<QString, int> shiftedIndexByPostId;
+    QHash<QString, int> keptHeights;
+
+    for (auto it = loadedByIndex.cbegin(); it != loadedByIndex.cend(); ++it) {
+        const int newIndex = it.key() + delta;
+        if (newIndex < 0 || newIndex >= newCount) {
+            continue;
+        }
+        shifted.insert(newIndex, it.value());
+        shiftedIndexByPostId.insert(it.value(), newIndex);
+        const auto heightIt = measuredHeights.constFind(it.value());
+        if (heightIt != measuredHeights.cend()) {
+            keptHeights.insert(it.value(), heightIt.value());
+        }
+    }
+
+    logicalCount = newCount;
+    loadedByIndex = std::move(shifted);
+    indexByPostId = std::move(shiftedIndexByPostId);
+    measuredHeights = std::move(keptHeights);
+    rebuildMeasuredHeightStats();
 }
 
 void PostTimeline::placeWindow(int firstIndex, const QStringList& chronologicalPostIds)
@@ -72,9 +108,6 @@ void PostTimeline::placeWindow(int firstIndex, const QStringList& chronologicalP
         }
     };
 
-    // First remove previous occurrences of every incoming ID. Keep its measured
-    // height: relocating an already-rendered post does not invalidate geometry
-    // learned for the post itself.
     for (int i = 0; i < available; ++i) {
         const QString& postId = chronologicalPostIds.at(sourceOffset + i);
         if (postId.isEmpty()) {
