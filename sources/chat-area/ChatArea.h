@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -81,6 +81,12 @@ public:
 	 * rendered; this bridges backend identity with the current materialized UI.
 	 */
 	bool ensurePostVisible (const QString& postId);
+
+	/**
+	 * Temporarily make a semantic navigation target authoritative for viewport
+	 * restoration while sparse pages and attachment geometry settle.
+	 */
+	void lockNavigationToPost(const QString& postId, int quietPeriodMs = 2000);
 
 	/**
 	 * Called when the chat area is being selected from the channels menu (so that it's contents is shown)
