@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <memory>
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -33,6 +34,7 @@ constexpr int MaxProfilesPerRequest = 100;
 constexpr int MaxStatusesPerRequest = 200;
 constexpr int MembersPerPage = 200;
 constexpr int MissingProfilesWaitMs = 100;
+constexpr qint64 ProfileReconnectClockSkewAllowanceMs = 5 * 60 * 1000;
 
 QStringList uniqueNonEmptyIds(const QStringList& userIds)
 {
@@ -65,6 +67,21 @@ UserProfileService::UserProfileService(Backend& backend)
             &backend, &Backend::onNetworkError);
     connect(&httpConnector, &HTTPConnector::onHttpError,
             &backend, &Backend::onHttpError);
+
+    connect(&backend, &Backend::onWebSocketDisconnect, this, [this] {
+        if (disconnectedAt == 0) {
+            disconnectedAt = QDateTime::currentMSecsSinceEpoch();
+        }
+    });
+    connect(&backend, &Backend::onWebSocketConnect, this, [this] {
+        if (disconnectedAt == 0) {
+            return;
+        }
+
+        const qint64 since = disconnectedAt;
+        disconnectedAt = 0;
+        refreshKnownUsersSince(since);
+    });
 }
 
 void UserProfileService::clear()
@@ -74,6 +91,7 @@ void UserProfileService::clear()
     inFlightUserIds.clear();
     inFlightAvatarKeys.clear();
     waiters.clear();
+    disconnectedAt = 0;
     flushScheduled = false;
 
     // The legacy startup path happened to load the login user's avatar at the
@@ -454,6 +472,58 @@ void UserProfileService::flushProfiles()
             scheduleFlush();
         }
     }));
+}
+
+void UserProfileService::refreshKnownUsersSince(qint64 since)
+{
+    QStringList userIds;
+    const auto& users = backend.getStorage().getAllUsers();
+    userIds.reserve(static_cast<int>(users.size()));
+    for (const auto& entry : users) {
+        userIds.push_back(entry.first);
+    }
+
+    if (userIds.isEmpty()) {
+        return;
+    }
+
+    // `since` is compared to server-side user update timestamps. The client
+    // clock may not be perfectly synchronized with the server, so overlap the
+    // window slightly. The endpoint still only considers our already-loaded
+    // IDs and returns only changed profiles, making the overlap inexpensive.
+    const qint64 safeSince = qMax<qint64>(
+        0, since - ProfileReconnectClockSkewAllowanceMs);
+    const QString sinceQuery = QString::number(static_cast<qlonglong>(safeSince));
+
+    const auto pending = std::make_shared<QStringList>(std::move(userIds));
+    const auto fetchNext = std::make_shared<std::function<void()>>();
+    *fetchNext = [this, pending, fetchNext, sinceQuery] {
+        if (pending->isEmpty()) {
+            return;
+        }
+
+        QJsonArray payload;
+        const int batchSize = std::min(
+            MaxProfilesPerRequest, static_cast<int>(pending->size()));
+        for (int i = 0; i < batchSize; ++i) {
+            payload.push_back(pending->takeFirst());
+        }
+
+        NetworkRequest request(
+            QStringLiteral("users/ids?since=") + sinceQuery);
+        httpConnector.post(request, QByteArrayCreator(payload),
+                           HttpResponseCallback([this, fetchNext](const QJsonDocument& doc) {
+            for (const auto& value : doc.array()) {
+                BackendUser* user = backend.getStorage().addUser(value.toObject());
+                if (user) {
+                    resolveReferences(*user);
+                }
+            }
+            (*fetchNext)();
+        }));
+    };
+
+    (*fetchNext)();
 }
 
 void UserProfileService::finishProfile(const QString& userId, const BackendUser* user)
