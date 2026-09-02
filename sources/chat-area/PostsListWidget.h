@@ -184,6 +184,8 @@ public:
 	                                  int viewportTopOffset = 0,
 	                                  int quietPeriodMs = 2000);
 	void clearTimelineNavigationLock();
+	// Sparse controllers use this to suspend automatic gap prefetch while an
+	// explicit navigation target owns the viewport.
 	bool hasTimelineNavigationLock() const { return !timelineNavigationPostId.isEmpty(); }
 
 	Backend*						backend;
