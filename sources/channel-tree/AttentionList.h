@@ -77,13 +77,11 @@ private:
 
     using EntryType = SidebarItem::Kind;
 
-    // Transitional aliases keep the implementation readable while making the
-    // actual model contract identical to Channels/Recent. New sidebar code
-    // should use SidebarItem directly.
-    enum : int {
-        ChannelEntry = SidebarItem::Channel,
-        ThreadEntryType = SidebarItem::Thread,
-    };
+    // Transitional names keep the implementation readable without introducing
+    // a second enum domain. Comparing/assigning them therefore remains strongly
+    // typed as SidebarItem::Kind under -Wenum-compare.
+    static constexpr EntryType ChannelEntry = SidebarItem::Channel;
+    static constexpr EntryType ThreadEntryType = SidebarItem::Thread;
 
     enum : int {
         EntryTypeRole = SidebarItem::KindRole,
