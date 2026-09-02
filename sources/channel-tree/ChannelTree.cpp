@@ -33,6 +33,7 @@
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendTeam.h"
 #include "chat-area/ChatArea.h"
+#include "channel-tree/ChannelIcons.h"
 #include "channel-tree/ChannelItem.h"
 #include "channel-tree/ChannelItemDelegate.h"
 #include "channel-tree/channel-item/DirectChannelItem.h"
@@ -269,6 +270,12 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
     item->setData(0, Qt::UserRole, QVariant::fromValue(static_cast<ChatArea*>(nullptr)));
     item->setFlags((item->flags() | Qt::ItemIsDragEnabled) & ~Qt::ItemIsDropEnabled);
     item->setLabel(channel.display_name);
+
+    if (channel.type == BackendChannel::groupChannel) {
+        item->setIcon(ChannelIcons::groupConversation());
+    } else if (channel.type != BackendChannel::directChannel) {
+        item->setIcon(ChannelIcons::channel());
+    }
 
     if (channel.type == BackendChannel::directChannel) {
         BackendUser* user = backend.getStorage().getUserById(channel.name);
@@ -564,7 +571,7 @@ void ChannelTree::removeChannelFromCategory(ChannelItem* item)
     }
 
     QTreeWidgetItem* sourceCategoryItem = item->parent();
-    QTreeWidgetItem* teamItem = sourceCategoryItem->parent();
+    QTreeWidgetItem* teamItem = sourceCategoryItem ? sourceCategoryItem->parent() : nullptr;
     const QString channelId = item->data(0, ItemIdRole).toString();
     BackendChannel* channel = backendForSidebar->getStorage().getChannelById(channelId);
     if (!teamItem || !channel) {
