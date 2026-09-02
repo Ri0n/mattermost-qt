@@ -29,6 +29,7 @@
 #include "ChannelIcons.h"
 #include "ChannelItemWidget.h"
 #include "ChannelTree.h"
+#include "SidebarItem.h"
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
 #include "backend/types/BackendChannel.h"
@@ -63,17 +64,24 @@ void ChannelItem::setLabel (const QString& label)
 		widget->setLabel (label);
 	}
 
+    // ItemIdRole is assigned before setLabel() when the ChannelTree row is
+    // materialized. Persist the channel type in model data as well so delegates
+    // and alternate views never have to recover row semantics from their parent
+    // widget or from the icon/presence fields.
+    BackendChannel* channel = backendChannel();
+    if (channel) {
+        setData(0, SidebarItem::ChannelTypeRole, channel->type);
+    }
+
     // Direct conversations get a real user avatar as soon as the profile is
     // resolved. Give every other row a stable semantic icon immediately so
     // public/private channels and group DMs do not look visually unfinished.
-    if (QTreeWidgetItem::icon(0).isNull()) {
-        if (BackendChannel* channel = backendChannel()) {
-            if (channel->type == BackendChannel::groupChannel) {
-                setIcon(ChannelIcons::groupConversation());
-            } else if (channel->type == BackendChannel::publicChannel
-                       || channel->type == BackendChannel::privateChannel) {
-                setIcon(ChannelIcons::channel());
-            }
+    if (QTreeWidgetItem::icon(0).isNull() && channel) {
+        if (channel->type == BackendChannel::groupChannel) {
+            setIcon(ChannelIcons::groupConversation());
+        } else if (channel->type == BackendChannel::publicChannel
+                   || channel->type == BackendChannel::privateChannel) {
+            setIcon(ChannelIcons::channel());
         }
     }
 }
@@ -85,7 +93,7 @@ void ChannelItem::setWidget (ChannelItemWidget* itemWidget)
 
 void ChannelItem::setMuted(bool muted)
 {
-    setData(0, ChannelTree::ItemMutedRole, muted);
+    setData(0, SidebarItem::MutedRole, muted);
     if (widget) {
         widget->setMuted(muted);
     }
@@ -93,7 +101,7 @@ void ChannelItem::setMuted(bool muted)
 
 void ChannelItem::setMentioned(bool mentioned)
 {
-    setData(0, ChannelTree::ItemMentionedRole, mentioned);
+    setData(0, SidebarItem::MentionedRole, mentioned);
     if (widget) {
         widget->setMentioned(mentioned);
     }
@@ -101,12 +109,12 @@ void ChannelItem::setMentioned(bool mentioned)
 
 void ChannelItem::setStatus(const QString& status)
 {
-    setData(0, ChannelTree::ItemStatusRole, status);
+    setData(0, SidebarItem::PresenceRole, status);
 }
 
 BackendChannel* ChannelItem::backendChannel() const
 {
-    const QString channelId = data(0, ChannelTree::ItemIdRole).toString();
+    const QString channelId = data(0, SidebarItem::IdRole).toString();
     return channelId.isEmpty() ? nullptr : backend.getStorage().getChannelById(channelId);
 }
 
