@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -132,6 +132,11 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
         QPointer<ChatArea> guard(chatArea);
         BackendChannel& channel = chatArea->getChannel();
 
+        // Keep the target authoritative before starting any asynchronous context
+        // request. Sparse page materialization and image reflow may continue for
+        // a while after the visible jump; they must not restore the old bottom.
+        chatArea->lockNavigationToPost(navigationId);
+
         // Context must be fetched even when the target object is already in the
         // backend cache. A cached post is not necessarily materialized as a row
         // in the current channel view, which was the reason pinned navigation
@@ -143,6 +148,9 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
                 if (!guard || !loaded) {
                     return;
                 }
+                // Restart the quiet period after the context response: this is
+                // exactly when the sparse controller may rebuild the timeline.
+                guard->lockNavigationToPost(navigationId);
                 guard->ensurePostVisible(navigationId);
                 guard->goToPost(navigationId);
             },
