@@ -27,7 +27,6 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QDialogButtonBox>
-#include "chat-area/ChatArea.h"
 #include "backend/Backend.h"
 #include "info-dialogs/ChannelInfoDialog.h"
 #include "channel-tree-dialogs/ViewChannelMembersListDialog.h"
@@ -39,12 +38,11 @@ void GroupChannelItem::showContextMenu (const QPoint& pos)
 {
 	QMenu myMenu;
 
-	ChatArea *chatArea = data(0, Qt::UserRole).value<ChatArea*>();
-	if (!chatArea) {
+	BackendChannel* channelPtr = backendChannel();
+	if (!channelPtr) {
 		return;
 	}
-
-	BackendChannel& channel = chatArea->getChannel();
+	BackendChannel& channel = *channelPtr;
 
 	myMenu.addAction ("View Channel details", [this, &channel] {
 		ChannelInfoDialog* dialog = new ChannelInfoDialog (channel, treeWidget());
