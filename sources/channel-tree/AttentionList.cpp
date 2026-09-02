@@ -33,6 +33,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
+#include <QSet>
 
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
@@ -87,6 +88,12 @@ AttentionList::AttentionList(QWidget* parent)
             return;
         }
 
+        // The selected row is allowed to become read without vanishing under
+        // the cursor. Moving selection replaces this retention with the newly
+        // selected row; the previous read row is then removed on refresh.
+        retainSelection(current);
+        QTimer::singleShot(0, this, &AttentionList::refresh);
+
         const auto type = static_cast<EntryType>(current->data(0, EntryTypeRole).toInt());
         const QString channelId = current->data(0, ChannelIdRole).toString();
         if (type == ChannelEntry) {
@@ -104,6 +111,50 @@ AttentionList::AttentionList(QWidget* parent)
             }
         }
     });
+}
+
+void AttentionList::retainSelection(QTreeWidgetItem* item)
+{
+    retainedChannelId.clear();
+    retainedThreadId.clear();
+    hasRetainedThread = false;
+
+    if (!item) {
+        return;
+    }
+
+    retainedChannelId = item->data(0, ChannelIdRole).toString();
+    const auto type = static_cast<EntryType>(item->data(0, EntryTypeRole).toInt());
+    if (type != ThreadEntryType) {
+        return;
+    }
+
+    retainedThreadId = item->data(0, ThreadIdRole).toString();
+    if (retainedThreadId.isEmpty()) {
+        return;
+    }
+
+    for (const ThreadEntry& thread : std::as_const(serverThreads)) {
+        if (thread.id == retainedThreadId) {
+            retainedThread = thread;
+            hasRetainedThread = true;
+            return;
+        }
+    }
+
+    const auto syntheticIt = syntheticMentions.constFind(retainedThreadId);
+    if (syntheticIt != syntheticMentions.cend()) {
+        retainedThread = syntheticIt.value();
+        hasRetainedThread = true;
+    }
+}
+
+void AttentionList::releaseSelectionRetention()
+{
+    retainedChannelId.clear();
+    retainedThreadId.clear();
+    hasRetainedThread = false;
+    refresh();
 }
 
 void AttentionList::initialize(Backend& sourceBackend)
@@ -221,21 +272,23 @@ void AttentionList::refresh()
         BackendChannel* channel = nullptr;
         ThreadEntry thread;
         uint64_t sortTime = 0;
+        bool attention = true;
     };
 
-    const QString selectedChannel = currentItem()
-        ? currentItem()->data(0, ChannelIdRole).toString()
-        : QString();
-    const QString selectedThread = currentItem()
-        ? currentItem()->data(0, ThreadIdRole).toString()
-        : QString();
+    const QString selectedChannel = !retainedChannelId.isEmpty()
+        ? retainedChannelId
+        : (currentItem() ? currentItem()->data(0, ChannelIdRole).toString() : QString());
+    const QString selectedThread = !retainedChannelId.isEmpty()
+        ? retainedThreadId
+        : (currentItem() ? currentItem()->data(0, ThreadIdRole).toString() : QString());
 
     auto& sidebar = SidebarService::instance(*backend);
     QVector<DisplayEntry> entries;
+    QSet<QString> displayedChannelIds;
+    QSet<QString> displayedThreadIds;
 
     // Direct/group conversations are attention items as conversations, not as
-    // thread rows. Muted ordinary activity is already suppressed by the
-    // channel-unread model; an explicit mention can still require attention.
+    // thread rows.
     for (auto it = backend->getStorage().channels.cbegin();
          it != backend->getStorage().channels.cend(); ++it) {
         BackendChannel* channel = it.value();
@@ -251,6 +304,7 @@ void AttentionList::refresh()
         display.channel = channel;
         display.sortTime = sidebar.channelActivityTime(*channel);
         entries.push_back(std::move(display));
+        displayedChannelIds.insert(channel->id);
     }
 
     QSet<QString> realThreadIds;
@@ -264,6 +318,7 @@ void AttentionList::refresh()
         }
 
         realThreadIds.insert(thread.id);
+        displayedThreadIds.insert(thread.id);
         DisplayEntry display;
         display.type = ThreadEntryType;
         display.thread = thread;
@@ -281,11 +336,50 @@ void AttentionList::refresh()
         if (!backend->getStorage().getChannelById(it->channelId)) {
             continue;
         }
+        displayedThreadIds.insert(it.key());
         DisplayEntry display;
         display.type = ThreadEntryType;
         display.thread = it.value();
         display.sortTime = it->lastReplyAt;
         entries.push_back(std::move(display));
+    }
+
+    // The badge reflects logical attention only. A selected row that became
+    // read can remain visible below, but must stop contributing immediately.
+    const uint32_t attentionCount = static_cast<uint32_t>(entries.size());
+    if (lastAttentionCount != static_cast<int>(attentionCount)) {
+        lastAttentionCount = static_cast<int>(attentionCount);
+        emit attentionCountChanged(attentionCount);
+    }
+
+    // Preserve the selected item even if opening it already made it read. It
+    // is rendered as read and disappears only when another item is selected or
+    // when the user leaves the Attention tab.
+    if (!retainedChannelId.isEmpty()) {
+        if (retainedThreadId.isEmpty()) {
+            if (!displayedChannelIds.contains(retainedChannelId)) {
+                BackendChannel* channel = backend->getStorage().getChannelById(retainedChannelId);
+                if (channel
+                    && (channel->type == BackendChannel::directChannel
+                        || channel->type == BackendChannel::groupChannel)) {
+                    DisplayEntry display;
+                    display.type = ChannelEntry;
+                    display.channel = channel;
+                    display.sortTime = sidebar.channelActivityTime(*channel);
+                    display.attention = false;
+                    entries.push_back(std::move(display));
+                }
+            }
+        } else if (hasRetainedThread && !displayedThreadIds.contains(retainedThreadId)) {
+            if (backend->getStorage().getChannelById(retainedThread.channelId)) {
+                DisplayEntry display;
+                display.type = ThreadEntryType;
+                display.thread = retainedThread;
+                display.sortTime = retainedThread.lastReplyAt;
+                display.attention = false;
+                entries.push_back(std::move(display));
+            }
+        }
     }
 
     std::sort(entries.begin(), entries.end(), [](const DisplayEntry& lhs, const DisplayEntry& rhs) {
@@ -309,7 +403,7 @@ void AttentionList::refresh()
     for (const DisplayEntry& display : std::as_const(entries)) {
         auto* item = new QTreeWidgetItem(this);
         QFont font = item->font(0);
-        font.setBold(true);
+        font.setBold(display.attention);
         item->setFont(0, font);
 
         if (display.type == ChannelEntry && display.channel) {
