@@ -69,6 +69,7 @@ public:
 	virtual ~ChannelTree ();
 public:
 	bool isChannelActive (const BackendChannel& channel);
+	Backend* backendInstance() const { return backendForSidebar; }
 
 	void addTeam (Backend& backend, BackendTeam& team);
 	void populateSidebars(Backend& backend);
