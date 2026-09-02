@@ -1,6 +1,6 @@
 /**
  * @file ChannelQuickList.h
- * @brief Flat channel index used by the Recent and Unreads sidebar tabs.
+ * @brief Flat channel index used by the Recent sidebar tab.
  */
 
 #pragma once
@@ -19,14 +19,9 @@ class ChannelQuickList : public QTreeWidget
 {
     Q_OBJECT
 public:
-    enum Mode {
-        Recent,
-        Unreads,
-    };
-
     explicit ChannelQuickList(QWidget* parent = nullptr);
 
-    void initialize(Backend& backend, Mode mode);
+    void initialize(Backend& backend);
     void refresh();
 
 signals:
@@ -37,7 +32,6 @@ private:
     void ensureDirectUserConnections(BackendChannel& channel);
 
     Backend* backend = nullptr;
-    Mode mode = Recent;
     bool refreshing = false;
     QMap<QString, QTreeWidgetItem*> channelItems;
     QSet<QString> connectedUsers;
