@@ -70,6 +70,9 @@ void ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
     if (postId.isEmpty() || !ui || !ui->listWidget) {
         return;
     }
+    if (channelTimelineController) {
+        channelTimelineController->beginContextNavigation(postId);
+    }
     ui->listWidget->lockTimelineNavigationToPost(postId, 0, quietPeriodMs);
 }
 
