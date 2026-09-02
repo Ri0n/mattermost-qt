@@ -34,17 +34,20 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QSet>
+#include <QSignalBlocker>
 
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
 #include "backend/QByteArrayCreator.h"
 #include "backend/SidebarService.h"
 #include "backend/Storage.h"
+#include "backend/ThreadFollowService.h"
 #include "backend/UserProfileService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendTeam.h"
 #include "backend/types/BackendUser.h"
+#include "channel-tree/ChannelIcons.h"
 
 namespace Mattermost {
 
@@ -154,6 +157,15 @@ void AttentionList::releaseSelectionRetention()
     retainedChannelId.clear();
     retainedThreadId.clear();
     hasRetainedThread = false;
+
+    // Attention is a queue rather than a navigation history. Leaving the tab
+    // releases the sticky read row and also clears QTreeWidget's current item;
+    // when the user returns, nothing is opened until they explicitly choose it.
+    {
+        const QSignalBlocker blocker(this);
+        setCurrentItem(nullptr);
+        clearSelection();
+    }
     refresh();
 }
 
@@ -170,7 +182,11 @@ void AttentionList::initialize(Backend& sourceBackend)
             [this](BackendChannel& channel, const BackendPost& post) {
         notePost(channel, post);
         refresh();
-        if (!post.root_id.isEmpty() && isVisible()) {
+
+        // Followed-thread unread state is server-owned. Refresh it even while
+        // this tab is hidden so the Attention badge/icon changes immediately
+        // instead of only after the user opens the tab.
+        if (!post.root_id.isEmpty()) {
             scheduleThreadRefresh();
         }
     });
@@ -180,9 +196,21 @@ void AttentionList::initialize(Backend& sourceBackend)
         refresh();
     });
     connect(backend, &Backend::onWebSocketConnect, this, [this] {
-        if (isVisible()) {
-            scheduleThreadRefresh();
+        scheduleThreadRefresh();
+    });
+
+    auto& followService = ThreadFollowService::instance(*backend);
+    connect(&followService, &ThreadFollowService::followingChanged, this,
+            [this](const QString&, const QString& threadId, bool following) {
+        if (!following && retainedThreadId == threadId) {
+            retainedChannelId.clear();
+            retainedThreadId.clear();
+            hasRetainedThread = false;
+            const QSignalBlocker blocker(this);
+            setCurrentItem(nullptr);
+            clearSelection();
         }
+        scheduleThreadRefresh();
     });
 
     // Catch recipient-specific mention flags on posts that may have arrived
@@ -436,6 +464,8 @@ void AttentionList::refresh()
                         UserProfileService::instance(*backend).ensureAvatar(*user);
                     }
                 }
+            } else if (channel.type == BackendChannel::groupChannel) {
+                item->setIcon(0, ChannelIcons::groupConversation());
             }
 
             if (selectedThread.isEmpty() && selectedChannel == channel.id) {
@@ -446,6 +476,7 @@ void AttentionList::refresh()
 
         const ThreadEntry& thread = display.thread;
         item->setText(0, threadLabel(thread));
+        item->setIcon(0, ChannelIcons::channel());
         item->setData(0, EntryTypeRole, static_cast<int>(ThreadEntryType));
         item->setData(0, ChannelIdRole, thread.channelId);
         item->setData(0, ThreadIdRole, thread.id);
@@ -464,6 +495,11 @@ void AttentionList::refresh()
 
     if (restoreItem) {
         setCurrentItem(restoreItem);
+    } else {
+        // QTreeWidget may otherwise keep/assign a current index while rows are
+        // rebuilt. Attention must never implicitly open its first item.
+        setCurrentItem(nullptr);
+        clearSelection();
     }
     refreshing = false;
 }
