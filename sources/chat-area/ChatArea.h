@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -49,7 +49,9 @@ struct ChannelNewPosts;
 class OutgoingAttachmentList;
 class QChatArea;
 class ChatArea;
+class ChannelTimelineController;
 class ThreadTimelineController;
+ChannelTimelineController* createChannelTimelineController(ChatArea& area);
 ThreadTimelineController* createThreadTimelineController(ChatArea& area);
 
 class ChatArea: public QWidget {
@@ -148,8 +150,9 @@ public:
 	std::vector<QMetaObject::Connection> 		signalConnections;
 
 	// Declared last on purpose: isThread/root_id/ui/backend/channel are already
-	// initialized when this factory runs. The controller itself defers UI access
-	// until the next event-loop turn, after the constructor body has completed.
+	// initialized when these factories run. Controllers defer UI access until
+	// the next event-loop turn, after the constructor body has completed.
+	ChannelTimelineController*		channelTimelineController = createChannelTimelineController(*this);
 	ThreadTimelineController*		threadTimelineController = createThreadTimelineController(*this);
 };
 
