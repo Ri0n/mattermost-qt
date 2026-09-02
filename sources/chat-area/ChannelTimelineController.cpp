@@ -196,14 +196,14 @@ void ChannelTimelineController::start()
 
     connect(area.ui->loadOldPosts, &QPushButton::clicked,
             this, &ChannelTimelineController::requestOlderPage);
-    connect(area.ui->listWidget, &PostsListWidget::scrolledToTop,
-            this, &ChannelTimelineController::requestOlderPage);
 
     QScrollBar* scrollBar = area.ui->listWidget->verticalScrollBar();
     connect(scrollBar, &QScrollBar::valueChanged, this,
             [this](int) { scheduleViewportCheck(); });
     connect(scrollBar, &QScrollBar::sliderReleased, this,
             [this] { scheduleViewportCheck(); });
+    connect(area.ui->listWidget, &PostsListWidget::userViewportChanged, this,
+            [this](bool) { scheduleViewportCheck(); });
 
     connect(&area.channel, &BackendChannel::onNewPosts, this,
             &ChannelTimelineController::absorbNewPosts);
@@ -379,7 +379,8 @@ void ChannelTimelineController::continueInitialPrefetch()
 
 void ChannelTimelineController::requestOlderPage()
 {
-    if (!active || requestInFlight) {
+    if (!active || requestInFlight || !area.ui || !area.ui->listWidget
+        || area.ui->listWidget->hasTimelineNavigationLock()) {
         return;
     }
     if (totalCountExact
@@ -774,6 +775,12 @@ void ChannelTimelineController::checkViewport()
     }
 
     PostsListWidget* list = area.ui->listWidget;
+    if (list->hasTimelineNavigationLock()) {
+        pendingSeekIndex = -1;
+        seekTimer.stop();
+        return;
+    }
+
     QScrollBar* scrollBar = list->verticalScrollBar();
 
     bool centerInsideGap = false;
