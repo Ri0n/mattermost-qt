@@ -19,12 +19,12 @@
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QPointer>
-#include <QSet>
 #include <QSignalBlocker>
 #include <QVariant>
 
 #include "Backend.h"
 #include "NetworkRequest.h"
+#include "PostNavigationWindow.h"
 #include "types/BackendChannel.h"
 
 namespace Mattermost {
@@ -55,37 +55,6 @@ void mergePosts(QJsonObject& destination, const QJsonObject& source)
     for (auto it = source.constBegin(); it != source.constEnd(); ++it) {
         destination.insert(it.key(), it.value());
     }
-}
-
-void appendUniqueOrder(QJsonArray& destination, QSet<QString>& seen, const QJsonArray& source)
-{
-    for (const QJsonValue& value : source) {
-        const QString id = value.toString();
-        if (id.isEmpty() || seen.contains(id)) {
-            continue;
-        }
-        seen.insert(id);
-        destination.push_back(id);
-    }
-}
-
-PostNavigationService::Context chronologicalContext(const QJsonArray& newestFirst,
-                                                     bool reachedOldest,
-                                                     bool reachedNewest,
-                                                     bool success)
-{
-    PostNavigationService::Context result;
-    result.success = success;
-    result.reachedOldest = reachedOldest;
-    result.reachedNewest = reachedNewest;
-    result.postIds.reserve(newestFirst.size());
-    for (int i = newestFirst.size() - 1; i >= 0; --i) {
-        const QString id = newestFirst.at(i).toString();
-        if (!id.isEmpty()) {
-            result.postIds.push_back(id);
-        }
-    }
-    return result;
 }
 
 } // namespace
@@ -155,18 +124,11 @@ void PostNavigationService::loadAround(BackendChannel& channel,
         mergePosts(posts, state->beforePosts);
         posts.insert(state->postId, state->targetPost);
 
-        // Mattermost PostList order is newest -> oldest. Build the same order
-        // as the webapp's getPostsAround(): posts after target, target itself,
-        // then posts before it. Reverse that exact request-local order for the
-        // sparse controller; never derive a pinned window from unrelated cache.
-        QJsonArray order;
-        QSet<QString> seen;
-        appendUniqueOrder(order, seen, state->afterOrder);
-        if (!seen.contains(state->postId)) {
-            seen.insert(state->postId);
-            order.push_back(state->postId);
-        }
-        appendUniqueOrder(order, seen, state->beforeOrder);
+        // Both the backend ingestion order and chronological sparse order come
+        // from one tested request-local assembly. Do not derive this window from
+        // BackendChannel's wider, potentially disjoint cache.
+        const PostNavigationWindow window = buildPostNavigationWindow(
+            state->afterOrder, state->postId, state->beforeOrder);
 
         BackendChannel& currentChannel = *state->channel;
         {
@@ -174,18 +136,18 @@ void PostNavigationService::loadAround(BackendChannel& channel,
             // timeline page. Suppress the generic onNewPosts notification; the
             // caller materializes one bounded context after the reserve is ready.
             const QSignalBlocker blocker(&currentChannel);
-            currentChannel.mergePostContext(order, posts);
+            currentChannel.mergePostContext(window.newestFirstOrder, posts);
         }
 
         if (state->callback) {
-            const bool reachedOldest = state->beforeOrder.size() < ContextFetchPerSide
+            Context result;
+            result.success = currentChannel.postIdToPost.contains(state->postId);
+            result.reachedOldest = state->beforeOrder.size() < ContextFetchPerSide
                 || state->beforePrevPostId.isEmpty();
-            const bool reachedNewest = state->afterOrder.size() < ContextFetchPerSide
+            result.reachedNewest = state->afterOrder.size() < ContextFetchPerSide
                 || state->afterNextPostId.isEmpty();
-            state->callback(chronologicalContext(order,
-                                                 reachedOldest,
-                                                 reachedNewest,
-                                                 currentChannel.postIdToPost.contains(state->postId)));
+            result.postIds = window.chronologicalIds;
+            state->callback(result);
         }
     };
 
