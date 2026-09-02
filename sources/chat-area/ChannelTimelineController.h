@@ -80,8 +80,9 @@ private:
     void requestSeek(int logicalIndex);
     int logicalIndexNearViewport(int extraScreens, bool* centerInsideGap) const;
 
-    void renderTimeline(const QString& focusPostId = QString(),
-                        const ViewportAnchor& anchor = ViewportAnchor());
+    void renderTimeline();
+    void renderTimeline(const QString& focusPostId);
+    void renderTimeline(const QString& focusPostId, const ViewportAnchor& anchor);
     void updateGapHeights();
     void scheduleMeasurementPass();
     void measureRenderedPosts();
