@@ -11,6 +11,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkRequest>
+#include <QPixmap>
 #include <QTimer>
 
 #include "backend/Backend.h"
@@ -30,6 +32,7 @@ namespace {
 constexpr int MaxProfilesPerRequest = 100;
 constexpr int MaxStatusesPerRequest = 200;
 constexpr int MembersPerPage = 200;
+constexpr int MissingProfilesWaitMs = 100;
 
 QStringList uniqueNonEmptyIds(const QStringList& userIds)
 {
@@ -69,6 +72,7 @@ void UserProfileService::clear()
     httpConnector.reset();
     queuedUserIds.clear();
     inFlightUserIds.clear();
+    inFlightAvatarKeys.clear();
     waiters.clear();
     flushScheduled = false;
 
@@ -77,13 +81,14 @@ void UserProfileService::clear()
     // the two pieces of login-user state explicit and defer them one event-loop
     // turn so MainWindow has installed its avatar/status signal handlers first.
     QTimer::singleShot(0, this, [this] {
-        const BackendUser& loginUser = backend.getLoginUser();
-        if (loginUser.id.isEmpty()) {
+        const QString loginUserId = backend.getLoginUser().id;
+        if (loginUserId.isEmpty()) {
             return;
         }
-        ensureStatuses(QStringList {loginUser.id});
-        if (loginUser.avatar.isNull()) {
-            backend.retrieveUserAvatar(loginUser.id);
+
+        ensureStatuses(QStringList {loginUserId});
+        if (BackendUser* loginUser = backend.getStorage().getUserById(loginUserId)) {
+            ensureAvatar(*loginUser);
         }
     });
 }
@@ -140,6 +145,57 @@ void UserProfileService::ensureUsers(const QStringList& userIds,
             }
         });
     }
+}
+
+void UserProfileService::ensureAvatar(BackendUser& user)
+{
+    if (user.id.isEmpty()) {
+        return;
+    }
+
+    const uint64_t pictureVersion = user.last_picture_update;
+    if (!user.avatar.isNull() && user.avatar_picture_update == pictureVersion) {
+        return;
+    }
+
+    const QString requestKey = user.id + QLatin1Char(':') + QString::number(pictureVersion);
+    if (inFlightAvatarKeys.contains(requestKey)) {
+        return;
+    }
+    inFlightAvatarKeys.insert(requestKey);
+
+    // Mattermost itself uses last_picture_update both as the profile image
+    // ETag and as a cache-busting URL parameter in the web client. Keep the
+    // same URL identity so an unchanged avatar can be served directly by
+    // QNetworkDiskCache while a changed avatar necessarily gets a new key.
+    NetworkRequest request(
+        QStringLiteral("users/") + user.id + QStringLiteral("/image?_=")
+            + QString::number(pictureVersion),
+        true);
+    request.setPriority(QNetworkRequest::LowPriority);
+    request.setAttribute(QNetworkRequest::BackgroundRequestAttribute, true);
+    request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
+
+    const QString userId = user.id;
+    httpConnector.get(request, HttpResponseCallback(
+        [this, requestKey, userId, pictureVersion](QVariant, QByteArray data) {
+            inFlightAvatarKeys.remove(requestKey);
+
+            BackendUser* currentUser = backend.getStorage().getUserById(userId);
+            if (!currentUser || currentUser->last_picture_update != pictureVersion) {
+                return;
+            }
+
+            QPixmap pixmap;
+            if (!pixmap.loadFromData(data)) {
+                return;
+            }
+
+            currentUser->avatar = pixmap.scaled(
+                48, 48, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            currentUser->avatar_picture_update = pictureVersion;
+            emit currentUser->onAvatarChanged();
+        }));
 }
 
 void UserProfileService::ensureStatuses(const QStringList& userIds,
@@ -335,7 +391,10 @@ void UserProfileService::scheduleFlush()
     }
 
     flushScheduled = true;
-    QTimer::singleShot(0, this, [this] {
+    // Match Mattermost's missing-profile loader: wait briefly so dozens of
+    // widgets/posts created in the same burst collapse into one /users/ids
+    // request instead of several tiny requests.
+    QTimer::singleShot(MissingProfilesWaitMs, this, [this] {
         flushScheduled = false;
         flushProfiles();
     });
@@ -403,6 +462,12 @@ void UserProfileService::finishProfile(const QString& userId, const BackendUser*
 void UserProfileService::resolveReferences(BackendUser& user)
 {
     Storage& storage = backend.getStorage();
+
+    // Keep an already-visible avatar fresh when a profile refresh tells us its
+    // version changed. Profiles that have never needed an avatar remain lazy.
+    if (!user.avatar.isNull() && user.avatar_picture_update != user.last_picture_update) {
+        ensureAvatar(user);
+    }
 
     if (BackendChannel* directChannel = storage.getDirectChannelByUserId(user.id)) {
         directChannel->display_name = user.getDisplayName();
