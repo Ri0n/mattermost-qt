@@ -121,6 +121,8 @@ BackendPost* BackendChannel::addPost (const QJsonObject& postObject)
 		if (rootPost) {
 			qDebug() << rootPost->id <<  rootPost->message;
 			rootPost->has_thread = true;
+			++rootPost->reply_count;
+			rootPost->last_reply_at = std::max(rootPost->last_reply_at, newPost->create_at);
 			emit onPostEdited(*rootPost);
 		} else {
 			missingRootPostIds.insert(rootId);
@@ -259,9 +261,9 @@ void BackendChannel::addPinnedPosts (const QJsonArray& orderArray, const QJsonOb
 		pinnedPosts.emplace_back (postsObject.find (newPostId).value().toObject(), storage);
 	}
 
-	if (!pinnedPosts.empty()) {
-		emit onPinnedPostsReceived ();
-	}
+	// Consumers also need the empty response so a previously visible pinned-post
+	// button/panel can be cleared after the last pin is removed.
+	emit onPinnedPostsReceived ();
 }
 
 void BackendChannel::editPost (BackendPost& newPost)
