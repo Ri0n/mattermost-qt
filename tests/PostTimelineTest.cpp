@@ -36,7 +36,6 @@ private slots:
         timeline.recordMeasuredHeight(QStringLiteral("p2"), 50);
         timeline.recordMeasuredHeight(QStringLiteral("p3"), 150);
 
-        // Mean measured height is 100, so all gaps remain 100 px/row.
         QCOMPARE(timeline.estimatedPixelForIndex(2), qint64(200));
         QCOMPARE(timeline.estimatedPixelForIndex(3), qint64(250));
         QCOMPARE(timeline.estimatedPixelForIndex(4), qint64(400));
@@ -80,6 +79,25 @@ private slots:
         QCOMPARE(timeline.loadedCount(), 1);
         QVERIFY(!timeline.contains(QStringLiteral("old")));
         QCOMPARE(timeline.postIdAt(1), QStringLiteral("new"));
+    }
+
+    void resizePreservingNewestMovesCapacityAtOldestEdge()
+    {
+        PostTimeline timeline;
+        timeline.reset(160);
+        timeline.placeWindow(80, {QStringLiteral("newest-a"), QStringLiteral("newest-b")});
+        timeline.recordMeasuredHeight(QStringLiteral("newest-a"), 123);
+
+        timeline.setTotalCountPreservingNewest(240);
+        QCOMPARE(timeline.indexOf(QStringLiteral("newest-a")), 160);
+        QCOMPARE(timeline.indexOf(QStringLiteral("newest-b")), 161);
+        QCOMPARE(timeline.loadedCount(), 2);
+
+        timeline.setTotalCountPreservingNewest(100);
+        QCOMPARE(timeline.indexOf(QStringLiteral("newest-a")), 20);
+        QCOMPARE(timeline.indexOf(QStringLiteral("newest-b")), 21);
+        QCOMPARE(timeline.loadedCount(), 2);
+        QCOMPARE(timeline.estimatedRowHeight(), 123);
     }
 };
 
