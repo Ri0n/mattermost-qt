@@ -32,6 +32,7 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setSelectionMode(QAbstractItemView::SingleSelection);
     setUniformRowHeights(true);
+    setContextMenuPolicy(Qt::CustomContextMenu);
     setItemDelegate(new ChannelItemDelegate(this));
     header()->setSectionResizeMode(0, QHeaderView::Stretch);
 
@@ -43,6 +44,18 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
         const QString channelId = current->data(0, ChannelTree::ItemIdRole).toString();
         if (!channelId.isEmpty()) {
             emit channelSelected(channelId);
+        }
+    });
+
+    connect(this, &QTreeWidget::customContextMenuRequested, this,
+            [this](const QPoint& pos) {
+        QTreeWidgetItem* item = itemAt(pos);
+        if (!item) {
+            return;
+        }
+        const QString channelId = item->data(0, ChannelTree::ItemIdRole).toString();
+        if (!channelId.isEmpty()) {
+            emit channelContextMenuRequested(channelId, viewport()->mapToGlobal(pos));
         }
     });
 }
