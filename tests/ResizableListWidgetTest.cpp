@@ -2,6 +2,7 @@
 
 #include <QLabel>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QVBoxLayout>
 
 #include "chat-area/ResizableListWidget.h"
@@ -13,6 +14,18 @@ void settleEvents()
     for (int i = 0; i < 5; ++i) {
         QCoreApplication::processEvents();
     }
+}
+
+QListWidgetItem* bottomVisibleItem(QListWidget& list)
+{
+    const QRect viewportRect = list.viewport()->rect();
+    for (int row = list.count() - 1; row >= 0; --row) {
+        QListWidgetItem* item = list.item(row);
+        if (list.visualItemRect(item).intersects(viewportRect)) {
+            return item;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace
@@ -67,6 +80,51 @@ private slots:
                  "The row must not remain at its old height after attachment growth");
         QVERIFY2(list.visualItemRect(item).height() >= row->sizeHint().height(),
                  "The actual painted row must fit text, attachment and thread button");
+    }
+
+    void contentGrowthKeepsBottomVisibleRowAnchored()
+    {
+        ResizableListWidget list;
+        list.resize(360, 180);
+
+        QList<QWidget*> rows;
+        for (int i = 0; i < 10; ++i) {
+            auto* row = new QWidget;
+            auto* layout = new QVBoxLayout(row);
+            layout->setContentsMargins(0, 0, 0, 0);
+            auto* content = new QLabel(QStringLiteral("row %1").arg(i), row);
+            content->setFixedHeight(48);
+            layout->addWidget(content);
+
+            auto* item = new QListWidgetItem;
+            list.addItem(item);
+            list.setItemWidget(item, row);
+            rows.push_back(row);
+        }
+
+        list.show();
+        settleEvents();
+        list.verticalScrollBar()->setValue(150);
+        settleEvents();
+
+        QListWidgetItem* anchor = bottomVisibleItem(list);
+        QVERIFY(anchor);
+        const int anchorRow = list.row(anchor);
+        const int bottomOffsetBefore = list.viewport()->rect().bottom() - list.visualItemRect(anchor).bottom();
+
+        // Simulate an image finishing above the current viewport. Without
+        // visual anchoring this pushes all visible messages down and changes
+        // which message is at the bottom of the chat.
+        rows.at(0)->setMinimumHeight(220);
+        rows.at(0)->updateGeometry();
+        settleEvents();
+
+        QListWidgetItem* anchorAfter = list.item(anchorRow);
+        QVERIFY(anchorAfter);
+        const int bottomOffsetAfter = list.viewport()->rect().bottom() - list.visualItemRect(anchorAfter).bottom();
+        QCOMPARE(bottomVisibleItem(list), anchorAfter);
+        QVERIFY2(qAbs(bottomOffsetAfter - bottomOffsetBefore) <= 2,
+                 "Delayed row growth must preserve the bottom-most visible row and its viewport offset");
     }
 
     void removedRowInvalidatesPendingResize()
