@@ -31,6 +31,7 @@
 #include "ChannelTreeItem.h"
 
 class QDropEvent;
+class QMouseEvent;
 class QStackedWidget;
 class QTreeWidgetItem;
 
@@ -108,9 +109,12 @@ public:
 	void removeChannelFromCategory(ChannelItem* item);
 
 protected:
+	void currentChanged(const QModelIndex& current, const QModelIndex& previous) override;
+	void mousePressEvent(QMouseEvent* event) override;
 	void dropEvent(QDropEvent* event) override;
 
 private:
+	void markChannelViewed(QTreeWidgetItem* item);
 	void showContextMenu (const QPoint& pos);
 	void handleChannelLeave();
 	void refreshTeamSidebar(Backend& backend, BackendTeam& team);
