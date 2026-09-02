@@ -196,6 +196,8 @@ private:
 	struct SavedScrollAnchor {
 		QString postId;
 		int bottomOffset = 0;
+		// Sticky-bottom state: automatic new content follows the newest edge only
+		// while this is true. User scroll and semantic navigation clear it.
 		bool atBottom = false;
 		bool valid = false;
 	};
