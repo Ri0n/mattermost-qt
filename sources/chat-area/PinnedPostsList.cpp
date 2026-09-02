@@ -28,11 +28,13 @@
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
+#include <QPointer>
 #include <QShortcut>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include "ChatArea.h"
+#include "backend/PostNavigationService.h"
 #include "post/PostWidget.h"
 #include "ui_PinnedPostsList.h"
 
@@ -94,6 +96,10 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
     }
 
     const QString postId = postWidget->post.id;
+    // Replies are not rendered as normal channel rows. For those pins navigate
+    // to the root message instead of silently failing to find the hidden reply.
+    const QString navigationId = postWidget->post.root_id.isEmpty()
+        ? postId : postWidget->post.root_id;
 
     auto* rowWidget = new QWidget(ui->listWidget);
     auto* rowLayout = new QVBoxLayout(rowWidget);
@@ -116,10 +122,28 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
     ui->listWidget->addItem (newItem);
     ui->listWidget->setItemWidget (newItem, rowWidget);
 
-    connect(goToButton, &QToolButton::clicked, this, [this, postId] {
-        if (chatArea) {
-            chatArea->goToPost(postId);
+    connect(goToButton, &QToolButton::clicked, this, [this, navigationId] {
+        if (!chatArea || navigationId.isEmpty()) {
+            closePanel();
+            return;
         }
+
+        QPointer<ChatArea> guard(chatArea);
+        BackendChannel& channel = chatArea->getChannel();
+
+        // Set pendingPostId first. If the post is old, loadAround() emits the
+        // normal channel onNewPosts signal while merging context; ChatArea will
+        // then complete the pending navigation as soon as the row is inserted.
+        chatArea->goToPost(navigationId);
+        if (!channel.postIdToPost.contains(navigationId)) {
+            PostNavigationService::instance(chatArea->getBackend()).loadAround(
+                channel, navigationId, [guard, navigationId](bool loaded) {
+                    if (guard && loaded) {
+                        guard->goToPost(navigationId);
+                    }
+                });
+        }
+
         closePanel();
     });
 }
