@@ -28,6 +28,8 @@
 #include <QSet>
 #include <QTreeWidget>
 
+#include "ChannelTreeItem.h"
+
 class QDropEvent;
 class QStackedWidget;
 class QTreeWidgetItem;
@@ -82,6 +84,24 @@ public:
 	void openChannel (QString channelID);
 	void addChannelToItem (QString channelID, QTreeWidgetItem* item);
 	void removeChannelToItem (QString channelID, QTreeWidgetItem* item = nullptr);
+
+	// Recent and Attention are alternate views over the same channel objects.
+	// Route their context-menu requests back through the real ChannelItem so all
+	// actions and handlers stay identical to the Channels tab.
+	void showChannelContextMenu(const QString& channelID, const QPoint& globalPos)
+	{
+		auto it = channelToItemMap.constFind(channelID);
+		if (it == channelToItemMap.cend()) {
+			return;
+		}
+		for (QTreeWidgetItem* item : it.value()) {
+			if (!item || item->data(0, ItemKindRole).toInt() != ChannelItemKind) {
+				continue;
+			}
+			static_cast<ChannelTreeItem*>(item)->showContextMenu(globalPos);
+			return;
+		}
+	}
 
 	bool canRemoveChannelFromCategory(const ChannelItem* item) const;
 	void removeChannelFromCategory(ChannelItem* item);
