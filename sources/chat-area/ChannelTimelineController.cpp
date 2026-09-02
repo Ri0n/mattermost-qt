@@ -15,6 +15,7 @@
 
 #include "ChatArea.h"
 #include "PostsListWidget.h"
+#include "backend/Backend.h"
 #include "backend/PostTimelineService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
@@ -156,7 +157,7 @@ int ChannelTimelineController::channelRootPostCount() const
     // total_msg_count includes replies on servers that do not expose the root
     // counter. Using it as an exact root count manufactures a phantom gap for
     // every thread reply. Unknown is safer: page responses grow a provisional
-    // oldest-side gap until a short page establishes the real boundary.
+    // oldest-side gap until the server marks the real boundary.
     if (!area.channel.has_total_msg_count_root) {
         return 0;
     }
@@ -326,13 +327,14 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
             const QStringList ids = result.postIds;
             const int responseSize = static_cast<int>(ids.size());
             const int minimumKnownCount = page * ChannelPageSize + responseSize;
-            const bool reachedOldestEdge = responseSize < ChannelPageSize;
+            // Mattermost itself uses an empty prev_post_id as the authoritative
+            // oldest-edge marker. Page length is not reliable here: filtering
+            // collapsed/thread replies can make a non-final root page short.
+            const bool reachedOldestEdge = result.prevPostId.isEmpty();
 
             int discoveredCount = guard->expectedPostCount;
             const int reportedRootCount = guard->channelRootPostCount();
             if (reachedOldestEdge) {
-                // A short root-only page is authoritative. This is the crucial
-                // shrink path that removes provisional/old server-count gaps.
                 discoveredCount = minimumKnownCount;
                 guard->totalCountExact = true;
                 guard->initialPageTarget = std::min(guard->initialPageTarget, page + 1);
@@ -341,8 +343,8 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
                 guard->totalCountExact = true;
             } else if (!guard->totalCountExact) {
                 // Keep exactly one not-yet-proven older page as provisional
-                // geometry. If another full page exists, the whole loaded tail
-                // is shifted right before that page is placed.
+                // geometry. If another page exists, the whole loaded tail is
+                // shifted right before that page is placed.
                 discoveredCount = std::max(
                     guard->expectedPostCount,
                     minimumKnownCount + ChannelPageSize);
@@ -731,10 +733,6 @@ void ChannelTimelineController::checkViewport()
 
     pendingSeekIndex = -1;
     seekTimer.stop();
-    // Near a gap, prefetch without moving the viewport. Once the viewport
-    // center is actually inside unloaded space, use the corresponding logical
-    // index as the navigation anchor so replacing the gap cannot yank the user
-    // back to the last materialized post.
     requestPageForIndex(targetIndex, centerInsideGap);
 }
 
@@ -894,9 +892,6 @@ void ChannelTimelineController::measureRenderedPosts()
     const int average = timeline.estimatedRowHeight();
     const int baseline = std::max(1, lastAppliedGapRowHeight);
     const int difference = std::abs(average - lastAppliedGapRowHeight);
-    // One geometry update per settled batch, and ignore tiny average changes.
-    // Previously every individual text/image measurement resized a potentially
-    // enormous gap, making the scrollbar and viewport bounce continuously.
     if (difference * 20 >= baseline) {
         updateGapHeights();
     }
