@@ -24,13 +24,15 @@
 
 #include "GroupChannelItem.h"
 
+#include <QDialogButtonBox>
 #include <QMenu>
 #include <QMessageBox>
-#include <QDialogButtonBox>
+
 #include "backend/Backend.h"
-#include "info-dialogs/ChannelInfoDialog.h"
-#include "channel-tree-dialogs/ViewChannelMembersListDialog.h"
 #include "channel-tree-dialogs/EditChannelPropertiesDialog.h"
+#include "channel-tree-dialogs/UserSearchDialog.h"
+#include "channel-tree-dialogs/ViewChannelMembersListDialog.h"
+#include "info-dialogs/ChannelInfoDialog.h"
 
 namespace Mattermost {
 
@@ -60,39 +62,26 @@ void GroupChannelItem::showContextMenu (const QPoint& pos)
 			return;
 		}
 
-		std::vector<const BackendUser*> availableUsers;
-
-		for (auto& member: channel.team->members) {
-
-			if (!member.user) {
-				continue;
-			}
-
-			availableUsers.emplace_back (member.user);
-		}
-
-		QSet<const BackendUser*> channelMembers = channel.getAllMembers();
-
 		FilterListDialogConfig dialogCfg {
 			"Add user to channel - Mattermost",
-			"Select a user to add to the '" + channel.display_name + "' channel:",
-			"Filter users by name:",
+			"Search for a user to add to the '" + channel.display_name + "' channel:",
+			"Search users by name:",
 			QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
-			" is already added to the channel"
+			""
 		};
 
-		UserListDialog* dialog = new UserListDialog (dialogCfg, availableUsers, &channelMembers, treeWidget());
-		dialog->show ();
+		UserSearchOptions options;
+		options.teamId = channel.team->id;
+		options.notInChannelId = channel.id;
+		auto* dialog = new UserSearchDialog(backend, dialogCfg, options, {}, treeWidget());
+		dialog->show();
 
-		QObject::connect (dialog, &UserListDialog::accepted, [this, &channel, dialog] {
+		QObject::connect(dialog, &UserSearchDialog::accepted, [this, &channel, dialog] {
 			const BackendUser* user = dialog->getSelectedUser();
-
 			if (!user) {
-				qDebug() << "dialog->getSelectedUser() returned nullptr";
 				return;
 			}
-
-			backend.addUserToChannel (channel, user->id);
+			backend.addUserToChannel(channel, user->id);
 		});
 	});
 
@@ -110,7 +99,6 @@ void GroupChannelItem::showContextMenu (const QPoint& pos)
 	myMenu.addSeparator();
 
 	myMenu.addAction ("Leave Channel", [this, &channel] {
-
 		if (QMessageBox::question (treeWidget(), "Are you sure?", "Are you sure that you want to leave the '" + channel.display_name + "' channel?") == QMessageBox::Yes) {
 			backend.leaveChannel (channel);
 		}
