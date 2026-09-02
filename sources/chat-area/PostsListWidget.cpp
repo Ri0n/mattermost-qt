@@ -156,13 +156,26 @@ void PostsListWidget::saveScrollAnchor()
 		break;
 	}
 
-	savedScrollAnchor = std::move(anchor);
+	savedScrollAnchor = anchor;
 }
 
 void PostsListWidget::commitCurrentViewportAsAnchor()
 {
 	++scrollIntentGeneration;
 	saveScrollAnchor();
+}
+
+void PostsListWidget::freezeCurrentViewportAnchor()
+{
+	++scrollIntentGeneration;
+	if (!savedScrollAnchor.valid) {
+		saveScrollAnchor();
+	}
+	if (savedScrollAnchor.valid) {
+		// Once the chat stops being actively viewed, "bottom" must refer to the
+		// concrete post that was visible now, not to a moving future bottom.
+		savedScrollAnchor.atBottom = false;
+	}
 }
 
 void PostsListWidget::noteUserScrollIntent()
@@ -206,8 +219,11 @@ void PostsListWidget::clear()
 {
 	// Do not sample the scrollbar here. clear() is itself an automatic action,
 	// and the viewport may already have been displaced by an asynchronous layout
-	// just before deactivation. The durable anchor is updated only by user input
-	// (or an explicit navigation call) and therefore survives chat recreation.
+	// just before deactivation. If the user had been at the bottom, freeze the
+	// already-saved bottom-most post so messages arriving while this chat is
+	// inactive cannot move the saved position to a newer future bottom.
+	freezeCurrentViewportAnchor();
+
 	removeNewMessagesSeparatorTimer.stop();
 	QListWidget::clear();
 	newMessagesSeparator = nullptr;
