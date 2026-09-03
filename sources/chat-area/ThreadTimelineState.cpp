@@ -66,6 +66,10 @@ void ThreadTimelineController::persistState()
     }
     state.valid = anchor.isValid() || timeline.loadedCount() > 0;
 
+    // This cache contains only the sparse logical model (at most the 200
+    // materialized IDs plus gaps), never PostWidget/QPixmap/UI objects. Closed
+    // thread windows can therefore restore their reading position without
+    // retaining the expensive QWidget tree.
     savedThreadStates()[&area.backend].insert(rootId, state);
 }
 
