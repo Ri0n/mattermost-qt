@@ -59,6 +59,12 @@ public:
                          bool olderDirection,
                          int maxLoadedRowsBeforeGap) const;
 
+    // Keep only the maxLoadedPosts logical rows nearest to centerIndex. Removed
+    // rows become ordinary sparse gaps again. The returned logical indices let
+    // page-based controllers invalidate any page bookkeeping that referred to
+    // the evicted materialization.
+    QVector<int> pruneLoadedToNearest(int centerIndex, int maxLoadedPosts);
+
     bool contains(const QString& postId) const;
     int indexOf(const QString& postId) const;
     QString postIdAt(int logicalIndex) const;
