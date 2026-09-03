@@ -16,7 +16,7 @@ namespace {
 
 constexpr int ChannelRowHeight = 32;
 constexpr int AvatarSize = 24;
-constexpr int StatusSize = 8;
+constexpr int StatusSize = 12;
 constexpr int MuteIconSize = 16;
 constexpr int HorizontalMargin = 4;
 constexpr int ItemSpacing = 4;
@@ -40,6 +40,7 @@ void drawStatusBadge(QPainter* painter, const QRect& rect, const QString& status
     painter->drawEllipse(QRectF(rect).adjusted(-1.0, -1.0, 1.0, 1.0));
 
     const QRectF badgeRect(rect);
+    const qreal scale = badgeRect.width() / 8.0;
 
     if (status == QStringLiteral("online")) {
         painter->setPen(Qt::NoPen);
@@ -47,16 +48,16 @@ void drawStatusBadge(QPainter* painter, const QRect& rect, const QString& status
         painter->drawEllipse(badgeRect);
 
         QPen pen(Qt::white);
-        pen.setWidthF(1.15);
+        pen.setWidthF(1.15 * scale);
         pen.setCapStyle(Qt::RoundCap);
         pen.setJoinStyle(Qt::RoundJoin);
         painter->setPen(pen);
         painter->setBrush(Qt::NoBrush);
 
         QPainterPath check;
-        check.moveTo(badgeRect.left() + 1.8, badgeRect.top() + 4.1);
-        check.lineTo(badgeRect.left() + 3.3, badgeRect.top() + 5.5);
-        check.lineTo(badgeRect.left() + 6.3, badgeRect.top() + 2.4);
+        check.moveTo(badgeRect.left() + 1.8 * scale, badgeRect.top() + 4.1 * scale);
+        check.lineTo(badgeRect.left() + 3.3 * scale, badgeRect.top() + 5.5 * scale);
+        check.lineTo(badgeRect.left() + 6.3 * scale, badgeRect.top() + 2.4 * scale);
         painter->drawPath(check);
     } else if (status == QStringLiteral("away")) {
         painter->setPen(Qt::NoPen);
@@ -64,29 +65,33 @@ void drawStatusBadge(QPainter* painter, const QRect& rect, const QString& status
         painter->drawEllipse(badgeRect);
 
         QPen pen(Qt::white);
-        pen.setWidthF(1.0);
+        pen.setWidthF(1.0 * scale);
         pen.setCapStyle(Qt::RoundCap);
         painter->setPen(pen);
         const QPointF center = badgeRect.center();
-        painter->drawLine(center, QPointF(center.x(), badgeRect.top() + 2.0));
-        painter->drawLine(center, QPointF(badgeRect.right() - 1.7, center.y() + 1.0));
+        painter->drawLine(center,
+                          QPointF(center.x(), badgeRect.top() + 2.0 * scale));
+        painter->drawLine(center,
+                          QPointF(badgeRect.right() - 1.7 * scale,
+                                  center.y() + 1.0 * scale));
     } else if (status == QStringLiteral("dnd")) {
         painter->setPen(Qt::NoPen);
         painter->setBrush(DndColor);
         painter->drawEllipse(badgeRect);
 
         QPen pen(Qt::white);
-        pen.setWidthF(1.25);
+        pen.setWidthF(1.25 * scale);
         pen.setCapStyle(Qt::RoundCap);
         painter->setPen(pen);
-        painter->drawLine(QPointF(badgeRect.left() + 2.0, badgeRect.center().y()),
-                          QPointF(badgeRect.right() - 2.0, badgeRect.center().y()));
+        painter->drawLine(QPointF(badgeRect.left() + 2.0 * scale, badgeRect.center().y()),
+                          QPointF(badgeRect.right() - 2.0 * scale, badgeRect.center().y()));
     } else {
         QPen pen(OnlineColor);
-        pen.setWidthF(1.25);
+        pen.setWidthF(1.25 * scale);
         painter->setPen(pen);
         painter->setBrush(Qt::black);
-        painter->drawEllipse(badgeRect.adjusted(0.65, 0.65, -0.65, -0.65));
+        painter->drawEllipse(badgeRect.adjusted(0.65 * scale, 0.65 * scale,
+                                                -0.65 * scale, -0.65 * scale));
     }
 
     painter->restore();
@@ -169,8 +174,8 @@ void ChannelItemDelegate::paint(QPainter* painter,
         painter->restore();
 
         if (!status.isEmpty()) {
-            const QRect statusRect(iconRect.right() - StatusSize + 2,
-                                   iconRect.bottom() - StatusSize + 2,
+            const QRect statusRect(iconRect.right() - StatusSize + 3,
+                                   iconRect.bottom() - StatusSize + 3,
                                    StatusSize,
                                    StatusSize);
             const bool selected = option.state.testFlag(QStyle::State_Selected);
