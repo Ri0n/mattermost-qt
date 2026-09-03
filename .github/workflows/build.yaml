@@ -10,7 +10,7 @@ on:
 permissions:
   contents: read
 
-# Diagnostic pass after cursor-based pinned-context paging changes.
+# Diagnostic pass for sparse channel/thread reconciliation and viewport state.
 
 jobs:
   qt6:
