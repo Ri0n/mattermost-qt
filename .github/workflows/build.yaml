@@ -10,7 +10,7 @@ on:
 permissions:
   contents: read
 
-# Diagnostic pass for sparse channel/thread reconciliation and viewport state.
+# Diagnostic pass for incremental sparse timelines after thread-state fixes.
 
 jobs:
   qt6:
