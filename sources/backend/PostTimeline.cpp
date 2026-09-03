@@ -239,7 +239,8 @@ QVector<int> PostTimeline::pruneLoadedToNearest(int centerIndex, int maxLoadedPo
 
     QSet<int> keep;
     keep.reserve(limit);
-    for (int i = 0; i < limit && i < candidates.size(); ++i) {
+    const int candidateCount = static_cast<int>(candidates.size());
+    for (int i = 0; i < limit && i < candidateCount; ++i) {
         keep.insert(candidates.at(i).index);
     }
 
