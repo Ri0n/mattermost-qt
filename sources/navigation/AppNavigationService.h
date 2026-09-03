@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QStringList>
 #include <QUrl>
 
 #include "backend/HTTPConnector.h"
@@ -20,7 +21,12 @@ public:
     void openChannel(const QString& channelId);
 
 signals:
-    void channelRequested(const QString& channelId, const QString& postId);
+    void channelRequested(const QString& channelId,
+                          const QString& postId,
+                          const QString& rootId,
+                          const QStringList& contextPostIds,
+                          bool reachedOldest,
+                          bool reachedNewest);
 
 private:
     explicit AppNavigationService(Backend& backend);
