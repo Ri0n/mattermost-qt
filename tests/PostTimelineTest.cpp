@@ -227,6 +227,58 @@ private slots:
         QCOMPARE(timeline.adjacentGapIndex(0, true, 5), -1);
         QCOMPARE(timeline.adjacentGapIndex(9, false, 5), -1);
     }
+
+    void pruningKeepsNearestTwoHundredRowsAndVisibleCenter()
+    {
+        PostTimeline timeline;
+        timeline.reset(260);
+        QStringList ids;
+        for (int i = 0; i < 260; ++i) {
+            ids.push_back(QStringLiteral("p%1").arg(i));
+        }
+        timeline.placeWindow(0, ids);
+
+        const QVector<int> removed = timeline.pruneLoadedToNearest(130, 200);
+        QCOMPARE(timeline.loadedCount(), 200);
+        QCOMPARE(removed.size(), 60);
+
+        // The viewport neighbourhood is never a pruning candidate.
+        for (int i = 120; i <= 140; ++i) {
+            QCOMPARE(timeline.postIdAt(i), QStringLiteral("p%1").arg(i));
+        }
+
+        const auto spans = timeline.spans();
+        QCOMPARE(spans.first().kind, PostTimeline::GapSpan);
+        QCOMPARE(spans.last().kind, PostTimeline::GapSpan);
+    }
+
+    void pruningSparseWindowsDropsFarthestMaterializationFirst()
+    {
+        PostTimeline timeline;
+        timeline.reset(1000);
+
+        QStringList oldWindow;
+        QStringList visibleWindow;
+        QStringList newestWindow;
+        for (int i = 0; i < 90; ++i) {
+            oldWindow.push_back(QStringLiteral("old%1").arg(i));
+            visibleWindow.push_back(QStringLiteral("mid%1").arg(i));
+            newestWindow.push_back(QStringLiteral("new%1").arg(i));
+        }
+        timeline.placeWindow(50, oldWindow);
+        timeline.placeWindow(450, visibleWindow);
+        timeline.placeWindow(850, newestWindow);
+
+        timeline.pruneLoadedToNearest(495, 200);
+        QCOMPARE(timeline.loadedCount(), 200);
+        QVERIFY(timeline.contains(QStringLiteral("mid45")));
+
+        // The middle window is closest to the viewport and remains complete;
+        // pruning consumes the remote windows first.
+        for (const QString& id : visibleWindow) {
+            QVERIFY(timeline.contains(id));
+        }
+    }
 };
 
 QTEST_APPLESS_MAIN(PostTimelineTest)
