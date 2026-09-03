@@ -67,12 +67,26 @@ bool ChannelTimelineController::ensurePinnedPostVisible(const QString& postId,
 
         if (firstIndex >= 0 && firstIndex < timeline.totalCount()) {
             timeline.placeWindow(firstIndex, contextIds);
-            renderTimeline(postId, stableViewportAnchor());
         }
     } else {
-        placeApproximateWindow(contextIds, postId);
+        // Defer the render until confirmed server boundaries have been applied;
+        // otherwise a pinned post near the beginning briefly shows an obsolete
+        // leading gap and then jumps again when the boundary is corrected.
+        placeApproximateWindow(contextIds, postId, false);
     }
 
+    if (contextNavigationActive && contextNavigationPostId == postId) {
+        if (contextReachedOldest && !contextOldestPostId.isEmpty()) {
+            timeline.alignLoadedSpanToBoundary(contextOldestPostId, true);
+        }
+        if (contextReachedNewest && !contextNewestPostId.isEmpty()) {
+            timeline.alignLoadedSpanToBoundary(contextNewestPostId, false);
+        }
+    }
+
+    if (timeline.contains(postId)) {
+        renderTimeline(postId, stableViewportAnchor());
+    }
     return area.ui->listWidget->findPost(postId) != nullptr;
 }
 

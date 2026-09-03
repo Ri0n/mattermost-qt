@@ -2,11 +2,171 @@
 
 #include <algorithm>
 
+#include <QPointer>
 #include <QScrollBar>
 #include <QThread>
 #include <QTimer>
 
 namespace Mattermost {
+
+void PostsListWidget::addItem(QListWidgetItem* desiredItem)
+{
+    if (!desiredItem) {
+        return;
+    }
+
+    if (timelineReconcileActive && isGapItem(desiredItem)) {
+        reconcileTimelineGap(desiredItem);
+        return;
+    }
+
+    QListWidget::addItem(desiredItem);
+}
+
+bool PostsListWidget::reconcileTimelineGap(QListWidgetItem* desiredGap)
+{
+    if (!timelineReconcileActive || !desiredGap || !isGapItem(desiredGap)) {
+        return false;
+    }
+
+    QListWidgetItem* current = timelineReconcileCursor < count()
+        ? item(timelineReconcileCursor) : nullptr;
+    if (isGapItem(current)) {
+        current->setData(ItemRole::gapFirstIndex,
+                         desiredGap->data(ItemRole::gapFirstIndex));
+        current->setData(ItemRole::gapCount,
+                         desiredGap->data(ItemRole::gapCount));
+        current->setFlags(desiredGap->flags());
+        current->setSizeHint(desiredGap->sizeHint());
+        delete desiredGap;
+    } else {
+        insertItem(timelineReconcileCursor, desiredGap);
+    }
+
+    ++timelineReconcileCursor;
+    return true;
+}
+
+bool PostsListWidget::reconcileTimelinePost(PostWidget* postWidget)
+{
+    if (!timelineReconcileActive || !postWidget) {
+        return false;
+    }
+
+    const QString postId = postWidget->post.id;
+    int existingRow = -1;
+    for (int row = timelineReconcileCursor; row < count(); ++row) {
+        QListWidgetItem* candidate = item(row);
+        if (isPostItem(candidate)
+            && candidate->data(ItemRole::postId).toString() == postId) {
+            existingRow = row;
+            break;
+        }
+    }
+
+    if (existingRow >= 0) {
+        // Anything between the desired cursor and the already materialized post
+        // is stale decoration or an evicted post. Removing preceding rows keeps
+        // the existing QListWidgetItem/PostWidget identity intact, so persistent
+        // model indexes used by asynchronous dimensionsChanged handlers remain
+        // valid instead of being broken by takeItem()/reinsert moves.
+        while (existingRow > timelineReconcileCursor) {
+            removeTimelineRow(timelineReconcileCursor);
+            --existingRow;
+        }
+
+        // Channel/Thread render code still holds this just-constructed pointer
+        // for the remainder of the current call (it attaches one measurement
+        // connection immediately after insertPost()). Defer deletion until the
+        // event loop returns so reconciliation cannot create a use-after-free.
+        postWidget->deleteLater();
+        ++timelineReconcileCursor;
+        return true;
+    }
+
+    // New materialization: reuse the ordinary insertion path so the row gets the
+    // same resize/dimensionsChanged wiring as a live message. restoringSavedScroll
+    // suppresses anchor churn until the reconciliation transaction commits.
+    const bool reconcileWasActive = timelineReconcileActive;
+    timelineReconcileActive = false;
+    insertPost(timelineReconcileCursor, postWidget);
+    timelineReconcileActive = reconcileWasActive;
+    ++timelineReconcileCursor;
+    return true;
+}
+
+bool PostsListWidget::reconcileTimelineDaySeparator(int daysAgo)
+{
+    if (!timelineReconcileActive) {
+        return false;
+    }
+
+    QListWidgetItem* current = timelineReconcileCursor < count()
+        ? item(timelineReconcileCursor) : nullptr;
+    if (current
+        && current->data(Qt::UserRole).toInt() == ItemType::separator
+        && current->data(ItemRole::daySeparatorDays).isValid()) {
+        if (current->data(ItemRole::daySeparatorDays).toInt() == daysAgo) {
+            ++timelineReconcileCursor;
+            return true;
+        }
+        removeTimelineRow(timelineReconcileCursor);
+    }
+
+    return false;
+}
+
+void PostsListWidget::removeTimelineRow(int rowIndex)
+{
+    if (rowIndex < 0 || rowIndex >= count()) {
+        return;
+    }
+
+    QListWidgetItem* listItem = item(rowIndex);
+    if (!listItem) {
+        return;
+    }
+
+    if (listItem == newMessagesSeparator) {
+        newMessagesSeparator = nullptr;
+    }
+    if (listItem == lastOwnPost) {
+        lastOwnPost = nullptr;
+    }
+    if (listItem == currentEditedItem) {
+        currentEditedItem = nullptr;
+    }
+
+    QWidget* rowWidget = itemWidget(listItem);
+    if (rowWidget) {
+        removeItemWidget(listItem);
+        delete rowWidget;
+    }
+
+    delete takeItem(rowIndex);
+}
+
+void PostsListWidget::finishTimelineReconcile()
+{
+    if (!timelineReconcileActive) {
+        return;
+    }
+
+    while (count() > timelineReconcileCursor) {
+        removeTimelineRow(timelineReconcileCursor);
+    }
+    timelineReconcileActive = false;
+}
+
+void PostsListWidget::resumeTimelinePainting()
+{
+    if (!timelinePaintingSuspended) {
+        return;
+    }
+    timelinePaintingSuspended = false;
+    QWidget::setUpdatesEnabled(true);
+    viewport()->update();
+}
 
 void PostsListWidget::lockTimelineNavigationToPost(const QString& postId,
                                                    int viewportTopOffset,
@@ -167,21 +327,27 @@ void PostsListWidget::beginTimelineRebuild()
     pendingScrollBarUserIntent = false;
     handlingUserScrollEvent = false;
 
-    // A sparse-timeline rebuild owns viewport restoration as one transaction.
-    // Do not let the ordinary clear()/insertPost() path capture and repeatedly
-    // restore intermediate geometries while rows are replaced. A semantic
-    // navigation lock is deliberately kept separately and remains authoritative
-    // even while its target row is temporarily absent.
-    savedScrollAnchor = SavedScrollAnchor();
-    QListWidget::clear();
-    newMessagesSeparator = nullptr;
-    lastOwnPost = nullptr;
-    currentEditedItem = nullptr;
+    // Keep the actual rows in place and reconcile the desired sparse sequence
+    // against them. This is the key difference from the old implementation,
+    // which called QListWidget::clear() for every REST page and therefore reset
+    // the scrollbar range in the middle of an active thumb drag.
+    timelineReconcileActive = true;
+    timelineReconcileCursor = 0;
+
+    // Painting is frozen only for this synchronous reconciliation call. It is
+    // always re-enabled by the matching finishTimelineRebuild*() before control
+    // returns to the event loop, avoiding the stale backing-store artefacts seen
+    // when updates were previously disabled across queued callbacks.
+    if (QWidget::updatesEnabled()) {
+        QWidget::setUpdatesEnabled(false);
+        timelinePaintingSuspended = true;
+    }
 }
 
 void PostsListWidget::finishTimelineRebuildAtBottom()
 {
     Q_ASSERT(QThread::currentThread() == thread());
+    finishTimelineReconcile();
 
     if (!timelineNavigationPostId.isEmpty()) {
         // A pending semantic jump owns the viewport even before its row exists.
@@ -189,6 +355,16 @@ void PostsListWidget::finishTimelineRebuildAtBottom()
         restoringSavedScroll = false;
         restoreTimelineNavigationLock();
         scheduleTimelineNavigationRestore();
+        resumeTimelinePainting();
+        return;
+    }
+
+    if (verticalScrollBar()->isSliderDown()) {
+        restoringSavedScroll = false;
+        if (savedScrollAnchor.valid) {
+            savedScrollAnchor.atBottom = false;
+        }
+        resumeTimelinePainting();
         return;
     }
 
@@ -208,6 +384,7 @@ void PostsListWidget::finishTimelineRebuildAtBottom()
     };
 
     apply();
+    resumeTimelinePainting();
     QTimer::singleShot(0, this, apply);
 }
 
@@ -215,18 +392,30 @@ bool PostsListWidget::finishTimelineRebuildAtPost(const QString& postId,
                                                    int viewportTopOffset)
 {
     Q_ASSERT(QThread::currentThread() == thread());
+    finishTimelineReconcile();
 
     if (!timelineNavigationPostId.isEmpty()) {
         restoringSavedScroll = false;
-        restoreTimelineNavigationLock();
+        const bool restored = restoreTimelineNavigationLock();
         scheduleTimelineNavigationRestore();
-        return true;
+        resumeTimelinePainting();
+        return restored || !timelineNavigationPostId.isEmpty();
     }
 
     const int rowIndex = findPostByIndex(postId, 0);
     if (rowIndex < 0) {
         restoringSavedScroll = false;
+        resumeTimelinePainting();
         return false;
+    }
+
+    if (verticalScrollBar()->isSliderDown()) {
+        restoringSavedScroll = false;
+        if (savedScrollAnchor.valid) {
+            savedScrollAnchor.atBottom = false;
+        }
+        resumeTimelinePainting();
+        return true;
     }
 
     const quint64 generation = ++scrollIntentGeneration;
@@ -265,6 +454,7 @@ bool PostsListWidget::finishTimelineRebuildAtPost(const QString& postId,
     };
 
     apply();
+    resumeTimelinePainting();
     QTimer::singleShot(0, this, apply);
     return true;
 }
@@ -272,11 +462,22 @@ bool PostsListWidget::finishTimelineRebuildAtPost(const QString& postId,
 void PostsListWidget::finishTimelineRebuildAtPixel(qint64 pixelOffset)
 {
     Q_ASSERT(QThread::currentThread() == thread());
+    finishTimelineReconcile();
 
     if (!timelineNavigationPostId.isEmpty()) {
         restoringSavedScroll = false;
         restoreTimelineNavigationLock();
         scheduleTimelineNavigationRestore();
+        resumeTimelinePainting();
+        return;
+    }
+
+    if (verticalScrollBar()->isSliderDown()) {
+        restoringSavedScroll = false;
+        if (savedScrollAnchor.valid) {
+            savedScrollAnchor.atBottom = false;
+        }
+        resumeTimelinePainting();
         return;
     }
 
@@ -299,6 +500,7 @@ void PostsListWidget::finishTimelineRebuildAtPixel(qint64 pixelOffset)
     };
 
     apply();
+    resumeTimelinePainting();
     QTimer::singleShot(0, this, apply);
 }
 

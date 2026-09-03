@@ -208,3 +208,20 @@ target_link_libraries(post-navigation-window-test
 )
 
 add_test(NAME post-navigation-window-test COMMAND post-navigation-window-test)
+
+add_executable(thread-timeline-policy-test
+    ThreadTimelinePolicyTest.cpp
+)
+
+target_include_directories(thread-timeline-policy-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(thread-timeline-policy-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME thread-timeline-policy-test COMMAND thread-timeline-policy-test)

@@ -58,6 +58,8 @@ private:
     void restoreViewportAnchor(const ViewportAnchor& anchor,
                                const QString& focusPostId = QString(),
                                bool focusAtTop = false);
+    bool restoreSavedState(ViewportAnchor& anchor);
+    void persistState();
 
     void renderTimeline(const QString& focusPostId = QString(), bool focusAtTop = false);
     void renderTimeline(const QString& focusPostId,
@@ -67,6 +69,10 @@ private:
     void scheduleMeasurementPass();
     void measureRenderedPosts();
     void schedulePaintResume(quint64 renderId);
+
+    void schedulePrune();
+    void pruneLoadedPosts(quint64 pruneRequestGeneration);
+    int logicalIndexForAnchor(const ViewportAnchor& anchor) const;
 
     ChatArea& area;
     QString rootId;
@@ -81,6 +87,7 @@ private:
     int pendingSeekIndex = -1;
     int lastAppliedGapRowHeight = 96;
     quint64 renderGeneration = 0;
+    quint64 pruneGeneration = 0;
     bool initialPrefetchDone = false;
     bool requestInFlight = false;
     bool hasNext = true;

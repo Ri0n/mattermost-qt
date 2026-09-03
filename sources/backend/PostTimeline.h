@@ -45,6 +45,26 @@ public:
 
     void placeWindow(int firstIndex, const QStringList& chronologicalPostIds);
 
+    // A cursor response can prove that a loaded span touches the real oldest or
+    // newest edge even when that span was originally placed approximately in a
+    // sparse gap. Move the whole contiguous span to the authoritative edge and
+    // leave the remaining uncertainty on the opposite side.
+    bool alignLoadedSpanToBoundary(const QString& postId, bool oldestBoundary);
+
+    // Return the adjacent unloaded logical index once the viewport is within
+    // maxLoadedRowsBeforeGap real messages of a gap. This is deliberately row-
+    // based rather than pixel/screen based so variable post heights do not defer
+    // prefetch until the user has already entered the placeholder.
+    int adjacentGapIndex(int loadedIndex,
+                         bool olderDirection,
+                         int maxLoadedRowsBeforeGap) const;
+
+    // Keep only the maxLoadedPosts logical rows nearest to centerIndex. Removed
+    // rows become ordinary sparse gaps again. The returned logical indices let
+    // page-based controllers invalidate any page bookkeeping that referred to
+    // the evicted materialization.
+    QVector<int> pruneLoadedToNearest(int centerIndex, int maxLoadedPosts);
+
     bool contains(const QString& postId) const;
     int indexOf(const QString& postId) const;
     QString postIdAt(int logicalIndex) const;
