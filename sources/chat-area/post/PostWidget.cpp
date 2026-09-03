@@ -21,6 +21,7 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QPalette>
 #include <QPointer>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -183,7 +184,8 @@ void PostWidget::updateAuthorAvatar()
 	}
 
 	ui->authorAvatar->setPixmap(
-		AvatarUtils::withStatus(post.author->avatar, 48, post.author->status, 12));
+		AvatarUtils::withStatus(post.author->avatar, 48, post.author->status, 12,
+		                        palette().color(QPalette::Window)));
 }
 
 void PostWidget::setEdited(const QString& message)
@@ -207,6 +209,12 @@ void PostWidget::connectMessageLinks()
 		if (!browser) {
 			continue;
 		}
+
+		// QTextBrowser navigates its own document when openLinks is left at its
+		// default value. That replaces the message body after a click. Keep the
+		// renderer immutable and route every click through the application-level
+		// navigation service instead.
+		browser->setOpenLinks(false);
 		browser->setOpenExternalLinks(false);
 		connect(browser, &QTextBrowser::anchorClicked, this,
 		        [this](const QUrl& url) {
@@ -251,11 +259,15 @@ void PostWidget::addThreadButton()
 		threadSummary = new ThreadSummaryWidget(backend,
 		                                        parentChatArea->getChannel(),
 		                                        post, this);
-		threadButton = threadSummary->buttonWidget();
 		connect(threadSummary, &ThreadSummaryWidget::clicked,
 		        this, &PostWidget::openThreadWindow);
-		ui->horizontalLayout->addSpacing(4);
-		ui->horizontalLayout->addWidget(threadSummary, 0, Qt::AlignVCenter);
+
+		// Keep the timestamp as the rightmost element. The stretch pushes the
+		// compact reaction-like thread control next to the timestamp instead of
+		// letting the control consume the remaining header width.
+		ui->time->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+		ui->horizontalLayout->insertStretch(1, 1);
+		ui->horizontalLayout->insertWidget(2, threadSummary, 0, Qt::AlignVCenter);
 		return;
 	}
 
