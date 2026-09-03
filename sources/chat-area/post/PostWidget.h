@@ -83,6 +83,7 @@ private:
     void setAuthor(Backend& backend, const BackendUser* user);
     void updateAuthorAvatar();
     void connectReactionActions();
+    void connectMessageLinks();
 
     Backend&                            backend;
     Ui::PostWidget*						ui;
