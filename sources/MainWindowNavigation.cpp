@@ -67,17 +67,25 @@ void MainWindow::openChannelPost(const QString& channelId,
         return;
     }
 
-    // PostNavigationService has already cached a bounded server context around
-    // the permalink target. Feed that exact context to the sparse controller;
-    // guessing a single row's position inside a large logical gap is unreliable.
-    area->lockNavigationToPost(postId, 0);
-    if (!contextPostIds.isEmpty()) {
-        area->ensurePinnedPostVisible(postId, contextPostIds,
-                                      reachedOldest, reachedNewest);
-    } else {
-        area->ensurePostVisible(postId);
-    }
-    area->goToPost(postId);
+    // A freshly opened lazy ChatArea also starts its sparse controller on the
+    // next event-loop turn. Apply the already-fetched permalink context after
+    // that start so the target cannot be replaced by initial timeline setup.
+    QPointer<ChatArea> areaGuard(area);
+    QTimer::singleShot(0, area,
+        [areaGuard, postId, contextPostIds, reachedOldest, reachedNewest] {
+            if (!areaGuard) {
+                return;
+            }
+
+            areaGuard->lockNavigationToPost(postId, 0);
+            if (!contextPostIds.isEmpty()) {
+                areaGuard->ensurePinnedPostVisible(postId, contextPostIds,
+                                                   reachedOldest, reachedNewest);
+            } else {
+                areaGuard->ensurePostVisible(postId);
+            }
+            areaGuard->goToPost(postId);
+        });
 }
 
 } // namespace Mattermost
