@@ -67,10 +67,11 @@ signals:
 	void postEditFinished ();
 	void heightChanged (int height);
 
-
 private:
 	void createAttachmentList (QStringList& files);
 	void updateSendButtonState ();
+	void setEditingVisual(bool editing);
+	bool isEditingPost() const;
 	bool isCreatingPost ();
 	bool isWaitingForPostServerResponse ();
 
