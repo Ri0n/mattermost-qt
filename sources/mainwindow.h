@@ -27,10 +27,12 @@ QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
+class QLineEdit;
 class QSplitter;
 class QSystemTrayIcon;
 class QTabWidget;
 class QToolButton;
+class QTreeWidget;
 class QTreeWidgetItem;
 
 namespace Mattermost {
@@ -55,29 +57,11 @@ public:
 	void initializationComplete ();
 
 	void changeEvent (QEvent* event) override;
-
-	/**
-	 * Called when the window's close buttons is clicked
-	 * @param event event
-	 */
 	void closeEvent(QCloseEvent *event) override;
-
-	/**
-	 * Called when the window is about to be closed, either because of logout or reload action or quit action from the tray menu.
-	 * In all cases it's state has to be saved
-	 */
 	void saveState ();
-
-	/**
-	 * Called when a new post is received while the Mattermost client is on
-	 * @param channel channel
-	 * @param post post
-	 */
 	void messageNotify (BackendChannel& channel, const BackendPost& post);
-
 	void unreadMessagesNotify (const BackendChannel& channel);
 	void setNotificationsCountVisualization (uint32_t notificationsCount);
-
 	void moveEvent (QMoveEvent* event) override;
 	void dragMoveEvent (QDragMoveEvent* event) override;
 private:
@@ -87,6 +71,8 @@ private:
 	void setupChannelTabs ();
 	void refreshSidebarViews ();
 	void refreshChannelUnreadFilter ();
+	void applySidebarTextFilter(QTreeWidget* tree) const;
+	void openDirectMessageSearch ();
 	void openAttentionThread (const QString& channelId, const QString& rootPostId);
 private:
 	std::unique_ptr<Ui::MainWindow>		ui;
@@ -97,6 +83,7 @@ private:
 	QSplitter*							sidebarSplitter = nullptr;
 	QTabWidget*							channelTabs = nullptr;
 	QWidget*							channelsPage = nullptr;
+	QLineEdit*							sidebarFilterEdit = nullptr;
 	QToolButton*						unreadFilterButton = nullptr;
 	ChannelQuickList*					recentChannels = nullptr;
 	AttentionList*						attentionList = nullptr;
