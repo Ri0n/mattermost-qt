@@ -22,7 +22,9 @@
 #include <algorithm>
 
 #include <QCloseEvent>
+#include <QDialogButtonBox>
 #include <QHBoxLayout>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPointer>
 #include <QSettings>
@@ -32,6 +34,7 @@
 #include <QTabWidget>
 #include <QTimer>
 #include <QToolButton>
+#include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
 #include <QWindow>
@@ -42,38 +45,62 @@
 #include "backend/PostNavigationService.h"
 #include "backend/SidebarService.h"
 #include "backend/UserProfileService.h"
+#include "backend/types/BackendChannel.h"
+#include "backend/types/BackendUser.h"
 #include "build-config.h"
 #include "channel-tree/AttentionList.h"
 #include "channel-tree/ChannelQuickList.h"
+#include "channel-tree-dialogs/FilterListDialog.h"
+#include "channel-tree-dialogs/UserSearchDialog.h"
 #include "chat-area/ChatArea.h"
 #include "log.h"
 #include "notifications/NotificationManager.h"
 
 namespace Mattermost {
+namespace {
 
-MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _backend)
-:QMainWindow(parent)
-,ui (std::make_unique<Ui::MainWindow>())
-,trayIcon (trayIcon)
-,notificationManager (std::make_unique<NotificationManager>(trayIcon))
-,chooseEmojiDialog (this)
-,backend (_backend)
-,currentTeamRestoredFromSettings (false)
-,doDeinit (false)
+bool filterTreeItem(QTreeWidgetItem* item, const QString& term)
 {
-	LOG_DEBUG ("MainWindow create start");
+	if (!item) {
+		return false;
+	}
+
+	bool childMatches = false;
+	for (int i = 0; i < item->childCount(); ++i) {
+		childMatches = filterTreeItem(item->child(i), term) || childMatches;
+	}
+
+	const bool ownMatch = term.isEmpty()
+		|| item->text(0).contains(term, Qt::CaseInsensitive);
+	const bool visible = ownMatch || childMatches;
+	item->setHidden(!visible);
+	return visible;
+}
+
+} // namespace
+
+MainWindow::MainWindow(QWidget* parent, QSystemTrayIcon& trayIcon, Backend& _backend)
+    : QMainWindow(parent)
+    , ui(std::make_unique<Ui::MainWindow>())
+    , trayIcon(trayIcon)
+    , notificationManager(std::make_unique<NotificationManager>(trayIcon))
+    , chooseEmojiDialog(this)
+    , backend(_backend)
+    , currentTeamRestoredFromSettings(false)
+    , doDeinit(false)
+{
+	LOG_DEBUG("MainWindow create start");
 
 	ui->setupUi(this);
-	setupChannelTabs ();
-	ui->channelList->setChatAreaStackedWidget (ui->chatAreaStackedWidget);
+	setupChannelTabs();
+	ui->channelList->setChatAreaStackedWidget(ui->chatAreaStackedWidget);
 	ui->channelList->setFocus();
 
-	createMenu ();
-	connect (notificationManager.get(), &NotificationManager::activated,
-	         this, &MainWindow::activateNotification);
+	createMenu();
+	connect(notificationManager.get(), &NotificationManager::activated,
+	        this, &MainWindow::activateNotification);
 
 	const BackendUser& currentUser = backend.getLoginUser();
-
 	if (currentUser.id.isEmpty()) {
 		ui->usericon_label->clear();
 		qCritical() << "Current User's ID is empty string";
@@ -91,16 +118,14 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 		QTimer::singleShot(0, this, &MainWindow::refreshSidebarViews);
 	});
 
-	// Selection alone must not mark a channel as viewed. Reading state is driven
-	// by explicit user scrolling in PostsListWidget; layout-driven movement,
-	// resize and chat activation are deliberately ignored. When the Channels
-	// unread filter is active, keep the selected row visible until selection or
-	// tab changes even after it eventually becomes read.
 	connect(ui->channelList, &QTreeWidget::currentItemChanged, this,
 	        [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
-		if (!current || current->data(0, ChannelTree::ItemKindRole).toInt() != ChannelTree::ChannelItemKind) {
+		if (!current
+			|| current->data(0, ChannelTree::ItemKindRole).toInt()
+				!= ChannelTree::ChannelItemKind) {
 			return;
 		}
+
 		const QString channelId = current->data(0, ChannelTree::ItemIdRole).toString();
 		if (channelId.isEmpty()) {
 			return;
@@ -123,57 +148,44 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 	userProfiles.clear();
 	sidebar.retrieveChannelMemberships();
 
-	connect (&currentUser, &BackendUser::onStatusChanged, [this, &currentUser] {
-		ui->statusLabel->setText (currentUser.status);
+	connect(&currentUser, &BackendUser::onStatusChanged, [this, &currentUser] {
+		ui->statusLabel->setText(currentUser.status);
+	});
+	ui->usernameLabel->setText(currentUser.username);
+
+	connect(&currentUser, &BackendUser::onAvatarChanged, [this, &currentUser] {
+		LOG_DEBUG("Got User Image");
+		ui->usericon_label->setPixmap(currentUser.avatar);
 	});
 
-	ui->usernameLabel->setText (currentUser.username);
-
-	connect (&currentUser, &BackendUser::onAvatarChanged, [this, &currentUser] {
-		LOG_DEBUG ("Got User Image");
-		ui->usericon_label->setPixmap (currentUser.avatar);
-	});
-
-	/*
-	 * The Mattermost sidebar categories are per-user and per-team. Wait until all
-	 * channels (including DM/GM channels duplicated by the server across teams)
-	 * are in storage, then build each team's sidebar from the server category list.
-	 */
-	connect (&backend, &Backend::onAllTeamChannelsPopulated, [this] {
-		ui->channelList->populateSidebars (backend);
+	connect(&backend, &Backend::onAllTeamChannelsPopulated, [this] {
+		ui->channelList->populateSidebars(backend);
 		attentionList->refreshThreads();
 		QTimer::singleShot(0, this, &MainWindow::refreshSidebarViews);
-		initializationComplete ();
+		initializationComplete();
 	});
 
-	connect (&backend, &Backend::onNewPost, [this] (BackendChannel& channel, const BackendPost& post) {
-		this->messageNotify (channel, post);
+	connect(&backend, &Backend::onNewPost,
+	        [this](BackendChannel& channel, const BackendPost& post) {
+		messageNotify(channel, post);
 	});
 
-	connect (&backend, &Backend::onChannelViewed, [this] (const BackendChannel& channel) {
+	connect(&backend, &Backend::onChannelViewed, [this](const BackendChannel& channel) {
 		SidebarService::instance(backend).setChannelMentioned(channel.id, false);
 	});
 
-	/*
-	 * onAddedToTeam comes after a WebSocket event, when the user is added to (new) team
-	 */
-	connect (&backend, &Backend::onAddedToTeam, [this](BackendTeam& team) {
-		ui->channelList->addTeam (backend, team);
+	connect(&backend, &Backend::onAddedToTeam, [this](BackendTeam& team) {
+		ui->channelList->addTeam(backend, team);
 	});
 
-	// The old startup path downloaded every active user on the server before it
-	// even asked for our teams. Large installations easily turn that into dozens
-	// of simultaneous /users?page=N requests. Channels contain the user IDs we
-	// actually need, so profiles are now fetched lazily in small batches.
-	backend.retrieveOwnTeams ([this](BackendTeam& team) {
-		ui->channelList->addTeam (backend, team);
+	backend.retrieveOwnTeams([this](BackendTeam& team) {
+		ui->channelList->addTeam(backend, team);
 	});
 
-	LOG_DEBUG ("MainWindow signal register finish");
+	LOG_DEBUG("MainWindow signal register finish");
 
-	//Restore saved window position, dimensions and the user-selected sidebar width.
 	QSettings settings;
-	restoreGeometry (settings.value("geometry", saveGeometry()).toByteArray());
+	restoreGeometry(settings.value("geometry", saveGeometry()).toByteArray());
 	const QByteArray splitterState = settings.value("sidebar_splitter_state").toByteArray();
 	if (sidebarSplitter && !splitterState.isEmpty()) {
 		sidebarSplitter->restoreState(splitterState);
@@ -181,19 +193,17 @@ MainWindow::MainWindow (QWidget *parent, QSystemTrayIcon& trayIcon, Backend& _ba
 		sidebarSplitter->setSizes({280, std::max(360, width() - 280)});
 	}
 
-	connect (qApp, &QApplication::aboutToQuit, this, &MainWindow::saveState);
-	LOG_DEBUG ("MainWindow create finish");
+	connect(qApp, &QApplication::aboutToQuit, this, &MainWindow::saveState);
+	LOG_DEBUG("MainWindow create finish");
 }
 
-MainWindow::~MainWindow()
-{
-}
+MainWindow::~MainWindow() = default;
 
-static QString infoText (QString ("Version " PROJECT_VER "<br/>"
-"An unofficial Mattermost Client, using the QT framework<br/>") +
+static QString infoText(QString("Version " PROJECT_VER "<br/>"
+                                "An unofficial Mattermost Client, using the QT framework<br/>") +
 R"(
 <br/>
-More information:<br/> 
+More information:<br/>
 <a href='https://github.com/nuclear868/mattermost-qt'>https://github.com/nuclear868/mattermost-qt</a>
 <br/>
 <br/>
@@ -208,7 +218,7 @@ You should have received a copy of the GNU Lesser General Public License
 along with Mattermost-QT. if not, see <a href='https://www.gnu.org/licenses/'>https://www.gnu.org/licenses/</a>.<br/>
 )");
 
-void MainWindow::setupChannelTabs ()
+void MainWindow::setupChannelTabs()
 {
 	ui->gridLayout_2->removeWidget(ui->lefttop_frame);
 	ui->gridLayout_2->removeWidget(ui->channelList);
@@ -259,6 +269,13 @@ void MainWindow::setupChannelTabs ()
 	leftLayout->setContentsMargins(0, 0, 0, 0);
 	leftLayout->setSpacing(0);
 	leftLayout->addWidget(ui->lefttop_frame);
+
+	sidebarFilterEdit = new QLineEdit(leftSidebar);
+	sidebarFilterEdit->setClearButtonEnabled(true);
+	sidebarFilterEdit->setPlaceholderText(tr("Filter channels or contacts…"));
+	sidebarFilterEdit->setAccessibleName(tr("Filter channels or contacts"));
+	sidebarFilterEdit->setContentsMargins(4, 2, 4, 2);
+	leftLayout->addWidget(sidebarFilterEdit);
 	leftLayout->addWidget(channelTabs, 1);
 
 	sidebarSplitter = new QSplitter(Qt::Horizontal, ui->centralwidget);
@@ -274,8 +291,28 @@ void MainWindow::setupChannelTabs ()
 	ui->gridLayout_2->setRowStretch(1, 0);
 	ui->gridLayout_2->setColumnStretch(0, 1);
 
+	connect(sidebarFilterEdit, &QLineEdit::textChanged,
+	        this, &MainWindow::refreshSidebarViews);
 	connect(unreadFilterButton, &QToolButton::toggled,
 	        this, &MainWindow::refreshChannelUnreadFilter);
+
+	connect(ui->channelList, &QTreeWidget::itemClicked, this,
+	        [this](QTreeWidgetItem* item, int column) {
+		if (!item || column != 1
+			|| item->data(0, ChannelTree::ItemKindRole).toInt()
+				!= ChannelTree::CategoryItemKind) {
+			return;
+		}
+
+		const QString teamId = item->data(0, ChannelTree::ItemTeamIdRole).toString();
+		const QString categoryId = item->data(0, ChannelTree::ItemIdRole).toString();
+		const SidebarTeamState* state = SidebarService::instance(backend).teamState(teamId);
+		const SidebarCategory* category = state ? state->category(categoryId) : nullptr;
+		if (category && category->type == QStringLiteral("direct_messages")) {
+			openDirectMessageSearch();
+		}
+	});
+
 	connect(recentChannels, &ChannelQuickList::channelSelected,
 	        ui->channelList, &ChannelTree::openChannel);
 	connect(recentChannels, &ChannelQuickList::channelContextMenuRequested,
@@ -319,43 +356,61 @@ void MainWindow::setupChannelTabs ()
 		channelTabs->setTabToolTip(index,
 			tr("%1 item(s) need your attention").arg(count));
 	});
+
 	connect(channelTabs, &QTabWidget::currentChanged, this, [this](int index) {
 		QWidget* currentPage = channelTabs->widget(index);
-
 		if (attentionList && currentPage != attentionList) {
 			attentionList->releaseSelectionRetention();
 		}
-
 		if (currentPage != channelsPage && !retainedUnreadFilterChannelId.isEmpty()) {
 			retainedUnreadFilterChannelId.clear();
 			refreshChannelUnreadFilter();
 		}
-
 		if (attentionList && currentPage == attentionList) {
 			attentionList->refresh();
 			attentionList->refreshThreads();
 		}
+		refreshSidebarViews();
 	});
 }
 
-void MainWindow::refreshSidebarViews ()
+void MainWindow::refreshSidebarViews()
 {
 	if (recentChannels) {
 		recentChannels->refresh();
+		applySidebarTextFilter(recentChannels);
 	}
 	if (attentionList) {
 		attentionList->refresh();
+		applySidebarTextFilter(attentionList);
 	}
 	refreshChannelUnreadFilter();
 }
 
-void MainWindow::refreshChannelUnreadFilter ()
+void MainWindow::applySidebarTextFilter(QTreeWidget* tree) const
+{
+	if (!tree) {
+		return;
+	}
+
+	const QString term = sidebarFilterEdit ? sidebarFilterEdit->text().trimmed() : QString();
+	for (int i = 0; i < tree->topLevelItemCount(); ++i) {
+		filterTreeItem(tree->topLevelItem(i), term);
+	}
+}
+
+void MainWindow::refreshChannelUnreadFilter()
 {
 	if (!ui || !ui->channelList || !unreadFilterButton) {
 		return;
 	}
 
 	const bool unreadOnly = unreadFilterButton->isChecked();
+	const QString filterText = sidebarFilterEdit
+		? sidebarFilterEdit->text().trimmed() : QString();
+	const bool textFilterActive = !filterText.isEmpty();
+	const bool anyFilterActive = unreadOnly || textFilterActive;
+
 	if (!unreadOnly) {
 		retainedUnreadFilterChannelId.clear();
 	}
@@ -376,6 +431,49 @@ void MainWindow::refreshChannelUnreadFilter ()
 				continue;
 			}
 
+			const QString teamId = categoryItem->data(0, ChannelTree::ItemTeamIdRole).toString();
+			const QString categoryId = categoryItem->data(0, ChannelTree::ItemIdRole).toString();
+			const SidebarTeamState* state = sidebar.teamState(teamId);
+			const SidebarCategory* category = state ? state->category(categoryId) : nullptr;
+			const bool directMessages = category
+				&& category->type == QStringLiteral("direct_messages");
+
+			categoryItem->setText(1, directMessages ? QStringLiteral("+") : QString());
+			categoryItem->setTextAlignment(1, Qt::AlignCenter);
+			categoryItem->setToolTip(1, directMessages ? tr("Start direct message") : QString());
+
+			// Mattermost's category channel_ids order is not guaranteed to track
+			// live DM activity. Keep the server category membership but display
+			// direct conversations strictly newest-first.
+			if (directMessages && categoryItem->childCount() > 1) {
+				QVector<QTreeWidgetItem*> children;
+				children.reserve(categoryItem->childCount());
+				for (int i = 0; i < categoryItem->childCount(); ++i) {
+					children.push_back(categoryItem->child(i));
+				}
+				std::stable_sort(children.begin(), children.end(),
+				                 [this, &sidebar](QTreeWidgetItem* a, QTreeWidgetItem* b) {
+					BackendChannel* channelA = backend.getStorage().getChannelById(
+						a ? a->data(0, ChannelTree::ItemIdRole).toString() : QString());
+					BackendChannel* channelB = backend.getStorage().getChannelById(
+						b ? b->data(0, ChannelTree::ItemIdRole).toString() : QString());
+					if (!channelA || !channelB) {
+						return channelA != nullptr;
+					}
+					return sidebar.channelActivityTime(*channelA)
+						> sidebar.channelActivityTime(*channelB);
+				});
+
+				for (int desiredIndex = 0; desiredIndex < children.size(); ++desiredIndex) {
+					QTreeWidgetItem* child = children.at(desiredIndex);
+					const int currentIndex = categoryItem->indexOfChild(child);
+					if (currentIndex >= 0 && currentIndex != desiredIndex) {
+						categoryItem->insertChild(desiredIndex,
+						                          categoryItem->takeChild(currentIndex));
+					}
+				}
+			}
+
 			bool categoryHasVisibleChannels = false;
 			for (int channelIndex = 0; channelIndex < categoryItem->childCount(); ++channelIndex) {
 				QTreeWidgetItem* channelItem = categoryItem->child(channelIndex);
@@ -383,40 +481,73 @@ void MainWindow::refreshChannelUnreadFilter ()
 					continue;
 				}
 
-				bool visible = true;
+				const QString channelId = channelItem->data(0, ChannelTree::ItemIdRole).toString();
+				BackendChannel* channel = backend.getStorage().getChannelById(channelId);
+				bool matchesText = !textFilterActive
+					|| channelItem->text(0).contains(filterText, Qt::CaseInsensitive);
+
+				if (channel && channel->type == BackendChannel::directChannel && textFilterActive) {
+					const BackendUser* user = backend.getStorage().getUserById(channel->name);
+					if (user) {
+						matchesText = matchesText
+							|| user->getDisplayName().contains(filterText, Qt::CaseInsensitive)
+							|| user->username.contains(filterText, Qt::CaseInsensitive)
+							|| user->email.contains(filterText, Qt::CaseInsensitive);
+					}
+				}
+
+				bool matchesUnread = true;
 				if (unreadOnly) {
-					const QString channelId = channelItem->data(0, ChannelTree::ItemIdRole).toString();
-					BackendChannel* channel = backend.getStorage().getChannelById(channelId);
 					const bool retained = channelsTabVisible
 						&& channelId == retainedUnreadFilterChannelId;
-					visible = channel
+					matchesUnread = channel
 						&& !sidebar.isChannelMuted(*channel)
 						&& (sidebar.isChannelUnread(*channel) || retained);
 				}
 
+				const bool visible = matchesText && matchesUnread;
 				channelItem->setHidden(!visible);
 				categoryHasVisibleChannels = categoryHasVisibleChannels || visible;
 			}
 
-			categoryItem->setHidden(unreadOnly && !categoryHasVisibleChannels);
+			categoryItem->setHidden(anyFilterActive && !categoryHasVisibleChannels);
 			teamHasVisibleChannels = teamHasVisibleChannels || categoryHasVisibleChannels;
 		}
 
-		teamItem->setHidden(unreadOnly && !teamHasVisibleChannels);
+		teamItem->setHidden(anyFilterActive && !teamHasVisibleChannels);
 	}
 }
 
-void MainWindow::openAttentionThread (const QString& channelId, const QString& rootPostId)
+void MainWindow::openDirectMessageSearch()
+{
+	FilterListDialogConfig config;
+	config.title = tr("Start Direct Message");
+	config.description = tr("Search the Mattermost user directory and select a person to message.");
+	config.filterLabelText = tr("Search users");
+	config.buttons = QDialogButtonBox::Ok | QDialogButtonBox::Cancel;
+	config.disabledItemTooltip = tr("This user cannot be selected");
+
+	UserSearchOptions options;
+	options.limit = 100;
+
+	auto* dialog = new UserSearchDialog(backend, config, options, {}, this);
+	dialog->setAttribute(Qt::WA_DeleteOnClose);
+	connect(dialog, &QDialog::accepted, this, [this, dialog] {
+		const BackendUser* user = dialog->getSelectedUser();
+		if (user) {
+			backend.createDirectChannel(*user);
+		}
+	});
+	dialog->show();
+}
+
+void MainWindow::openAttentionThread(const QString& channelId, const QString& rootPostId)
 {
 	BackendChannel* channel = backend.getStorage().getChannelById(channelId);
 	if (!channel || rootPostId.isEmpty()) {
 		return;
 	}
 
-	// A thread can arrive through Attention before this client has ever opened
-	// its parent channel. The thread endpoint alone only materializes the thread
-	// posts and can leave the adjacent parent timeline empty. Load real channel
-	// context around the root first, then create/show the two chat areas.
 	QPointer<MainWindow> guard(this);
 	PostNavigationService::instance(backend).loadAround(
 		*channel, rootPostId,
@@ -456,92 +587,82 @@ void MainWindow::openAttentionThread (const QString& channelId, const QString& r
 		true);
 }
 
-void MainWindow::createMenu ()
+void MainWindow::createMenu()
 {
-	mainMenu = new QMenu (ui->toolButton);
+	mainMenu = new QMenu(ui->toolButton);
 
-	QMenu* fileMenu = mainMenu->addMenu ("File");
-	fileMenu->addAction ("Logout", [this] {
-
-		backend.logout ([this] {
+	QMenu* fileMenu = mainMenu->addMenu("File");
+	fileMenu->addAction("Logout", [this] {
+		backend.logout([this] {
 			doDeinit = true;
-			QMainWindow::close ();
-			LOG_DEBUG ("Logout done");
+			QMainWindow::close();
+			LOG_DEBUG("Logout done");
 		});
 	});
 
-	mainMenu->addAction ("Settings", [this] {
-		settingsWindow = new SettingsWindow (this);
-
-		connect (settingsWindow, &QDialog::accepted, [this] {
-
-			if (QMessageBox::question (this, "Reload?", "In order to apply some settings, Mattermost has to be reloaded.\n"
-					" Do you want to reload now? (If no, settings will be applied on the next startup)") == QMessageBox::Yes) {
-
-				settingsWindow->applyNewSettings ();
+	mainMenu->addAction("Settings", [this] {
+		settingsWindow = new SettingsWindow(this);
+		connect(settingsWindow, &QDialog::accepted, [this] {
+			if (QMessageBox::question(
+					this, "Reload?",
+					"In order to apply some settings, Mattermost has to be reloaded.\n"
+					" Do you want to reload now? (If no, settings will be applied on the next startup)")
+				== QMessageBox::Yes) {
+				settingsWindow->applyNewSettings();
 			}
-			reload ();
+			reload();
 		});
-
 		settingsWindow->show();
 	});
 
-
-	QMenu* helpMenu = mainMenu->addMenu ("Help");
-	helpMenu->addAction ("About Mattermost", [this] {
-		QMessageBox *msgBox = new QMessageBox (QMessageBox::Information,
-				"About Mattermost", infoText);
-
-		msgBox->setIconPixmap (windowIcon().pixmap (QSize (64, 64)));
+	QMenu* helpMenu = mainMenu->addMenu("Help");
+	helpMenu->addAction("About Mattermost", [this] {
+		auto* msgBox = new QMessageBox(QMessageBox::Information,
+		                               "About Mattermost", infoText);
+		msgBox->setIconPixmap(windowIcon().pixmap(QSize(64, 64)));
 		msgBox->setTextFormat(Qt::RichText);
 		msgBox->setStandardButtons(QMessageBox::Ok);
 		msgBox->setDefaultButton(QMessageBox::Ok);
 		msgBox->open();
 	});
 
-	helpMenu->addAction ("About QT", [this] {
-		QMessageBox::aboutQt (this, "About QT");
+	helpMenu->addAction("About QT", [this] {
+		QMessageBox::aboutQt(this, "About QT");
 	});
 
 	ui->toolButton->setMenu(mainMenu);
 }
 
-void MainWindow::moveEvent (QMoveEvent*)
+void MainWindow::moveEvent(QMoveEvent*)
 {
-
 	ChatArea* currentPage = ui->channelList->getCurrentPage();
-
 	if (currentPage) {
-		currentPage->onMove (pos());
+		currentPage->onMove(pos());
 	}
 }
 
-void MainWindow::dragMoveEvent (QDragMoveEvent*)
+void MainWindow::dragMoveEvent(QDragMoveEvent*)
 {
-	qDebug() << "dragMove " << mapToGlobal(pos());
+	qDebug() << "dragMove" << mapToGlobal(pos());
 }
 
-void MainWindow::reload ()
+void MainWindow::reload()
 {
 	QTimer::singleShot(0, [this] {
 		backend.reset();
 		doDeinit = true;
-		QMainWindow::close ();
+		QMainWindow::close();
 	});
 }
 
-void MainWindow::changeEvent (QEvent* event)
+void MainWindow::changeEvent(QEvent* event)
 {
 	QWidget::changeEvent(event);
-
 	if (event->type() == QEvent::ActivationChange) {
 		if (isActiveWindow()) {
 			ChatArea* currentPage = ui->channelList->getCurrentPage();
 			if (currentPage) {
-				// Window activation is not evidence that the user scrolled through
-				// any new messages. PostsListWidget will explicitly mark the channel
-				// viewed if a user-driven scroll reaches the bottom.
-				currentPage->onMainWindowActivate ();
+				currentPage->onMainWindowActivate();
 			}
 		}
 	} else {
@@ -549,14 +670,13 @@ void MainWindow::changeEvent (QEvent* event)
 	}
 }
 
-void MainWindow::closeEvent(QCloseEvent *event)
+void MainWindow::closeEvent(QCloseEvent* event)
 {
 	qDebug() << "closeEvent";
-
 	if (doDeinit) {
 		qDebug() << "QMainWindow closeEvent";
-		saveState ();
-		return QMainWindow::closeEvent (event);
+		saveState();
+		return QMainWindow::closeEvent(event);
 	}
 
 	if (trayIcon.isVisible()) {
@@ -565,23 +685,17 @@ void MainWindow::closeEvent(QCloseEvent *event)
 	}
 }
 
-void MainWindow::initializationComplete ()
+void MainWindow::initializationComplete()
 {
-	LOG_DEBUG ("MainWindow initialization comlete");
-
-	/*
-	 * No team was restored from settings. Either there was no team saved, or the saved team
-	 * was deleted. In all cases, activate the first team
-	 */
+	LOG_DEBUG("MainWindow initialization comlete");
 	if (!currentTeamRestoredFromSettings) {
-	//	ui->teamComboBox->setCurrentIndex (0);
-		//channelList.activateTeam (0);
+		// No persisted team was restored. ChannelTree will retain its first
+		// usable selection until the user explicitly chooses another one.
 	}
 }
 
-void MainWindow::messageNotify (BackendChannel& channel, const BackendPost& post)
+void MainWindow::messageNotify(BackendChannel& channel, const BackendPost& post)
 {
-	//do not receive notifications for your own messages ;)
 	if (post.author && post.author->id == backend.getLoginUser().id) {
 		return;
 	}
@@ -590,59 +704,44 @@ void MainWindow::messageNotify (BackendChannel& channel, const BackendPost& post
 	if (post.currentUserMentioned) {
 		sidebar.setChannelMentioned(channel.id, true);
 	}
-
-	// Mattermost mute disables all desktop/email/push notifications for the channel.
 	if (sidebar.isChannelMuted(channel)) {
 		return;
 	}
-
-	// Replies in a thread are intentionally quiet unless Mattermost marked this
-	// websocket event as a mention for the current user. Following a thread is
-	// server-side state, but it must not turn every followed reply into a popup.
 	if (!post.root_id.isEmpty() && !post.currentUserMentioned) {
 		return;
 	}
 
 	if (post.root_id.isEmpty()) {
-		/**
-		 * If the Mattermost window is active (has focus) and the current channel is active,
-		 * do not add a desktop notification. Do not mark it read here: automatic
-		 * append/reflow is not user scrolling and must not advance read state.
-		 */
-		if (isActiveWindow() && ui->channelList->isChannelActive (channel)) {
+		if (isActiveWindow() && ui->channelList->isChannelActive(channel)) {
 			return;
 		}
 	} else {
-		// A thread is a separate top-level window. Do not notify if that exact
-		// thread is already visible and focused, but likewise do not mark it read
-		// merely because a programmatic append made it visible.
 		ChatArea* parentArea = ui->channelList->getCurrentPage();
 		if (parentArea && &parentArea->getChannel() == &channel) {
 			for (ChatArea* threadArea : parentArea->threadsAreas) {
-				if (threadArea && threadArea->root_id == post.root_id && threadArea->isActiveWindow()) {
+				if (threadArea && threadArea->root_id == post.root_id
+					&& threadArea->isActiveWindow()) {
 					return;
 				}
 			}
 		}
 	}
 
-	//Add a desktop notification
 	QString title;
-
 	if (!post.root_id.isEmpty()) {
-		title = post.getDisplayAuthorName () + " mentioned you in a thread";
+		title = post.getDisplayAuthorName() + " mentioned you in a thread";
 	} else if (channel.type == BackendChannel::directChannel) {
-		title = post.getDisplayAuthorName () + " messaged you";
+		title = post.getDisplayAuthorName() + " messaged you";
 	} else {
-		title = post.getDisplayAuthorName () + " posted in '" + channel.display_name + "'";
+		title = post.getDisplayAuthorName() + " posted in '" + channel.display_name + "'";
 	}
 
 	notificationManager->show(title, post.message,
 	                          NotificationTarget {channel.id, post.id, post.root_id});
-	qApp->alert (nullptr, 0);
+	qApp->alert(nullptr, 0);
 }
 
-void MainWindow::activateNotification (const NotificationTarget& target)
+void MainWindow::activateNotification(const NotificationTarget& target)
 {
 	if (!target.isValid()) {
 		return;
@@ -691,41 +790,33 @@ void MainWindow::activateNotification (const NotificationTarget& target)
 	threadArea->goToPost(target.postId);
 }
 
-void MainWindow::unreadMessagesNotify (const BackendChannel& channel)
+void MainWindow::unreadMessagesNotify(const BackendChannel& channel)
 {
 	Q_UNUSED(channel);
-	// The tray/window badge is derived from AttentionList's logical unread
-	// state. Startup channel-unread notifications must not maintain a separate,
-	// stale counter.
 }
 
-void MainWindow::setNotificationsCountVisualization (uint32_t notificationsCount)
+void MainWindow::setNotificationsCountVisualization(uint32_t notificationsCount)
 {
-	// The title and tray badge represent logical Attention items, not a separate
-	// set of channels that happened to trigger desktop notifications.
 	if (notificationsCount == 0) {
-		setWindowTitle (qApp->applicationName());
+		setWindowTitle(qApp->applicationName());
 	} else {
-		setWindowTitle ("(" + QString::number (notificationsCount) + ") " + qApp->applicationName());
+		setWindowTitle("(" + QString::number(notificationsCount) + ") "
+		               + qApp->applicationName());
 	}
 
-	const uint32_t iconCount = std::min (notificationsCount, 6u);
-	QString iconName (":/icons/img/icon" + QString::number(iconCount) + ".ico");
+	const uint32_t iconCount = std::min(notificationsCount, 6u);
+	const QString iconName(":/icons/img/icon" + QString::number(iconCount) + ".ico");
 	trayIcon.setIcon(QIcon(iconName));
 }
 
-void MainWindow::saveState ()
+void MainWindow::saveState()
 {
-	LOG_DEBUG ("MainWindow saveState");
+	LOG_DEBUG("MainWindow saveState");
 	QSettings settings;
-	settings.setValue ("geometry", saveGeometry());
+	settings.setValue("geometry", saveGeometry());
 	if (sidebarSplitter) {
 		settings.setValue("sidebar_splitter_state", sidebarSplitter->saveState());
 	}
-//	settings.setValue ("current_team", channelList.getCurrentTeamId());
-//	if (currentPage) {
-//		settings.setValue ("current_channel", currentPage->getChannel().id);
-//	}
 }
 
 } /* namespace Mattermost */
