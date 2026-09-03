@@ -62,6 +62,14 @@ BackendPost::BackendPost (const QJsonObject& jsonObject, const Storage& storage)
 	// downloading the complete thread.
 	reply_count = jsonObject.value("reply_count").toVariant().toLongLong();
 	last_reply_at = jsonObject.value("last_reply_at").toVariant().toULongLong();
+	for (const QJsonValue& participantValue : jsonObject.value("participants").toArray()) {
+		const QString participantId = participantValue.isObject()
+			? participantValue.toObject().value(QStringLiteral("id")).toString()
+			: participantValue.toString();
+		if (!participantId.isEmpty() && !threadParticipantUserIds.contains(participantId)) {
+			threadParticipantUserIds.push_back(participantId);
+		}
+	}
 	has_thread = reply_count > 0;
 
 	QJsonObject metadata = jsonObject.value("metadata").toObject();
