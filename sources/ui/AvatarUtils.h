@@ -24,6 +24,79 @@ inline QColor statusColor(const QString& status)
     return QColor(QStringLiteral("#8E8E8E"));
 }
 
+inline void drawStatusBadge(QPainter* painter,
+                            const QRectF& rect,
+                            const QString& status,
+                            const QColor& backgroundColor)
+{
+    if (!painter || status.isEmpty() || rect.isEmpty()) {
+        return;
+    }
+
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+
+    // Clear a small ring around the badge with the row/avatar background. This
+    // is the same visual treatment used by the sidebar contact rows.
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(backgroundColor);
+    painter->drawEllipse(rect.adjusted(-1.0, -1.0, 1.0, 1.0));
+
+    const qreal scale = rect.width() / 8.0;
+    if (status == QStringLiteral("online")) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(statusColor(status));
+        painter->drawEllipse(rect);
+
+        QPen pen(Qt::white);
+        pen.setWidthF(1.15 * scale);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        painter->setPen(pen);
+        painter->setBrush(Qt::NoBrush);
+
+        QPainterPath check;
+        check.moveTo(rect.left() + 1.8 * scale, rect.top() + 4.1 * scale);
+        check.lineTo(rect.left() + 3.3 * scale, rect.top() + 5.5 * scale);
+        check.lineTo(rect.left() + 6.3 * scale, rect.top() + 2.4 * scale);
+        painter->drawPath(check);
+    } else if (status == QStringLiteral("away")) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(statusColor(status));
+        painter->drawEllipse(rect);
+
+        QPen pen(Qt::white);
+        pen.setWidthF(1.0 * scale);
+        pen.setCapStyle(Qt::RoundCap);
+        painter->setPen(pen);
+        const QPointF center = rect.center();
+        painter->drawLine(center, QPointF(center.x(), rect.top() + 2.0 * scale));
+        painter->drawLine(center,
+                          QPointF(rect.right() - 1.7 * scale,
+                                  center.y() + 1.0 * scale));
+    } else if (status == QStringLiteral("dnd")) {
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(statusColor(status));
+        painter->drawEllipse(rect);
+
+        QPen pen(Qt::white);
+        pen.setWidthF(1.25 * scale);
+        pen.setCapStyle(Qt::RoundCap);
+        painter->setPen(pen);
+        painter->drawLine(QPointF(rect.left() + 2.0 * scale, rect.center().y()),
+                          QPointF(rect.right() - 2.0 * scale, rect.center().y()));
+    } else {
+        QPen pen(statusColor(QStringLiteral("online")));
+        pen.setWidthF(1.25 * scale);
+        painter->setPen(pen);
+        painter->setBrush(Qt::black);
+        painter->drawEllipse(rect.adjusted(0.65 * scale, 0.65 * scale,
+                                           -0.65 * scale, -0.65 * scale));
+    }
+
+    painter->restore();
+}
+
 inline QPixmap circular(const QPixmap& source, int size)
 {
     if (source.isNull() || size <= 0) {
@@ -53,7 +126,8 @@ inline QPixmap circular(const QPixmap& source, int size)
 inline QPixmap withStatus(const QPixmap& source,
                           int size,
                           const QString& status,
-                          int badgeSize = 12)
+                          int badgeSize,
+                          const QColor& backgroundColor)
 {
     QPixmap result = circular(source, size);
     if (result.isNull() || status.isEmpty()) {
@@ -62,17 +136,11 @@ inline QPixmap withStatus(const QPixmap& source,
 
     badgeSize = std::max(4, std::min(badgeSize, size));
     QPainter painter(&result);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-
     const QRectF badge(size - badgeSize - 1,
                        size - badgeSize - 1,
                        badgeSize,
                        badgeSize);
-    QPen outline(Qt::white);
-    outline.setWidthF(std::max(1.5, badgeSize / 5.0));
-    painter.setPen(outline);
-    painter.setBrush(statusColor(status));
-    painter.drawEllipse(badge.adjusted(1.0, 1.0, -1.0, -1.0));
+    drawStatusBadge(&painter, badge, status, backgroundColor);
     return result;
 }
 
