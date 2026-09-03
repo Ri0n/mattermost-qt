@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <climits>
 
 #include <QString>
 
@@ -11,22 +10,18 @@ inline int threadExpectedCountAfterLiveReply(int currentExpected,
                                              int reportedExpected,
                                              bool replyAlreadyMaterialized)
 {
+    Q_UNUSED(replyAlreadyMaterialized);
+
     const int current = std::max(1, currentExpected);
     const int reported = std::max(1, reportedExpected);
 
-    if (replyAlreadyMaterialized) {
-        return std::max(current, reported);
-    }
-
-    // Mattermost may update the root post's reply_count before delivering the
-    // websocket post event. In that ordering the reported count already includes
-    // the live reply, so incrementing current once more manufactures a one-row
-    // gap immediately before the newest message.
-    if (reported > current) {
-        return reported;
-    }
-
-    return current < INT_MAX ? current + 1 : current;
+    // BackendChannel::addPost() increments rootPost->reply_count and emits
+    // onPostEdited(root) before WebSocketEventHandler emits onNewPost(reply).
+    // Therefore reportedExpected already includes this reply by the time the
+    // thread controller sees the live-post signal. Growing once more here is
+    // exactly what manufactures a one-row gap immediately before the newest
+    // message. The live event only materializes the newest reported slot.
+    return std::max(current, reported);
 }
 
 inline bool threadPageConfirmsNewestBoundary(bool hasNext,
