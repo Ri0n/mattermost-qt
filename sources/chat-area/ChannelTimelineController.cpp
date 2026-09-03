@@ -8,7 +8,10 @@
 #include <QAbstractItemView>
 #include <QDateTime>
 #include <QEvent>
+#include <QIcon>
 #include <QListWidgetItem>
+#include <QPainter>
+#include <QPixmap>
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollBar>
@@ -28,8 +31,80 @@ namespace {
 constexpr int ChannelPageSize = 30;
 constexpr int SeekDebounceMs = 120;
 constexpr int MeasurementDebounceMs = 180;
-constexpr int GapPrefetchScreens = 1;
+constexpr int GapPrefetchRows = 5;
 constexpr int ContextPostsPerSide = 15;
+constexpr int LoadingIndicatorIntervalMs = 80;
+constexpr int LoadingIndicatorFrames = 12;
+constexpr auto LoadingIndicatorObjectName = "timelineLoadingIndicatorTimer";
+
+QIcon loadingIndicatorIcon(const QWidget* widget, int frame)
+{
+    constexpr int IconSize = 16;
+    QPixmap pixmap(IconSize, IconSize);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    QColor color = widget
+        ? widget->palette().color(QPalette::ButtonText)
+        : QColor(Qt::black);
+    QPen pen(color, 2.0, Qt::SolidLine, Qt::RoundCap);
+    painter.setPen(pen);
+
+    const QRectF arcRect(2.5, 2.5, IconSize - 5.0, IconSize - 5.0);
+    const int startAngle = (90 - (frame % LoadingIndicatorFrames) * 30) * 16;
+    painter.drawArc(arcRect, startAngle, 250 * 16);
+    return QIcon(pixmap);
+}
+
+QTimer* ensureLoadingIndicatorTimer(QPushButton* button)
+{
+    if (!button) {
+        return nullptr;
+    }
+
+    if (auto* existing = button->findChild<QTimer*>(
+            QLatin1String(LoadingIndicatorObjectName), Qt::FindDirectChildrenOnly)) {
+        return existing;
+    }
+
+    auto* timer = new QTimer(button);
+    timer->setObjectName(QLatin1String(LoadingIndicatorObjectName));
+    timer->setInterval(LoadingIndicatorIntervalMs);
+    timer->setProperty("frame", 0);
+    QObject::connect(timer, &QTimer::timeout, button, [button, timer] {
+        const int frame = (timer->property("frame").toInt() + 1)
+            % LoadingIndicatorFrames;
+        timer->setProperty("frame", frame);
+        button->setIcon(loadingIndicatorIcon(button, frame));
+    });
+    return timer;
+}
+
+void setLoadingIndicator(QPushButton* button, bool loading)
+{
+    if (!button) {
+        return;
+    }
+
+    QTimer* timer = ensureLoadingIndicatorTimer(button);
+    if (!timer) {
+        return;
+    }
+
+    if (!loading) {
+        timer->stop();
+        timer->setProperty("frame", 0);
+        button->setIcon(QIcon());
+        return;
+    }
+
+    button->setIconSize(QSize(16, 16));
+    button->setIcon(loadingIndicatorIcon(button, timer->property("frame").toInt()));
+    if (!timer->isActive()) {
+        timer->start();
+    }
+}
 
 QStringList uniqueChronologicalRootIds(const BackendChannel& channel,
                                        const QStringList& candidateIds)
@@ -192,6 +267,7 @@ void ChannelTimelineController::start()
     QObject::disconnect(&area.channel, &BackendChannel::onNewPosts,
                         &area, &ChatArea::fillChannelPosts);
     area.gettingOlderPosts = true;
+    setLoadingIndicator(area.ui->loadOldPosts, false);
 
     connect(area.ui->loadOldPosts, &QPushButton::clicked,
             this, &ChannelTimelineController::requestOlderPage);
@@ -281,6 +357,7 @@ void ChannelTimelineController::deactivate()
     QObject::disconnect(&area.channel, nullptr, this, nullptr);
     if (area.ui) {
         if (area.ui->loadOldPosts) {
+            setLoadingIndicator(area.ui->loadOldPosts, false);
             QObject::disconnect(area.ui->loadOldPosts, nullptr, this, nullptr);
         }
         if (area.ui->listWidget) {
@@ -330,6 +407,7 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
 
     requestInFlight = true;
     requestedPage = page;
+    setLoadingIndicator(area.ui ? area.ui->loadOldPosts : nullptr, true);
     const quint64 requestGeneration = generation;
     QPointer<ChannelTimelineController> guard(this);
 
@@ -340,6 +418,7 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
                 return;
             }
 
+            setLoadingIndicator(guard->area.ui ? guard->area.ui->loadOldPosts : nullptr, false);
             guard->requestInFlight = false;
             guard->requestedPage = -1;
 
@@ -385,6 +464,9 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
             if (!ids.isEmpty()) {
                 const int firstIndex = guard->authoritativeFirstIndex(page, responseSize);
                 guard->timeline.placeWindow(firstIndex, ids);
+                if (reachedOldestEdge) {
+                    guard->timeline.alignLoadedSpanToBoundary(ids.first(), true);
+                }
             }
 
             if (!guard->initialRenderDone) {
@@ -411,6 +493,7 @@ void ChannelTimelineController::requestContextBefore()
     }
 
     requestInFlight = true;
+    setLoadingIndicator(area.ui ? area.ui->loadOldPosts : nullptr, true);
     const quint64 requestGeneration = generation;
     QPointer<ChannelTimelineController> guard(this);
     PostTimelineService::instance(area.backend).loadChannelBefore(
@@ -419,6 +502,7 @@ void ChannelTimelineController::requestContextBefore()
             if (!guard || !guard->active || guard->generation != requestGeneration) {
                 return;
             }
+            setLoadingIndicator(guard->area.ui ? guard->area.ui->loadOldPosts : nullptr, false);
             guard->requestInFlight = false;
             if (!result.success || !guard->contextNavigationActive) {
                 guard->flushDeferredExternalPosts();
@@ -458,6 +542,9 @@ void ChannelTimelineController::requestContextBefore()
             if (result.prevPostId.isEmpty()) {
                 guard->contextReachedOldest = true;
             }
+            if (guard->contextReachedOldest && !guard->contextOldestPostId.isEmpty()) {
+                guard->timeline.alignLoadedSpanToBoundary(guard->contextOldestPostId, true);
+            }
             guard->renderTimeline(QString(), anchor);
             guard->flushDeferredExternalPosts();
             guard->scheduleViewportCheck();
@@ -477,6 +564,7 @@ void ChannelTimelineController::requestContextAfter()
     }
 
     requestInFlight = true;
+    setLoadingIndicator(area.ui ? area.ui->loadOldPosts : nullptr, true);
     const quint64 requestGeneration = generation;
     QPointer<ChannelTimelineController> guard(this);
     PostTimelineService::instance(area.backend).loadChannelAfter(
@@ -485,6 +573,7 @@ void ChannelTimelineController::requestContextAfter()
             if (!guard || !guard->active || guard->generation != requestGeneration) {
                 return;
             }
+            setLoadingIndicator(guard->area.ui ? guard->area.ui->loadOldPosts : nullptr, false);
             guard->requestInFlight = false;
             if (!result.success || !guard->contextNavigationActive) {
                 guard->flushDeferredExternalPosts();
@@ -519,6 +608,9 @@ void ChannelTimelineController::requestContextAfter()
 
             if (result.nextPostId.isEmpty()) {
                 guard->contextReachedNewest = true;
+            }
+            if (guard->contextReachedNewest && !guard->contextNewestPostId.isEmpty()) {
+                guard->timeline.alignLoadedSpanToBoundary(guard->contextNewestPostId, false);
             }
             guard->renderTimeline(QString(), anchor);
             guard->flushDeferredExternalPosts();
@@ -895,7 +987,7 @@ void ChannelTimelineController::scheduleViewportCheck()
     });
 }
 
-int ChannelTimelineController::logicalIndexNearViewport(int extraScreens,
+int ChannelTimelineController::logicalIndexNearViewport(int prefetchRows,
                                                         bool* centerInsideGap) const
 {
     if (centerInsideGap) {
@@ -921,30 +1013,40 @@ int ChannelTimelineController::logicalIndexNearViewport(int extraScreens,
         return center.logicalIndex;
     }
 
-    const qint64 margin = static_cast<qint64>(viewportHeight)
-        * std::max(1, extraScreens);
-    const qint64 probes[] = {
-        std::max<qint64>(0, static_cast<qint64>(bar->value()) - margin),
-        std::max<qint64>(0, static_cast<qint64>(bar->value()) - viewportHeight),
-        static_cast<qint64>(bar->value()),
-        static_cast<qint64>(bar->value()) + viewportHeight,
-        static_cast<qint64>(bar->value()) + viewportHeight + margin,
-    };
-
-    int bestIndex = -1;
-    qint64 bestDistance = LLONG_MAX;
-    for (qint64 probe : probes) {
-        const PostTimeline::PixelLocation location = timeline.locatePixel(probe);
-        if (!location.isValid() || location.loaded) {
+    const QRect viewportRect = list->viewport()->rect();
+    int firstVisibleIndex = INT_MAX;
+    int lastVisibleIndex = -1;
+    for (int row = 0; row < list->count(); ++row) {
+        QListWidgetItem* item = list->item(row);
+        if (!PostsListWidget::isPostItem(item)) {
             continue;
         }
-        const qint64 distance = std::llabs(probe - centerPixel);
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            bestIndex = location.logicalIndex;
+        const QRect rect = list->visualItemRect(item);
+        if (!rect.isValid() || !rect.intersects(viewportRect)) {
+            continue;
         }
+        const QString postId = item->data(ItemRole::postId).toString();
+        const int logicalIndex = timeline.indexOf(postId);
+        if (logicalIndex < 0) {
+            continue;
+        }
+        firstVisibleIndex = std::min(firstVisibleIndex, logicalIndex);
+        lastVisibleIndex = std::max(lastVisibleIndex, logicalIndex);
     }
-    return bestIndex;
+
+    if (lastVisibleIndex < 0) {
+        return -1;
+    }
+
+    const int threshold = std::max(0, prefetchRows);
+    const int olderGap = timeline.adjacentGapIndex(firstVisibleIndex, true, threshold);
+    const int newerGap = timeline.adjacentGapIndex(lastVisibleIndex, false, threshold);
+    if (olderGap >= 0 && newerGap >= 0) {
+        const int olderDistance = firstVisibleIndex - olderGap;
+        const int newerDistance = newerGap - lastVisibleIndex;
+        return olderDistance <= newerDistance ? olderGap : newerGap;
+    }
+    return olderGap >= 0 ? olderGap : newerGap;
 }
 
 void ChannelTimelineController::checkViewport()
@@ -963,7 +1065,7 @@ void ChannelTimelineController::checkViewport()
     QScrollBar* scrollBar = list->verticalScrollBar();
 
     bool centerInsideGap = false;
-    const int targetIndex = logicalIndexNearViewport(GapPrefetchScreens, &centerInsideGap);
+    const int targetIndex = logicalIndexNearViewport(GapPrefetchRows, &centerInsideGap);
     if (targetIndex < 0) {
         pendingSeekIndex = -1;
         seekTimer.stop();
