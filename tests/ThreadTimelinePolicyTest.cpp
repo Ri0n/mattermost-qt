@@ -14,10 +14,12 @@ private slots:
         QCOMPARE(threadExpectedCountAfterLiveReply(101, 102, false), 102);
     }
 
-    void staleRootCountNeedsOneNewSlot()
+    void liveSignalNeverAddsAnotherLogicalSlot()
     {
-        QCOMPARE(threadExpectedCountAfterLiveReply(101, 101, false), 102);
-        QCOMPARE(threadExpectedCountAfterLiveReply(101, 99, false), 102);
+        // BackendChannel has already counted the reply before onNewPost. Equal
+        // or temporarily lower metadata must therefore never synthesize +1.
+        QCOMPARE(threadExpectedCountAfterLiveReply(101, 101, false), 101);
+        QCOMPARE(threadExpectedCountAfterLiveReply(101, 99, false), 101);
     }
 
     void duplicateLiveReplyDoesNotGrowTimeline()
