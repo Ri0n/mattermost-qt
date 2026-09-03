@@ -21,6 +21,8 @@ public:
                         BackendPost& rootPost,
                         QWidget* parent = nullptr);
 
+    QPushButton* buttonWidget() const { return button; }
+
 signals:
     void clicked();
 
