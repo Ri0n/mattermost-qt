@@ -13,6 +13,7 @@
 
 #include "ChatArea.h"
 #include "PostsListWidget.h"
+#include "ThreadTimelinePolicy.h"
 #include "backend/PostTimelineService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
@@ -95,28 +96,54 @@ void ThreadTimelineController::start()
                         &area, &ChatArea::appendChannelPost);
 
     BackendPost* root = area.channel.postIdToPost.value(rootId, nullptr);
-    expectedPostCount = expectedThreadPostCount(root, area.channel, rootId);
+    const int currentExpectedCount = expectedThreadPostCount(root, area.channel, rootId);
 
-    timeline.reset(expectedPostCount);
-    if (root) {
-        timeline.placeWindow(0, QStringList {rootId});
-        nextLogicalIndex = 1;
+    ViewportAnchor restoredAnchor;
+    const bool restoredState = restoreSavedState(restoredAnchor);
+    bool restoredBottomNeedsCatchup = false;
+    if (restoredState) {
+        const int restoredTimelineCount = timeline.totalCount();
+        restoredBottomNeedsCatchup = restoredAnchor.kind == ViewportAnchor::Bottom
+            && currentExpectedCount > restoredTimelineCount;
+
+        expectedPostCount = std::max(expectedPostCount, currentExpectedCount);
+        // When a thread was closed while stuck to bottom, do not immediately
+        // enlarge its saved geometry with an empty trailing gap. Reopen at the
+        // last real row and let cursor paging append missed replies atomically.
+        if (!restoredBottomNeedsCatchup
+            && timeline.totalCount() != expectedPostCount) {
+            timeline.setTotalCount(expectedPostCount);
+        }
+        if (root && !timeline.contains(rootId)) {
+            timeline.placeWindow(0, QStringList {rootId});
+        }
+        if (nextLogicalIndex < expectedPostCount) {
+            hasNext = true;
+        }
+        initialPagesRemaining = 0;
+        initialPrefetchDone = true;
+    } else {
+        expectedPostCount = currentExpectedCount;
+        timeline.reset(expectedPostCount);
+        if (root) {
+            timeline.placeWindow(0, QStringList {rootId});
+            nextLogicalIndex = 1;
+        }
+        initialPagesRemaining = 1;
     }
     lastAppliedGapRowHeight = timeline.estimatedRowHeight();
-
-    // A single 30-post page is roughly three screens. Render as soon as it
-    // arrives; all later pages are loaded only when the viewport approaches the
-    // sparse gap instead of blocking thread opening with 160-240 widgets.
-    initialPagesRemaining = 1;
-
-    // Show a known root immediately while the first compact page is in flight.
-    renderTimeline(root ? rootId : QString(), true);
 
     QScrollBar* scrollBar = area.ui->listWidget->verticalScrollBar();
     connect(scrollBar, &QScrollBar::valueChanged, this,
             [this](int) { scheduleViewportCheck(); });
     connect(scrollBar, &QScrollBar::sliderReleased, this,
             [this] { scheduleViewportCheck(); });
+    connect(area.ui->listWidget, &PostsListWidget::userViewportChanged, this,
+            [this](bool) {
+        persistState();
+        schedulePrune();
+        scheduleViewportCheck();
+    });
 
     connect(&area.channel, &BackendChannel::onNewPost, this,
             [this](BackendPost& post) {
@@ -125,14 +152,20 @@ void ThreadTimelineController::start()
         }
 
         const ViewportAnchor anchor = captureViewportAnchor();
-        if (expectedPostCount < INT_MAX) {
-            ++expectedPostCount;
-        }
+        const bool alreadyMaterialized = timeline.contains(post.id);
+        BackendPost* rootPost = area.channel.postIdToPost.value(rootId, nullptr);
+        const int reportedExpected = expectedThreadPostCount(
+            rootPost, area.channel, rootId);
+        expectedPostCount = threadExpectedCountAfterLiveReply(
+            expectedPostCount, reportedExpected, alreadyMaterialized);
         timeline.setTotalCount(expectedPostCount);
-        timeline.placeWindow(expectedPostCount - 1, QStringList {post.id});
+        if (!alreadyMaterialized) {
+            timeline.placeWindow(expectedPostCount - 1, QStringList {post.id});
+        }
         if (initialPrefetchDone) {
             renderTimeline(QString(), false, anchor);
         }
+        schedulePrune();
     });
 
     connect(&area.channel, &BackendChannel::onPostEdited, this,
@@ -153,6 +186,16 @@ void ThreadTimelineController::start()
         }
     });
 
+    if (restoredState) {
+        renderTimeline(QString(), false, restoredAnchor);
+        if (restoredBottomNeedsCatchup && hasNext) {
+            QTimer::singleShot(0, this, &ThreadTimelineController::requestNextPage);
+        }
+        return;
+    }
+
+    // Show a known root immediately while the first compact page is in flight.
+    renderTimeline(root ? rootId : QString(), true);
     requestNextPage();
 }
 
@@ -187,6 +230,8 @@ void ThreadTimelineController::requestNextPage()
 
             if (pageIds.isEmpty()) {
                 guard->hasNext = false;
+                guard->expectedPostCount = std::max(1, guard->nextLogicalIndex);
+                guard->timeline.setTotalCount(guard->expectedPostCount);
                 guard->initialPrefetchDone = true;
                 guard->renderTimeline(QString(), false, anchor);
                 guard->scheduleViewportCheck();
@@ -196,6 +241,8 @@ void ThreadTimelineController::requestNextPage()
             const QString newCursor = pageIds.back();
             if (!requestedCursor.isEmpty() && newCursor == requestedCursor) {
                 guard->hasNext = false;
+                guard->expectedPostCount = std::max(1, guard->nextLogicalIndex);
+                guard->timeline.setTotalCount(guard->expectedPostCount);
                 guard->initialPrefetchDone = true;
                 guard->renderTimeline(QString(), false, anchor);
                 guard->scheduleViewportCheck();
@@ -218,8 +265,18 @@ void ThreadTimelineController::requestNextPage()
             }
 
             const int responseSize = static_cast<int>(page.postIds.size());
-            guard->hasNext = guard->nextLogicalIndex < guard->expectedPostCount
-                && (page.hasNext || responseSize >= ThreadPageSize);
+            if (threadPageConfirmsNewestBoundary(page.hasNext, page.nextPostId,
+                                                 responseSize, ThreadPageSize)) {
+                // Server pagination is authoritative here. reply_count can race
+                // a websocket update by one event, so a confirmed newest edge
+                // must collapse any speculative trailing logical slots.
+                guard->expectedPostCount = std::max(1, guard->nextLogicalIndex);
+                guard->timeline.setTotalCount(guard->expectedPostCount);
+                guard->hasNext = false;
+            } else {
+                guard->hasNext = guard->nextLogicalIndex < guard->expectedPostCount
+                    && (page.hasNext || responseSize >= ThreadPageSize);
+            }
 
             if (guard->initialPagesRemaining > 0) {
                 --guard->initialPagesRemaining;
@@ -232,6 +289,7 @@ void ThreadTimelineController::requestNextPage()
             guard->initialPrefetchDone = true;
             guard->renderTimeline(QString(), false, anchor);
             guard->scheduleViewportCheck();
+            guard->schedulePrune();
         });
 }
 
@@ -284,6 +342,7 @@ void ThreadTimelineController::requestSeek(int logicalIndex)
             guard->timeline.placeWindow(firstIndex, ids);
             guard->renderTimeline(QString(), false, anchor);
             guard->scheduleViewportCheck();
+            guard->schedulePrune();
         });
 }
 
@@ -479,7 +538,11 @@ void ThreadTimelineController::checkViewport()
         return;
     }
 
-    if (std::abs(targetIndex - nextLogicalIndex) < ThreadPageSize) {
+    // Only an unloaded row *after* the sequential cursor belongs to the next
+    // cursor page. Gaps before nextLogicalIndex can be created by the 200-row
+    // materialization budget and must be reloaded by random seek instead.
+    if (targetIndex >= nextLogicalIndex
+        && targetIndex - nextLogicalIndex < ThreadPageSize) {
         pendingSeekIndex = -1;
         seekTimer.stop();
         if (hasNext) {
@@ -554,7 +617,11 @@ void ThreadTimelineController::renderTimeline(const QString& focusPostId,
     restoreViewportAnchor(anchor, focusPostId, focusAtTop);
     scheduleMeasurementPass();
     schedulePaintResume(renderId);
-    QTimer::singleShot(0, this, &ThreadTimelineController::scheduleViewportCheck);
+    schedulePrune();
+    QTimer::singleShot(0, this, [this] {
+        persistState();
+        scheduleViewportCheck();
+    });
 }
 
 void ThreadTimelineController::schedulePaintResume(quint64 renderId)
