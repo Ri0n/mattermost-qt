@@ -6,6 +6,7 @@
 
 #include "ChatArea.h"
 #include "PostsListWidget.h"
+// Full BackendChannel definition is required for postIdToPost lookup below.
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "channel-tree/ChannelItem.h"
