@@ -18,6 +18,9 @@
  */
 
 #include "PostReaction.h"
+
+#include <QMouseEvent>
+
 #include "backend/types/BackendPost.h"
 #include "ui_PostReaction.h"
 
@@ -25,6 +28,7 @@ namespace Mattermost {
 
 PostReaction::PostReaction (const QString& emojiName, const QString& emojiValue, const BackendPostReaction& reactionData, QWidget *parent)
 :QWidget(parent)
+,emojiName(emojiName)
 ,ui(new Ui::PostReaction)
 {
     ui->setupUi (this);
@@ -42,26 +46,41 @@ PostReaction::PostReaction (const QString& emojiName, const QString& emojiValue,
 
     //remove the last '\n'
     tooltip.chop (1);
+    tooltip += QStringLiteral("\nClick to add this reaction");
     setToolTip (tooltip);
+    setCursor(Qt::PointingHandCursor);
 
-    // Match Mattermost's compact reaction chips: a subtle translucent neutral
-    // fill, a visible outline and rounded corners. WA_StyledBackground is
-    // required for QWidget itself to honor stylesheet backgrounds reliably.
+    // Keep reaction chips lightweight enough to sit inline with message chrome.
+    // A little extra top padding gives emoji glyphs room without increasing the
+    // visual weight of the bottom edge.
     setObjectName(QStringLiteral("postReaction"));
     setAttribute(Qt::WA_StyledBackground, true);
-    ui->horizontalLayout->setContentsMargins(4, 1, 4, 1);
+    ui->horizontalLayout->setContentsMargins(4, 2, 4, 1);
     ui->horizontalLayout->setSpacing(2);
     setStyleSheet(QStringLiteral(
         "QWidget#postReaction {"
-        " border: 1px solid rgba(128, 128, 128, 140);"
-        " border-radius: 8px;"
-        " background-color: rgba(128, 128, 128, 76);"
+        " border: 1px solid rgba(128, 128, 128, 130);"
+        " border-radius: 4px;"
+        " background-color: rgba(128, 128, 128, 52);"
+        " }"
+        "QWidget#postReaction:hover {"
+        " background-color: rgba(128, 128, 128, 72);"
         " }"));
 }
 
 PostReaction::~PostReaction()
 {
     delete ui;
+}
+
+void PostReaction::mousePressEvent(QMouseEvent* event)
+{
+    if (event && event->button() == Qt::LeftButton) {
+        emit clicked(emojiName);
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
 }
 
 } /* namespace Mattermost */
