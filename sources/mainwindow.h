@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -21,6 +21,7 @@
 
 #include <memory>
 #include <QMainWindow>
+#include <QStringList>
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
 
 QT_BEGIN_NAMESPACE
@@ -55,7 +56,12 @@ public:
 	~MainWindow();
 public:
 	void initializationComplete ();
-	void openChannelPost(const QString& channelId, const QString& postId = QString());
+	void openChannelPost(const QString& channelId,
+	                     const QString& postId = QString(),
+	                     const QString& rootId = QString(),
+	                     const QStringList& contextPostIds = QStringList(),
+	                     bool reachedOldest = false,
+	                     bool reachedNewest = false);
 
 	void changeEvent (QEvent* event) override;
 	void closeEvent(QCloseEvent *event) override;
