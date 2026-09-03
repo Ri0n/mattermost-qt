@@ -242,6 +242,7 @@ void ChannelTimelineController::start()
 
     active = true;
     ++generation;
+    ++pruneGeneration;
     requestInFlight = false;
     requestedPage = -1;
     requestedFocusIndex = -1;
@@ -281,6 +282,7 @@ void ChannelTimelineController::start()
             [this](bool) {
         lastUserViewportAnchor = captureViewportAnchor();
         scheduleViewportCheck();
+        schedulePrune();
     });
 
     connect(&area.channel, &BackendChannel::onNewPosts, this,
@@ -343,6 +345,7 @@ void ChannelTimelineController::deactivate()
     active = false;
     ++generation;
     ++renderGeneration;
+    ++pruneGeneration;
     seekTimer.stop();
     measurementTimer.stop();
     pendingSeekIndex = -1;
@@ -1163,6 +1166,7 @@ void ChannelTimelineController::renderTimeline(const QString& focusPostId,
 
     restoreViewportAnchor(anchor, focusPostId);
     scheduleMeasurementPass();
+    schedulePrune();
     schedulePaintResume(renderId);
     QTimer::singleShot(0, this, &ChannelTimelineController::scheduleViewportCheck);
 }
