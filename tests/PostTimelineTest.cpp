@@ -160,6 +160,73 @@ private slots:
         QCOMPARE(timeline.indexOf(QStringLiteral("p9")), 9);
         QCOMPARE(timeline.loadedCount(), 5);
     }
+
+    void confirmedOldestBoundaryRemovesLeadingGap()
+    {
+        PostTimeline timeline;
+        timeline.reset(100);
+        timeline.placeWindow(35, {QStringLiteral("oldest"), QStringLiteral("p1"),
+                                  QStringLiteral("p2"), QStringLiteral("p3")});
+
+        QVERIFY(timeline.alignLoadedSpanToBoundary(QStringLiteral("oldest"), true));
+        QCOMPARE(timeline.indexOf(QStringLiteral("oldest")), 0);
+        QCOMPARE(timeline.indexOf(QStringLiteral("p3")), 3);
+
+        const auto spans = timeline.spans();
+        QCOMPARE(spans.first().kind, PostTimeline::LoadedSpan);
+        QCOMPARE(spans.first().firstIndex, 0);
+        QCOMPARE(spans.first().count, 4);
+        QCOMPARE(spans.at(1).kind, PostTimeline::GapSpan);
+        QCOMPARE(spans.at(1).firstIndex, 4);
+    }
+
+    void confirmedNewestBoundaryMovesUncertaintyBeforeLoadedSpan()
+    {
+        PostTimeline timeline;
+        timeline.reset(100);
+        timeline.placeWindow(35, {QStringLiteral("p0"), QStringLiteral("p1"),
+                                  QStringLiteral("p2"), QStringLiteral("newest")});
+
+        QVERIFY(timeline.alignLoadedSpanToBoundary(QStringLiteral("newest"), false));
+        QCOMPARE(timeline.indexOf(QStringLiteral("p0")), 96);
+        QCOMPARE(timeline.indexOf(QStringLiteral("newest")), 99);
+        QCOMPARE(timeline.spans().last().kind, PostTimeline::LoadedSpan);
+        QCOMPARE(timeline.spans().last().firstIndex, 96);
+    }
+
+    void prefetchesWhenFiveLoadedRowsRemainBeforeGap()
+    {
+        PostTimeline timeline;
+        timeline.reset(100);
+        QStringList ids;
+        for (int i = 20; i < 50; ++i) {
+            ids.push_back(QStringLiteral("p%1").arg(i));
+        }
+        timeline.placeWindow(20, ids);
+
+        // At p25 there are exactly five real messages (p20..p24) still above
+        // the viewport before the unloaded range begins at logical index 19.
+        QCOMPARE(timeline.adjacentGapIndex(25, true, 5), 19);
+        QCOMPARE(timeline.adjacentGapIndex(26, true, 5), -1);
+
+        // Symmetric behaviour at the newer edge of the same loaded span.
+        QCOMPARE(timeline.adjacentGapIndex(44, false, 5), 50);
+        QCOMPARE(timeline.adjacentGapIndex(43, false, 5), -1);
+    }
+
+    void knownBoundaryNeverRequestsNonexistentGap()
+    {
+        PostTimeline timeline;
+        timeline.reset(10);
+        QStringList ids;
+        for (int i = 0; i < 10; ++i) {
+            ids.push_back(QStringLiteral("p%1").arg(i));
+        }
+        timeline.placeWindow(0, ids);
+
+        QCOMPARE(timeline.adjacentGapIndex(0, true, 5), -1);
+        QCOMPARE(timeline.adjacentGapIndex(9, false, 5), -1);
+    }
 };
 
 QTEST_APPLESS_MAIN(PostTimelineTest)
