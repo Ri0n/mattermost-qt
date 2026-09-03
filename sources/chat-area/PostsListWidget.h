@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include <QElapsedTimer>
 #include <QPersistentModelIndex>
 #include <QTimer>
 #include <QVariantAnimation>
@@ -167,6 +168,10 @@ public:
 
 	bool isAtBottom() const;
 	void commitCurrentViewportAsAnchor();
+	// Pruning uses a quiet period rather than merely checking sliderDown: repeated
+	// wheel/key navigation is a sequence of short events, and rows must not be
+	// evicted in the gaps between those events.
+	bool hasRecentUserScroll(int quietPeriodMs) const;
 	// Convert an "at bottom" anchor into the concrete last visible post. This is
 	// used before hiding a chat so messages arriving while it is inactive cannot
 	// silently move the saved reading position to the newer bottom.
@@ -247,6 +252,7 @@ private:
 	QListWidgetItem*				currentEditedItem;
 	bool							menuShown;
 	SavedScrollAnchor				savedScrollAnchor;
+	QElapsedTimer					lastUserScrollActivity;
 	bool							savedScrollRestoreScheduled = false;
 	bool							userScrollAnchorUpdateScheduled = false;
 	bool							restoringSavedScroll = false;
