@@ -2,12 +2,15 @@
 
 #include <algorithm>
 
+#include <QEvent>
+#include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMouseEvent>
 #include <QPointer>
-#include <QPushButton>
 #include <QSet>
 
+#include "ReactionChipStyle.h"
 #include "backend/Backend.h"
 #include "backend/Storage.h"
 #include "backend/UserProfileService.h"
@@ -34,28 +37,35 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
     , channel(channel)
     , rootPost(rootPost)
     , layout(new QHBoxLayout(this))
-    , button(new QPushButton(this))
+    , chip(new QWidget(this))
 {
-    setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+    setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(2);
 
-    button->setFlat(true);
-    button->setCursor(Qt::PointingHandCursor);
-    button->setToolTip(tr("Open thread"));
-    button->setAccessibleName(tr("Open thread"));
-    button->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-    button->setStyleSheet(QStringLiteral(
-        "QPushButton {"
-        " border: 1px solid rgba(128, 128, 128, 120);"
-        " border-radius: 4px;"
-        " background-color: rgba(128, 128, 128, 44);"
-        " padding: 1px 4px;"
-        " }"
-        "QPushButton:hover {"
-        " background-color: rgba(128, 128, 128, 70);"
-        " }"));
-    connect(button, &QPushButton::clicked, this, &ThreadSummaryWidget::clicked);
+    auto* chipLayout = new QHBoxLayout(chip);
+    ReactionChipStyle::apply(chip, chipLayout, QStringLiteral("threadReactionChip"));
+    chip->setToolTip(tr("Open thread"));
+    chip->setAccessibleName(tr("Open thread"));
+    chip->installEventFilter(this);
+
+    auto* icon = new QLabel(QStringLiteral("💬"), chip);
+    icon->setFixedSize(ReactionChipStyle::IconExtent, ReactionChipStyle::IconExtent);
+    icon->setAlignment(Qt::AlignCenter);
+    QFont iconFont = icon->font();
+    iconFont.setPointSize(ReactionChipStyle::IconPointSize);
+    icon->setFont(iconFont);
+    icon->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    chipLayout->addWidget(icon, 0, Qt::AlignVCenter);
+
+    chipCount = new QLabel(chip);
+    chipCount->setMaximumSize(20, ReactionChipStyle::IconExtent);
+    chipCount->setAlignment(Qt::AlignCenter);
+    QFont countFont = chipCount->font();
+    countFont.setPointSize(ReactionChipStyle::CountPointSize);
+    chipCount->setFont(countFont);
+    chipCount->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    chipLayout->addWidget(chipCount, 0, Qt::AlignBottom);
 
     connect(&channel, &BackendChannel::onPostEdited, this,
             [this](BackendPost& edited) {
@@ -73,12 +83,29 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
     refresh();
 }
 
+bool ThreadSummaryWidget::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched == chip && event && event->type() == QEvent::MouseButtonRelease) {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (mouseEvent->button() == Qt::LeftButton) {
+            emit clicked();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 void ThreadSummaryWidget::refresh()
 {
     rebuildParticipantAvatars();
-    button->setText(rootPost.reply_count > 0
-        ? QStringLiteral("💬 %1").arg(rootPost.reply_count)
-        : QStringLiteral("💬"));
+    if (rootPost.reply_count > 0) {
+        chipCount->setText(QString::number(rootPost.reply_count));
+        chipCount->show();
+    } else {
+        chipCount->clear();
+        chipCount->hide();
+    }
+    chip->adjustSize();
     updateGeometry();
 }
 
@@ -87,7 +114,7 @@ void ThreadSummaryWidget::rebuildParticipantAvatars()
     while (layout->count() > 0) {
         QLayoutItem* item = layout->takeAt(0);
         QWidget* widget = item ? item->widget() : nullptr;
-        if (widget && widget != button) {
+        if (widget && widget != chip) {
             widget->deleteLater();
         }
         delete item;
@@ -95,6 +122,10 @@ void ThreadSummaryWidget::rebuildParticipantAvatars()
 
     QStringList participantIds;
     QSet<QString> seen;
+
+    // Locally materialized replies are authoritative for the very latest live
+    // activity and complement the transient participant sample returned on the
+    // root post by Mattermost collapsed-thread responses.
     for (auto it = channel.posts.rbegin(); it != channel.posts.rend(); ++it) {
         if (it->root_id != rootPost.id || it->user_id.isEmpty() || seen.contains(it->user_id)) {
             continue;
@@ -106,16 +137,24 @@ void ThreadSummaryWidget::rebuildParticipantAvatars()
         }
     }
 
+    // Mattermost stores thread participants oldest -> newest. Walk the sample
+    // backwards so the chip shows the most recent unique participants first,
+    // without having to load the thread itself.
+    for (auto it = rootPost.threadParticipantUserIds.crbegin();
+         it != rootPost.threadParticipantUserIds.crend()
+         && participantIds.size() < MaxParticipantAvatars; ++it) {
+        if (it->isEmpty() || seen.contains(*it)) {
+            continue;
+        }
+        seen.insert(*it);
+        participantIds.push_back(*it);
+    }
+
+    QStringList missingUserIds;
     for (const QString& userId : participantIds) {
         BackendUser* user = backend.getStorage().getUserById(userId);
         if (!user) {
-            QPointer<ThreadSummaryWidget> guard(this);
-            UserProfileService::instance(backend).ensureUser(
-                userId, [guard](const BackendUser*) {
-                    if (guard) {
-                        guard->refresh();
-                    }
-                });
+            missingUserIds.push_back(userId);
             continue;
         }
 
@@ -132,10 +171,20 @@ void ThreadSummaryWidget::rebuildParticipantAvatars()
         if (!user->avatar.isNull()) {
             avatar->setPixmap(AvatarUtils::circular(user->avatar, ParticipantAvatarSize));
         }
-        layout->addWidget(avatar);
+        layout->addWidget(avatar, 0, Qt::AlignVCenter);
     }
 
-    layout->addWidget(button);
+    layout->addWidget(chip, 0, Qt::AlignVCenter);
+
+    if (!missingUserIds.isEmpty()) {
+        QPointer<ThreadSummaryWidget> guard(this);
+        UserProfileService::instance(backend).ensureUsers(
+            missingUserIds, [guard] {
+                if (guard) {
+                    guard->refresh();
+                }
+            });
+    }
 }
 
 void ThreadSummaryWidget::watchUser(const BackendUser* user)
