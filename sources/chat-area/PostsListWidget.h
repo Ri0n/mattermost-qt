@@ -50,6 +50,10 @@ enum id {
 	postId = Qt::UserRole + 1,
 	gapFirstIndex,
 	gapCount,
+	// Only sparse-timeline day separators carry this role. The ordinary
+	// new-messages separator intentionally does not, so incremental reconciliation
+	// can distinguish timeline decoration from semantic UI state.
+	daySeparatorDays,
 };
 }
 
@@ -107,12 +111,15 @@ public:
 		animation->start(QAbstractAnimation::DeleteWhenStopped);
 	}
 
-	// Sparse rebuilds run synchronously on the GUI thread. Freezing QWidget
-	// updates across later event-loop turns leaves stale backing-store pixels when
-	// the splitter/list geometry changes (observed as post text over the editor).
-	// Qt already coalesces paints until control returns to the event loop, so the
-	// timeline controllers' legacy paint-suspension calls are intentionally no-op.
+	// Sparse controller calls retained for source compatibility. Long-lived
+	// paint freezes caused stale backing-store artefacts; the incremental timeline
+	// transaction now performs its own strictly synchronous QWidget freeze.
 	void setUpdatesEnabled(bool) {}
+
+	using QListWidget::addItem;
+	// During beginTimelineRebuild() this pointer overload reconciles a desired gap
+	// row with the existing list instead of blindly appending another item.
+	void addItem(QListWidgetItem* item);
 
 	// QListWidget::clear(), scrollToItem() and scrollToBottom() are not virtual.
 	// ChatArea uses the concrete PostsListWidget type, so hiding them here lets
@@ -166,9 +173,10 @@ public:
 	void freezeCurrentViewportAnchor();
 
 	/**
-	 * Sparse timeline controllers replace a large part of the QListWidget in one
-	 * operation. Suppress the ordinary per-row anchor restoration while that
-	 * transaction is in progress, then establish exactly one final viewport.
+	 * Sparse controllers still describe the whole desired timeline on every
+	 * model change, but this is now a reconciliation transaction: existing post
+	 * rows/widgets are retained, only newly materialized rows are inserted, and
+	 * rows no longer present in PostTimeline are removed at commit time.
 	 */
 	void beginTimelineRebuild();
 	void finishTimelineRebuildAtBottom();
@@ -218,6 +226,13 @@ private:
 	void touchTimelineNavigationLock();
 	void scheduleTimelineNavigationRestore();
 
+	bool reconcileTimelinePost(PostWidget* postWidget);
+	bool reconcileTimelineGap(QListWidgetItem* desiredGap);
+	bool reconcileTimelineDaySeparator(int daysAgo);
+	void removeTimelineRow(int row);
+	void finishTimelineReconcile();
+	void resumeTimelinePainting();
+
 	void copySelectedItemsToClipboard (PostWidget::FormatType formatType);
 	void keyPressEvent (QKeyEvent* event)		override;
 	void wheelEvent (QWheelEvent* event) override;
@@ -246,6 +261,9 @@ private:
 	bool							timelineNavigationUserCancelConnected = false;
 	bool							timelineNavigationGeometryConnected = false;
 	bool							timelineNavigationRestoreScheduled = false;
+	bool							timelineReconcileActive = false;
+	int							timelineReconcileCursor = 0;
+	bool							timelinePaintingSuspended = false;
 };
 
 } /* namespace Mattermost */
