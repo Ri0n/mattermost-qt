@@ -275,9 +275,27 @@ void ChannelTimelineController::start()
 
     QScrollBar* scrollBar = area.ui->listWidget->verticalScrollBar();
     connect(scrollBar, &QScrollBar::valueChanged, this,
-            [this](int) { scheduleViewportCheck(); });
+            [this, scrollBar](int) {
+        // A thumb drag through a sparse gap has no visible PostWidget from which
+        // PostsListWidget can derive its ordinary semantic anchor. Capture the
+        // sparse pixel/logical anchor here so a later page response cannot reuse
+        // the post anchor from before the drag and snap the user back.
+        if (scrollBar->isSliderDown()) {
+            lastUserViewportAnchor = captureViewportAnchor();
+        }
+        scheduleViewportCheck();
+    });
     connect(scrollBar, &QScrollBar::sliderReleased, this,
-            [this] { scheduleViewportCheck(); });
+            [this] {
+        // The final thumb position is authoritative even when it lies entirely
+        // inside a gap. Network/page reconciliation must materialize around this
+        // point rather than restoring the pre-drag viewport.
+        lastUserViewportAnchor = captureViewportAnchor();
+        pendingSeekIndex = -1;
+        seekTimer.stop();
+        scheduleViewportCheck();
+        schedulePrune();
+    });
     connect(area.ui->listWidget, &PostsListWidget::userViewportChanged, this,
             [this](bool) {
         lastUserViewportAnchor = captureViewportAnchor();
@@ -383,6 +401,14 @@ int ChannelTimelineController::authoritativeFirstIndex(int page, int pageSize) c
 
 ChannelTimelineController::ViewportAnchor ChannelTimelineController::stableViewportAnchor() const
 {
+    // While the user owns the scrollbar thumb, its physical position is newer
+    // information than any previously committed post anchor. In a large gap the
+    // list may have no visible PostWidget at all, so always derive a sparse gap
+    // anchor directly from the current scrollbar coordinate.
+    if (active && area.ui && area.ui->listWidget
+        && area.ui->listWidget->verticalScrollBar()->isSliderDown()) {
+        return captureViewportAnchor();
+    }
     if (lastUserViewportAnchor.isValid()) {
         return lastUserViewportAnchor;
     }
@@ -1094,8 +1120,11 @@ void ChannelTimelineController::checkViewport()
     }
 
     if (scrollBar->isSliderDown() && centerInsideGap) {
+        // Do not mutate the sparse model/scroll range underneath an active thumb
+        // drag. Remember the target and let sliderReleased() schedule the seek
+        // from the final authoritative coordinate.
         pendingSeekIndex = targetIndex;
-        seekTimer.start();
+        seekTimer.stop();
         return;
     }
 
