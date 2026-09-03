@@ -72,8 +72,8 @@ void MainWindow::openChannelPost(const QString& channelId,
     // guessing a single row's position inside a large logical gap is unreliable.
     area->lockNavigationToPost(postId, 0);
     if (!contextPostIds.isEmpty()) {
-        area->ensurePostContextVisible(postId, contextPostIds,
-                                       reachedOldest, reachedNewest);
+        area->ensurePinnedPostVisible(postId, contextPostIds,
+                                      reachedOldest, reachedNewest);
     } else {
         area->ensurePostVisible(postId);
     }
