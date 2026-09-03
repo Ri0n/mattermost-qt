@@ -20,6 +20,11 @@
 #include "UserProfileDialog.h"
 #include "ui_UserProfileDialog.h"
 
+#include <QNetworkRequest>
+#include <QPixmap>
+#include <QPointer>
+
+#include "backend/NetworkRequest.h"
 #include "backend/types/BackendUser.h"
 
 namespace Mattermost {
@@ -39,6 +44,8 @@ UserProfileDialog::UserProfileDialog (const BackendUser& user, QWidget *parent)
 
     constexpr int ProfileAvatarSize = 128;
     if (!user.avatar.isNull()) {
+        // Show the normal cached chat/sidebar avatar immediately while the
+        // original profile image is loaded below.
         ui->avatar->setPixmap(user.avatar.scaled(ProfileAvatarSize,
                                                   ProfileAvatarSize,
                                                   Qt::KeepAspectRatio,
@@ -47,6 +54,35 @@ UserProfileDialog::UserProfileDialog (const BackendUser& user, QWidget *parent)
         ui->avatar->clear();
     }
     ui->avatar->setAlignment(Qt::AlignCenter);
+
+    if (!user.id.isEmpty()) {
+        const QString pictureVersion = QString::number(
+            static_cast<qulonglong>(user.last_picture_update));
+        NetworkRequest request(
+            QStringLiteral("users/") + user.id + QStringLiteral("/image?_=")
+                + pictureVersion,
+            true);
+        request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
+                             QNetworkRequest::PreferCache);
+
+        QPointer<UserProfileDialog> guard(this);
+        avatarConnector.get(request, HttpResponseCallback(
+            [guard](QByteArray data) {
+                if (!guard) {
+                    return;
+                }
+                QPixmap pixmap;
+                if (!pixmap.loadFromData(data)) {
+                    return;
+                }
+                guard->ui->avatar->setPixmap(
+                    pixmap.scaled(ProfileAvatarSize,
+                                  ProfileAvatarSize,
+                                  Qt::KeepAspectRatio,
+                                  Qt::SmoothTransformation));
+            }));
+    }
+
     ui->fullnameValue->setText (user.first_name + " " + user.last_name);
     ui->nicknameValue->setText (getString (user.nickname));
     ui->usernameValue->setText (user.username);
