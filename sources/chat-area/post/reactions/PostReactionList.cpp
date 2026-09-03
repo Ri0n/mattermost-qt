@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -40,6 +40,8 @@ PostReactionList::~PostReactionList()
 void PostReactionList::addReaction (const QString& emojiName, const QString& emojiValue, const BackendPostReaction& reactionData)
 {
 	PostReaction* reaction = new PostReaction (emojiName, emojiValue, reactionData, this);
+	connect(reaction, &PostReaction::clicked,
+	        this, &PostReactionList::reactionClicked);
 	ui->horizontalLayout_2->addWidget (reaction, 0, Qt::AlignLeft);
 }
 
