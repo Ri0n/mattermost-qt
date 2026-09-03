@@ -13,8 +13,10 @@
 #include <QPlainTextEdit>
 #include <QResizeEvent>
 #include <QScrollBar>
+#include <QSet>
 #include <QTextBlock>
 #include <QTextBlockFormat>
+#include <QTextBoundaryFinder>
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -24,6 +26,7 @@
 #include <QVBoxLayout>
 
 #include "MessageFormatter.h"
+#include "backend/emoji/EmojiInfo.h"
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
 #include "qsourcehighliter.h"
@@ -31,6 +34,78 @@
 
 namespace Mattermost {
 namespace {
+
+constexpr qreal inlineEmojiScale = 1.3;
+
+const QSet<QString>& unicodeEmojiStrings()
+{
+    static const QSet<QString> emojiStrings = [] {
+        QSet<QString> result;
+
+        for (int category = 0; category < EmojiCategory::COUNT; ++category) {
+            if (category == EmojiCategory::custom) {
+                continue;
+            }
+
+            const int skinToneCount = category == EmojiCategory::people
+                ? EmojiSkinTone::COUNT
+                : 1;
+            for (int skinTone = 0; skinTone < skinToneCount; ++skinTone) {
+                const QVector<Emoji> emojis = EmojiInfo::getAllEmojis(category, skinTone);
+                for (const Emoji& emoji : emojis) {
+                    const QString glyph = emoji.unicodeString.trimmed();
+                    if (!glyph.isEmpty() && !glyph.contains(QStringLiteral("<img"))) {
+                        result.insert(glyph);
+                    }
+                }
+            }
+        }
+
+        return result;
+    }();
+
+    return emojiStrings;
+}
+
+void enlargeInlineEmojis(QTextDocument& document)
+{
+    const QString text = document.toPlainText();
+    if (text.isEmpty()) {
+        return;
+    }
+
+    const QSet<QString>& emojiStrings = unicodeEmojiStrings();
+    QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, text);
+    finder.toStart();
+
+    int start = 0;
+    while (true) {
+        const int end = finder.toNextBoundary();
+        if (end < 0) {
+            break;
+        }
+
+        const QString grapheme = text.mid(start, end - start);
+        if (emojiStrings.contains(grapheme)) {
+            QTextCursor cursor(&document);
+            cursor.setPosition(start);
+
+            qreal pointSize = cursor.charFormat().fontPointSize();
+            if (pointSize <= 0.0) {
+                pointSize = document.defaultFont().pointSizeF();
+            }
+
+            if (pointSize > 0.0) {
+                cursor.setPosition(end, QTextCursor::KeepAnchor);
+                QTextCharFormat emojiFormat;
+                emojiFormat.setFontPointSize(pointSize * inlineEmojiScale);
+                cursor.mergeCharFormat(emojiFormat);
+            }
+        }
+
+        start = end;
+    }
+}
 
 class WrappedRichText final : public QTextBrowser
 {
@@ -50,6 +125,8 @@ public:
         setContentsMargins(0, 0, 0, 0);
         setLineWrapMode(QTextEdit::WidgetWidth);
         setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::TextSelectableByMouse);
+        setStyleSheet(QStringLiteral("QTextBrowser#messageRichText { background: transparent; }"));
+        viewport()->setAutoFillBackground(false);
         document()->setDocumentMargin(0);
         applyWrapMode();
     }
@@ -58,6 +135,7 @@ public:
     {
         setHtml(html);
         document()->setDocumentMargin(0);
+        enlargeInlineEmojis(*document());
         applyWrapMode();
         scheduleHeightUpdate();
     }

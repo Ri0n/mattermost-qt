@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -20,6 +20,11 @@
 #include "UserProfileDialog.h"
 #include "ui_UserProfileDialog.h"
 
+#include <QNetworkRequest>
+#include <QPixmap>
+#include <QPointer>
+
+#include "backend/NetworkRequest.h"
 #include "backend/types/BackendUser.h"
 
 namespace Mattermost {
@@ -37,7 +42,47 @@ UserProfileDialog::UserProfileDialog (const BackendUser& user, QWidget *parent)
 
     setWindowTitle ("Profile for " + user.getDisplayName() + " - Mattermost");
 
-    ui->avatar->setPixmap (user.avatar);
+    constexpr int ProfileAvatarSize = 128;
+    if (!user.avatar.isNull()) {
+        // Show the normal cached chat/sidebar avatar immediately while the
+        // original profile image is loaded below.
+        ui->avatar->setPixmap(user.avatar.scaled(ProfileAvatarSize,
+                                                  ProfileAvatarSize,
+                                                  Qt::KeepAspectRatio,
+                                                  Qt::SmoothTransformation));
+    } else {
+        ui->avatar->clear();
+    }
+    ui->avatar->setAlignment(Qt::AlignCenter);
+
+    if (!user.id.isEmpty()) {
+        const QString pictureVersion = QString::number(
+            static_cast<qulonglong>(user.last_picture_update));
+        NetworkRequest request(
+            QStringLiteral("users/") + user.id + QStringLiteral("/image?_=")
+                + pictureVersion,
+            true);
+        request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
+                             QNetworkRequest::PreferCache);
+
+        QPointer<UserProfileDialog> guard(this);
+        avatarConnector.get(request, HttpResponseCallback(
+            [guard](QByteArray data) {
+                if (!guard) {
+                    return;
+                }
+                QPixmap pixmap;
+                if (!pixmap.loadFromData(data)) {
+                    return;
+                }
+                guard->ui->avatar->setPixmap(
+                    pixmap.scaled(ProfileAvatarSize,
+                                  ProfileAvatarSize,
+                                  Qt::KeepAspectRatio,
+                                  Qt::SmoothTransformation));
+            }));
+    }
+
     ui->fullnameValue->setText (user.first_name + " " + user.last_name);
     ui->nicknameValue->setText (getString (user.nickname));
     ui->usernameValue->setText (user.username);

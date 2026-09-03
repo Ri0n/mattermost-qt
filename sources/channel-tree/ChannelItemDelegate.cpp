@@ -9,6 +9,7 @@
 #include "ChannelIcons.h"
 #include "SidebarItem.h"
 #include "backend/types/BackendChannel.h"
+#include "ui/AvatarUtils.h"
 
 namespace Mattermost {
 
@@ -16,81 +17,10 @@ namespace {
 
 constexpr int ChannelRowHeight = 32;
 constexpr int AvatarSize = 24;
-constexpr int StatusSize = 8;
+constexpr int StatusSize = 12;
 constexpr int MuteIconSize = 16;
 constexpr int HorizontalMargin = 4;
 constexpr int ItemSpacing = 4;
-
-const QColor OnlineColor(QStringLiteral("#3DB887"));
-const QColor AwayColor(QStringLiteral("#FFBC1F"));
-const QColor DndColor(QStringLiteral("#D24B4E"));
-
-void drawStatusBadge(QPainter* painter, const QRect& rect, const QString& status,
-                     const QColor& backgroundColor)
-{
-    if (status.isEmpty()) {
-        return;
-    }
-
-    painter->save();
-    painter->setRenderHint(QPainter::Antialiasing, true);
-
-    painter->setPen(Qt::NoPen);
-    painter->setBrush(backgroundColor);
-    painter->drawEllipse(QRectF(rect).adjusted(-1.0, -1.0, 1.0, 1.0));
-
-    const QRectF badgeRect(rect);
-
-    if (status == QStringLiteral("online")) {
-        painter->setPen(Qt::NoPen);
-        painter->setBrush(OnlineColor);
-        painter->drawEllipse(badgeRect);
-
-        QPen pen(Qt::white);
-        pen.setWidthF(1.15);
-        pen.setCapStyle(Qt::RoundCap);
-        pen.setJoinStyle(Qt::RoundJoin);
-        painter->setPen(pen);
-        painter->setBrush(Qt::NoBrush);
-
-        QPainterPath check;
-        check.moveTo(badgeRect.left() + 1.8, badgeRect.top() + 4.1);
-        check.lineTo(badgeRect.left() + 3.3, badgeRect.top() + 5.5);
-        check.lineTo(badgeRect.left() + 6.3, badgeRect.top() + 2.4);
-        painter->drawPath(check);
-    } else if (status == QStringLiteral("away")) {
-        painter->setPen(Qt::NoPen);
-        painter->setBrush(AwayColor);
-        painter->drawEllipse(badgeRect);
-
-        QPen pen(Qt::white);
-        pen.setWidthF(1.0);
-        pen.setCapStyle(Qt::RoundCap);
-        painter->setPen(pen);
-        const QPointF center = badgeRect.center();
-        painter->drawLine(center, QPointF(center.x(), badgeRect.top() + 2.0));
-        painter->drawLine(center, QPointF(badgeRect.right() - 1.7, center.y() + 1.0));
-    } else if (status == QStringLiteral("dnd")) {
-        painter->setPen(Qt::NoPen);
-        painter->setBrush(DndColor);
-        painter->drawEllipse(badgeRect);
-
-        QPen pen(Qt::white);
-        pen.setWidthF(1.25);
-        pen.setCapStyle(Qt::RoundCap);
-        painter->setPen(pen);
-        painter->drawLine(QPointF(badgeRect.left() + 2.0, badgeRect.center().y()),
-                          QPointF(badgeRect.right() - 2.0, badgeRect.center().y()));
-    } else {
-        QPen pen(OnlineColor);
-        pen.setWidthF(1.25);
-        painter->setPen(pen);
-        painter->setBrush(Qt::black);
-        painter->drawEllipse(badgeRect.adjusted(0.65, 0.65, -0.65, -0.65));
-    }
-
-    painter->restore();
-}
 
 int channelType(const QModelIndex& index)
 {
@@ -169,15 +99,15 @@ void ChannelItemDelegate::paint(QPainter* painter,
         painter->restore();
 
         if (!status.isEmpty()) {
-            const QRect statusRect(iconRect.right() - StatusSize + 2,
-                                   iconRect.bottom() - StatusSize + 2,
+            const QRect statusRect(iconRect.right() - StatusSize + 3,
+                                   iconRect.bottom() - StatusSize + 3,
                                    StatusSize,
                                    StatusSize);
             const bool selected = option.state.testFlag(QStyle::State_Selected);
             const QColor badgeBackground = selected
                 ? option.palette.color(QPalette::Highlight)
                 : option.palette.color(QPalette::Base);
-            drawStatusBadge(painter, statusRect, status, badgeBackground);
+            AvatarUtils::drawStatusBadge(painter, statusRect, status, badgeBackground);
         }
 
         textLeft = iconRect.right() + 1 + ItemSpacing;

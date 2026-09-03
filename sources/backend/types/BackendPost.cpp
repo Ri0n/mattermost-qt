@@ -45,6 +45,7 @@ BackendPost::BackendPost (const QJsonObject& jsonObject, const Storage& storage)
 	delete_at = jsonObject.value("delete_at").toVariant().toULongLong();
 	is_pinned = jsonObject.value("is_pinned").toBool();
 	user_id = jsonObject.value("user_id").toString();
+	sender_name = jsonObject.value(QStringLiteral("_mmqt_sender_name")).toString();
 	author = storage.getUserById (user_id);
 	channel_id = jsonObject.value("channel_id").toString();
 	root_id = jsonObject.value("root_id").toString();
@@ -62,6 +63,14 @@ BackendPost::BackendPost (const QJsonObject& jsonObject, const Storage& storage)
 	// downloading the complete thread.
 	reply_count = jsonObject.value("reply_count").toVariant().toLongLong();
 	last_reply_at = jsonObject.value("last_reply_at").toVariant().toULongLong();
+	for (const QJsonValue& participantValue : jsonObject.value("participants").toArray()) {
+		const QString participantId = participantValue.isObject()
+			? participantValue.toObject().value(QStringLiteral("id")).toString()
+			: participantValue.toString();
+		if (!participantId.isEmpty() && !threadParticipantUserIds.contains(participantId)) {
+			threadParticipantUserIds.push_back(participantId);
+		}
+	}
 	has_thread = reply_count > 0;
 
 	QJsonObject metadata = jsonObject.value("metadata").toObject();
@@ -192,6 +201,10 @@ QString BackendPost::getAuthorName () const
 {
 	if (author) {
 		return author->getDisplayName ();
+	}
+
+	if (!sender_name.isEmpty()) {
+		return sender_name;
 	}
 
 	return user_id;

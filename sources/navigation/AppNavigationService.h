@@ -1,0 +1,39 @@
+#pragma once
+
+#include <QObject>
+#include <QUrl>
+
+#include "backend/HTTPConnector.h"
+
+namespace Mattermost {
+
+class Backend;
+class BackendChannel;
+
+class AppNavigationService final : public QObject
+{
+    Q_OBJECT
+public:
+    static AppNavigationService& instance(Backend& backend);
+
+    void openUrl(const QUrl& url);
+    void openChannel(const QString& channelId);
+
+signals:
+    void channelRequested(const QString& channelId, const QString& postId);
+
+private:
+    explicit AppNavigationService(Backend& backend);
+
+    bool isLocalUrl(const QUrl& url) const;
+    BackendChannel* findChannel(const QString& teamName,
+                                const QString& channelName) const;
+    BackendChannel* findPostChannel(const QString& postId) const;
+    void openPost(const QString& postId);
+    void openPostInChannel(BackendChannel& channel, const QString& postId);
+
+    Backend& backend;
+    HTTPConnector httpConnector;
+};
+
+} // namespace Mattermost

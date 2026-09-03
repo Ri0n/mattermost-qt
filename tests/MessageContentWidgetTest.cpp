@@ -5,6 +5,7 @@
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextBrowser>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QTextOption>
@@ -77,6 +78,51 @@ private slots:
                  "Wrapped text must expand the real message widget height");
         QVERIFY2(geometrySpy.count() > 0,
                  "A settled text reflow must notify the containing post about its new geometry");
+    }
+
+    void richTextBackgroundLetsPostHoverShowThrough()
+    {
+        MessageContentWidget widget;
+        widget.setMessage(QStringLiteral("hover me"));
+        showAndSettle(widget);
+
+        auto* richText = widget.findChild<QTextBrowser*>(QStringLiteral("messageRichText"));
+        QVERIFY(richText != nullptr);
+        QVERIFY2(!richText->viewport()->autoFillBackground(),
+                 "The rich-text viewport must not cover the containing post hover background");
+        QVERIFY2(richText->styleSheet().contains(QStringLiteral("background: transparent")),
+                 "The rich-text control itself must stay transparent over the post hover background");
+    }
+
+    void inlineUnicodeEmojiUsesLargerFont()
+    {
+        const QString fire = QString::fromUtf8("\xF0\x9F\x94\xA5");
+
+        MessageContentWidget widget;
+        widget.setMessage(QStringLiteral("A ") + fire + QStringLiteral(" B"));
+        showAndSettle(widget);
+
+        auto* richText = widget.findChild<QTextBrowser*>(QStringLiteral("messageRichText"));
+        QVERIFY(richText != nullptr);
+
+        const QString plainText = richText->document()->toPlainText();
+        const int emojiPosition = plainText.indexOf(fire);
+        QVERIFY(emojiPosition >= 0);
+
+        QTextCursor textCursor(richText->document());
+        textCursor.setPosition(1);
+        qreal textSize = textCursor.charFormat().fontPointSize();
+        if (textSize <= 0.0) {
+            textSize = richText->document()->defaultFont().pointSizeF();
+        }
+
+        QTextCursor emojiCursor(richText->document());
+        emojiCursor.setPosition(emojiPosition + fire.size());
+        const qreal emojiSize = emojiCursor.charFormat().fontPointSize();
+
+        QVERIFY(textSize > 0.0);
+        QVERIFY2(emojiSize > textSize * 1.25 && emojiSize < textSize * 1.35,
+                 "Inline Unicode emoji should render at approximately 1.3x the surrounding text size");
     }
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)

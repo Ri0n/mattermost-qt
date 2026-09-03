@@ -38,6 +38,7 @@ class PostReactionList;
 class PostPoll;
 class ChatArea;
 class MessageContentWidget;
+class ThreadSummaryWidget;
 
 class PostWidget: public QWidget
 {
@@ -79,9 +80,12 @@ signals:
 	void dimensionsChanged ();
 
 private:
-    void setAuthor(Backend& backend, const BackendUser* user);
+    void setAuthor(Backend& backendInstance, const BackendUser* user);
     void updateAuthorAvatar();
+    void connectReactionActions();
+    void connectMessageLinks();
 
+    Backend&                            backend;
     Ui::PostWidget*						ui;
     std::unique_ptr<PostQuoteFrame>		quoteFrame;
     std::unique_ptr<PostAttachmentList>	attachments;
@@ -89,6 +93,7 @@ private:
     std::unique_ptr<PostReactionList>	reactions;
     MessageContentWidget*				messageContent;
     ChatArea*				parentChatArea;
+    ThreadSummaryWidget*                threadSummary = nullptr;
 };
 
 } /* namespace Mattermost */

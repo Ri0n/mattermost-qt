@@ -19,37 +19,48 @@
 
 #include "PostWidget.h"
 
-#include <iostream>
-#include <QDebug>
 #include <QDateTime>
+#include <QDebug>
+#include <QPalette>
 #include <QPointer>
-#include <QResizeEvent>
 #include <QPushButton>
-#include "backend/Backend.h"
-#include "backend/UserProfileService.h"
-#include "backend/types/BackendPost.h"
-#include "backend/emoji/EmojiInfo.h"
-#include "chat-area/ChatArea.h"
+#include <QResizeEvent>
+#include <QTextBrowser>
+
 #include "MessageContentWidget.h"
 #include "MessageFormatter.h"
 #include "PostQuoteFrame.h"
+#include "ThreadSummaryWidget.h"
 #include "attachments/PostAttachmentList.h"
 #include "attachments/PostPoll.h"
+#include "backend/Backend.h"
+#include "backend/UserProfileService.h"
+#include "backend/emoji/EmojiInfo.h"
+#include "backend/types/BackendPost.h"
+#include "chat-area/ChatArea.h"
+#include "navigation/AppNavigationService.h"
 #include "reactions/PostReactionList.h"
+#include "ui/AvatarUtils.h"
 #include "ui_PostWidget.h"
 
 namespace Mattermost {
 
-PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, ChatArea* chatArea, BackendPost* lastRootPost)
-:QWidget(parent)
-,post (post)
-,threadButton(nullptr)
-,ui(new Ui::PostWidget)
-,messageContent(nullptr)
-,parentChatArea(chatArea)
+PostWidget::PostWidget(Backend& backend,
+                       BackendPost& post,
+                       QWidget* parent,
+                       ChatArea* chatArea,
+                       BackendPost* lastRootPost)
+    : QWidget(parent)
+    , post(post)
+    , threadButton(nullptr)
+    , backend(backend)
+    , ui(new Ui::PostWidget)
+    , messageContent(nullptr)
+    , parentChatArea(chatArea)
 {
 	ui->setupUi(this);
-	ui->authorName->setText (post.getDisplayAuthorName ());
+	ui->authorAvatar->setFrameShape(QFrame::NoFrame);
+	ui->authorName->setText(post.getDisplayAuthorName());
 
 	if (post.isOwnPost()) {
 		ui->authorName->setStyleSheet("QLabel { color : blue; }");
@@ -61,12 +72,14 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 	ui->message->hide();
 	ui->verticalLayout->insertWidget(messageIndex, messageContent);
 	connect(messageContent, &MessageContentWidget::dimensionsChanged,
-			this, &PostWidget::dimensionsChanged);
+	        this, &PostWidget::dimensionsChanged);
 	messageContent->setMessage(post.message);
-	ui->time->setText (getMessageTimeString (post.create_at));
+	connectMessageLinks();
+	ui->time->setText(getMessageTimeString(post.create_at));
 
-	connect(messageContent, &MessageContentWidget::linkHovered, this, [this](const QString& link) {
-		qDebug() << "Link hovered: " << link;
+	connect(messageContent, &MessageContentWidget::linkHovered,
+	        this, [this](const QString& link) {
+		qDebug() << "Link hovered:" << link;
 		hoveredLink = link;
 	});
 
@@ -82,64 +95,53 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 			});
 	}
 
-	/**
-	 * Add root post as a quote box.
-	 * Multiple consecutive posts, quoting the same post will have the quote added only to the first of them.
-	 */
 	if (post.rootPost && post.rootPost != lastRootPost) {
-
-		quoteFrame = std::make_unique<PostQuoteFrame> (*post.rootPost, backend.getStorage(), this);
-
-		//insert the frame after the post author line
-		ui->verticalLayout->insertWidget (1, quoteFrame.get(), 0, Qt::AlignLeft);
-
-		connect (quoteFrame.get(), &PostQuoteFrame::postClicked, [&post, chatArea] {
-			chatArea->goToPost (*post.rootPost);
+		quoteFrame = std::make_unique<PostQuoteFrame>(*post.rootPost,
+		                                              backend.getStorage(), this);
+		ui->verticalLayout->insertWidget(1, quoteFrame.get(), 0, Qt::AlignLeft);
+		connect(quoteFrame.get(), &PostQuoteFrame::postClicked, [&post, chatArea] {
+			chatArea->goToPost(*post.rootPost);
 		});
 	}
 
-	//Add previews for files, if any
 	if (!post.files.empty()) {
-		attachments = std::make_unique<PostAttachmentList> (backend, this);
+		attachments = std::make_unique<PostAttachmentList>(backend, this);
 		connect(attachments.get(), &PostAttachmentList::dimensionsChanged,
-				this, &PostWidget::dimensionsChanged);
-		ui->verticalLayout->addWidget (attachments.get(), 0, Qt::AlignLeft);
-		for (const BackendFile& file: post.files) {
-			attachments->addFile (file, post.getDisplayAuthorName());
+		        this, &PostWidget::dimensionsChanged);
+		ui->verticalLayout->addWidget(attachments.get(), 0, Qt::AlignLeft);
+		for (const BackendFile& file : post.files) {
+			attachments->addFile(file, post.getDisplayAuthorName());
 		}
 	}
 
-	//Add reactions, if any
 	if (!post.reactions.empty()) {
-		reactions = std::make_unique<PostReactionList> (this);
-
-		for (auto& it: post.reactions) {
-			EmojiID emojiID = it.first;
-			Emoji emoji = EmojiInfo::getEmoji (emojiID);
-			reactions->addReaction (emoji.name, emoji.unicodeString, it.second);
+		reactions = std::make_unique<PostReactionList>(this);
+		for (auto& it : post.reactions) {
+			const EmojiID emojiID = it.first;
+			const Emoji emoji = EmojiInfo::getEmoji(emojiID);
+			reactions->addReaction(emoji.name, emoji.unicodeString, it.second);
 		}
-
-		ui->verticalLayout->addWidget (reactions.get(), 0, Qt::AlignLeft);
+		connectReactionActions();
+		ui->verticalLayout->addWidget(reactions.get(), 0, Qt::AlignLeft);
 	}
 
 	if (post.poll) {
-		//clear message text, because poll messages do not contain free text (outside the poll itself)
-		clearMessageText ();
-		poll = std::make_unique<PostPoll> (backend, post, *post.poll, this);
-		ui->verticalLayout->addWidget (poll.get(), 0, Qt::AlignLeft);
+		clearMessageText();
+		poll = std::make_unique<PostPoll>(backend, post, *post.poll, this);
+		ui->verticalLayout->addWidget(poll.get(), 0, Qt::AlignLeft);
 	}
 
-	if (post.has_thread && !parentChatArea->isThread) {
+	if (parentChatArea && !parentChatArea->isThread) {
 		addThreadButton();
 	}
 }
 
 PostWidget::~PostWidget()
 {
-    delete ui;
+	delete ui;
 }
 
-void PostWidget::setAuthor(Backend& backend, const BackendUser* user)
+void PostWidget::setAuthor(Backend& backendInstance, const BackendUser* user)
 {
 	if (!user) {
 		return;
@@ -151,93 +153,151 @@ void PostWidget::setAuthor(Backend& backend, const BackendUser* user)
 		ui->authorName->setStyleSheet("QLabel { color : blue; }");
 	}
 
-	// Qt::UniqueConnection is only supported for member-function receivers.
-	// Using it with the previous lambda trips Qt's runtime assertion in debug
-	// builds as soon as a lazily loaded post author is resolved.
 	connect(user, &BackendUser::onAvatarChanged,
-		this, &PostWidget::updateAuthorAvatar, Qt::UniqueConnection);
+	        this, &PostWidget::updateAuthorAvatar, Qt::UniqueConnection);
+	connect(user, &BackendUser::onStatusChanged,
+	        this, &PostWidget::updateAuthorAvatar, Qt::UniqueConnection);
 
 	if (user->avatar.isNull()
 		|| user->avatar_picture_update != user->last_picture_update) {
-		UserProfileService::instance(backend).ensureAvatar(*user);
+		UserProfileService::instance(backendInstance).ensureAvatar(*user);
 	} else {
 		updateAuthorAvatar();
+	}
+
+	if (user->status.isEmpty()) {
+		QPointer<PostWidget> guard(this);
+		UserProfileService::instance(backendInstance).ensureStatuses(
+			QStringList {user->id}, [guard] {
+				if (guard) {
+					guard->updateAuthorAvatar();
+				}
+			});
 	}
 }
 
 void PostWidget::updateAuthorAvatar()
 {
-	if (post.author) {
-		ui->authorAvatar->setPixmap(post.author->avatar);
+	if (!post.author || post.author->avatar.isNull()) {
+		ui->authorAvatar->clear();
+		return;
 	}
+
+	ui->authorAvatar->setPixmap(
+		AvatarUtils::withStatus(post.author->avatar, 48, post.author->status, 12,
+		                        palette().color(QPalette::Window)));
 }
 
-void PostWidget::setEdited (const QString& message)
+void PostWidget::setEdited(const QString& message)
 {
 	messageContent->setMessage(message);
+	connectMessageLinks();
 
-	/**
-	 * if (there is a poll in the post, just recreate the poll instance
-	 */
 	if (post.poll) {
-		//clear message text, because poll messages do not contain free text (outside the poll itself)
-		clearMessageText ();
-		std::unique_ptr<PostPoll> newPoll = std::make_unique<PostPoll> (poll->backend, post, *post.poll, this);
-		ui->verticalLayout->replaceWidget (poll.get(), newPoll.get());
-		poll = std::move (newPoll);
+		clearMessageText();
+		std::unique_ptr<PostPoll> newPoll =
+			std::make_unique<PostPoll>(poll->backend, post, *post.poll, this);
+		ui->verticalLayout->replaceWidget(poll.get(), newPoll.get());
+		poll = std::move(newPoll);
 	}
 }
 
-void PostWidget::updateReactions ()
+void PostWidget::connectMessageLinks()
+{
+	const auto browsers = messageContent->findChildren<QTextBrowser*>();
+	for (QTextBrowser* browser : browsers) {
+		if (!browser) {
+			continue;
+		}
+
+		// QTextBrowser navigates its own document when openLinks is left at its
+		// default value. That replaces the message body after a click. Keep the
+		// renderer immutable and route every click through the application-level
+		// navigation service instead.
+		browser->setOpenLinks(false);
+		browser->setOpenExternalLinks(false);
+		connect(browser, &QTextBrowser::anchorClicked, this,
+		        [this](const QUrl& url) {
+			AppNavigationService::instance(backend).openUrl(url);
+		});
+	}
+}
+
+void PostWidget::updateReactions()
 {
 	if (reactions) {
-		reactions.reset ();
+		reactions.reset();
 	}
 
 	if (!post.reactions.empty()) {
-		reactions = std::make_unique<PostReactionList> (this);
-
-		for (auto& it: post.reactions) {
-			EmojiID emojiID = it.first;
-			Emoji emoji = EmojiInfo::getEmoji (emojiID);
-			reactions->addReaction (emoji.name, emoji.unicodeString, it.second);
+		reactions = std::make_unique<PostReactionList>(this);
+		for (auto& it : post.reactions) {
+			const EmojiID emojiID = it.first;
+			const Emoji emoji = EmojiInfo::getEmoji(emojiID);
+			reactions->addReaction(emoji.name, emoji.unicodeString, it.second);
 		}
-
-		ui->verticalLayout->addWidget (reactions.get(), 0, Qt::AlignLeft);
+		connectReactionActions();
+		ui->verticalLayout->addWidget(reactions.get(), 0, Qt::AlignLeft);
 	}
 }
 
-void PostWidget::addThreadButton ()
+void PostWidget::connectReactionActions()
 {
-	if (!threadButton) {
-		threadButton = new QPushButton(this);
-		connect (threadButton, &QPushButton::clicked, this, &PostWidget::openThreadWindow);
-		ui->verticalLayout->addWidget(threadButton);
+	if (!reactions) {
+		return;
 	}
 
-	threadButton->setText(post.reply_count > 0
-		? tr("Open Thread (%1)").arg(post.reply_count)
-		: tr("Open Thread"));
+	connect(reactions.get(), &PostReactionList::reactionClicked,
+	        this, [this](const QString& emojiName) {
+		backend.addPostReaction(post.id, emojiName);
+	});
 }
 
-void PostWidget::openThreadWindow () {
-	ChatArea * area;
-	if (parentChatArea->threadsAreas.empty()){
-		area = new ChatArea(parentChatArea->backend, parentChatArea->channel, post.id, parentChatArea);
+void PostWidget::addThreadButton()
+{
+	if (!threadSummary) {
+		threadSummary = new ThreadSummaryWidget(backend,
+		                                        parentChatArea->getChannel(),
+		                                        post, this);
+		connect(threadSummary, &ThreadSummaryWidget::clicked,
+		        this, &PostWidget::openThreadWindow);
+
+		// Keep the timestamp as the rightmost element. The stretch pushes the
+		// compact reaction-like thread control next to the timestamp instead of
+		// letting the control consume the remaining header width.
+		ui->time->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+		ui->horizontalLayout->insertStretch(1, 1);
+		ui->horizontalLayout->insertWidget(2, threadSummary, 0, Qt::AlignVCenter);
+		const int threadTimeGap = ui->time->fontMetrics().averageCharWidth();
+		ui->horizontalLayout->insertSpacing(3, threadTimeGap);
+		return;
+	}
+
+	threadSummary->refresh();
+}
+
+void PostWidget::openThreadWindow()
+{
+	ChatArea* area;
+	if (parentChatArea->threadsAreas.empty()) {
+		area = new ChatArea(parentChatArea->backend, parentChatArea->channel,
+		                    post.id, parentChatArea);
 		area->root_id = post.id;
 		parentChatArea->threadsAreas.insert(area);
-		area->show();	
+		area->show();
 	} else {
-		auto it = parentChatArea->threadsAreas.begin(), end = parentChatArea->threadsAreas.end();
-		for (; it != end; ++it){
+		auto it = parentChatArea->threadsAreas.begin();
+		const auto end = parentChatArea->threadsAreas.end();
+		for (; it != end; ++it) {
 			if ((*it)->root_id == post.id) {
 				(*it)->activateWindow();
 				qDebug() << "exists";
 				break;
 			}
 		}
-		if (it == parentChatArea->threadsAreas.end()){
-			area = new ChatArea(parentChatArea->backend, parentChatArea->channel, post.id, parentChatArea);
+		if (it == parentChatArea->threadsAreas.end()) {
+			area = new ChatArea(parentChatArea->backend, parentChatArea->channel,
+			                    post.id, parentChatArea);
 			area->root_id = post.id;
 			parentChatArea->threadsAreas.insert(area);
 			area->show();
@@ -247,61 +307,60 @@ void PostWidget::openThreadWindow () {
 	qDebug() << post.id << post.has_thread << post.hidden << post.root_id;
 }
 
-void PostWidget::markAsDeleted ()
+void PostWidget::markAsDeleted()
 {
-	attachments.reset (nullptr);
+	attachments.reset(nullptr);
 	post.isDeleted = true;
 	if (poll) {
-		ui->verticalLayout->removeWidget (poll.get());
-		poll.reset (nullptr);
-
+		ui->verticalLayout->removeWidget(poll.get());
+		poll.reset(nullptr);
 		messageContent->setMessage(QStringLiteral("(Poll deleted)"));
 	} else {
 		messageContent->setMessage(QStringLiteral("(Message deleted)"));
 	}
 }
 
-
-QString PostWidget::getSelectedText ()
+QString PostWidget::getSelectedText()
 {
 	return messageContent->selectedText();
 }
 
-QString PostWidget::formatMessageText (const QString& str)
+QString PostWidget::formatMessageText(const QString& str)
 {
 	return MessageFormatter::formatMessageText(str);
 }
 
-QString PostWidget::getMessageTimeString (uint64_t timestamp)
+QString PostWidget::getMessageTimeString(uint64_t timestamp)
 {
-	QDate currentDate = QDateTime::currentDateTime().date();
-	QDateTime postTime = QDateTime::fromMSecsSinceEpoch (timestamp);
-	QDate postDate = postTime.date();
+	const QDate currentDate = QDateTime::currentDateTime().date();
+	const QDateTime postTime = QDateTime::fromMSecsSinceEpoch(timestamp);
+	const QDate postDate = postTime.date();
 
 	QString format;
 	if (currentDate.year() != postDate.year()) {
 		format = "dd MMM yyyy, hh:mm:ss";
-	} else if (currentDate.day() != postDate.day() || currentDate.month() != postDate.month()) {
+	} else if (currentDate.day() != postDate.day()
+	           || currentDate.month() != postDate.month()) {
 		format = "dd MMM, hh:mm:ss";
 	} else {
 		format = "hh:mm:ss";
 	}
 
-	return postTime.toString (format);
+	return postTime.toString(format);
 }
 
-QString PostWidget::formatForClipboardSelection (FormatType formatType) const
+QString PostWidget::formatForClipboardSelection(FormatType formatType) const
 {
 	if (formatType == messageOnly) {
 		return post.message;
 	}
 
-	QString ret (post.getDisplayAuthorName() + "\t[" + ui->time->text() + "]\n");
+	QString ret(post.getDisplayAuthorName() + "\t[" + ui->time->text() + "]\n");
 	ret += " " + post.message + "\n\n";
 	return ret;
 }
 
-void PostWidget::clearMessageText ()
+void PostWidget::clearMessageText()
 {
 	messageContent->clear();
 }

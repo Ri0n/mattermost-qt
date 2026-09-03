@@ -18,6 +18,10 @@
  */
 
 #include "PostReaction.h"
+
+#include <QMouseEvent>
+
+#include "chat-area/post/ReactionChipStyle.h"
 #include "backend/types/BackendPost.h"
 #include "ui_PostReaction.h"
 
@@ -25,6 +29,7 @@ namespace Mattermost {
 
 PostReaction::PostReaction (const QString& emojiName, const QString& emojiValue, const BackendPostReaction& reactionData, QWidget *parent)
 :QWidget(parent)
+,emojiName(emojiName)
 ,ui(new Ui::PostReaction)
 {
     ui->setupUi (this);
@@ -42,26 +47,26 @@ PostReaction::PostReaction (const QString& emojiName, const QString& emojiValue,
 
     //remove the last '\n'
     tooltip.chop (1);
+    tooltip += QStringLiteral("\nClick to add this reaction");
     setToolTip (tooltip);
 
-    // Match Mattermost's compact reaction chips: a subtle translucent neutral
-    // fill, a visible outline and rounded corners. WA_StyledBackground is
-    // required for QWidget itself to honor stylesheet backgrounds reliably.
-    setObjectName(QStringLiteral("postReaction"));
-    setAttribute(Qt::WA_StyledBackground, true);
-    ui->horizontalLayout->setContentsMargins(4, 1, 4, 1);
-    ui->horizontalLayout->setSpacing(2);
-    setStyleSheet(QStringLiteral(
-        "QWidget#postReaction {"
-        " border: 1px solid rgba(128, 128, 128, 140);"
-        " border-radius: 8px;"
-        " background-color: rgba(128, 128, 128, 76);"
-        " }"));
+    ReactionChipStyle::apply(this, ui->horizontalLayout,
+                             QStringLiteral("postReaction"));
 }
 
 PostReaction::~PostReaction()
 {
     delete ui;
+}
+
+void PostReaction::mousePressEvent(QMouseEvent* event)
+{
+    if (event && event->button() == Qt::LeftButton) {
+        emit clicked(emojiName);
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
 }
 
 } /* namespace Mattermost */

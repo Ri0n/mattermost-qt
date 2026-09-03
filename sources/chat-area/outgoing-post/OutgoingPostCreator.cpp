@@ -24,462 +24,462 @@
 
 #include "OutgoingPostCreator.h"
 
-#include <QDragMoveEvent>
-#include <QMimeData>
-#include <QMessageBox>
+#include <QColor>
 #include <QDebug>
-#include <QPushButton>
-#include <QLabel>
+#include <QDragMoveEvent>
 #include <QFileDialog>
-#include "backend/Backend.h"
-#include "chat-area/PostsListWidget.h"
-#include "OutgoingPostPanel.h"
+#include <QLabel>
+#include <QMessageBox>
+#include <QMimeData>
+#include <QPalette>
+#include <QPushButton>
+#include <QTextCursor>
+
 #include "NewPollDialog.h"
 #include "OutgoingAttachmentList.h"
+#include "OutgoingPostPanel.h"
+#include "backend/Backend.h"
+#include "chat-area/PostsListWidget.h"
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
-
 #include "ui_OutgoingPostCreator.h"
 
 namespace Mattermost {
 
 struct OutgoingPostData {
-	const BackendPost*					postToEdit;			//!< Post to be edited. If nullptr - start a new post
-	std::unique_ptr<BackendNewPollData> pollData;			//!< Poll data, used when creating a poll
-	QString 							message;			//!< Message text
-	QList<QString>						attachmentPaths;	//!< List of file paths waiting to be attached
-	QList<QString>						attachmentIds;		//!< List of file paths already uploaded to the Mattermost server
+	const BackendPost* postToEdit;
+	std::unique_ptr<BackendNewPollData> pollData;
+	QString message;
+	QList<QString> attachmentPaths;
+	QList<QString> attachmentIds;
 };
 
-OutgoingPostCreator::OutgoingPostCreator(QWidget *parent)
-:QWidget(parent)
-,ui(new Ui::OutgoingPostCreator)
-,postToEdit (nullptr)
-,attachmentList (nullptr)
-,isConnected (true)
+OutgoingPostCreator::OutgoingPostCreator(QWidget* parent)
+    : QWidget(parent)
+    , ui(new Ui::OutgoingPostCreator)
+    , postToEdit(nullptr)
+    , attachmentList(nullptr)
+    , isConnected(true)
 {
     ui->setupUi(this);
 }
 
-void OutgoingPostCreator::init (Backend& backendInstance, BackendChannel& channelInstance, OutgoingPostPanel& panelInstance, PostsListWidget& postsListWidget, QBoxLayout* attachmentParentLayout)
+void OutgoingPostCreator::init(Backend& backendInstance,
+                               BackendChannel& channelInstance,
+                               OutgoingPostPanel& panelInstance,
+                               PostsListWidget& postsListWidget,
+                               QBoxLayout* attachmentParentLayout)
 {
 	backend = &backendInstance;
 	channel = &channelInstance;
 	panel = &panelInstance;
 	attachmentParent = attachmentParentLayout;
 
-	/**
-	 * the escape key erases currently entered text or cancels a message edit
-	 */
-	connect (ui->textEdit, &MessageTextEditWidget::escapePressed, [this] {
+	connect(ui->textEdit, &MessageTextEditWidget::escapePressed, [this] {
 		ui->textEdit->clear();
 		postToEdit = nullptr;
-		postEditFinished ();
+		setEditingVisual(false);
+		emit postEditFinished();
 	});
 
-	//initiate editing of last post, after an up arrow is pressed
-	connect (ui->textEdit, &MessageTextEditWidget::upArrowPressed, [this, &postsListWidget] {
-		QListWidgetItem* post = postsListWidget.getLastOwnPost ();
-
+	connect(ui->textEdit, &MessageTextEditWidget::upArrowPressed,
+	        [this, &postsListWidget] {
+		QListWidgetItem* post = postsListWidget.getLastOwnPost();
 		if (post) {
-			postsListWidget.initiatePostEdit (*post);
+			postsListWidget.initiatePostEdit(*post);
 		}
 	});
 
-	//expand the text edit box so that it's entire text will be visible
-	connect (ui->textEdit, &MessageTextEditWidget::textChanged, [this] {
-		updateSendButtonState ();
+	connect(ui->textEdit, &MessageTextEditWidget::textChanged, [this] {
+		updateSendButtonState();
 
 		int height = ui->textEdit->document()->size().toSize().height();
-
 		if (height > ui->textEdit->maximumHeight()) {
 			height = ui->textEdit->maximumHeight();
 		}
-
-		emit heightChanged (height);
+		emit heightChanged(height);
 	});
 
-	/*
-	 * Send new post after pressing enter or clicking the 'Send' button
-	 */
-	connect (&panelInstance.sendButton(), &QPushButton::clicked, this, &OutgoingPostCreator::sendPostButtonAction);
-	connect (ui->textEdit, &MessageTextEditWidget::enterPressed, this, &OutgoingPostCreator::sendPostButtonAction);
+	connect(&panelInstance.sendButton(), &QPushButton::clicked,
+	        this, &OutgoingPostCreator::sendPostButtonAction);
+	connect(ui->textEdit, &MessageTextEditWidget::enterPressed,
+	        this, &OutgoingPostCreator::sendPostButtonAction);
+	connect(&panelInstance.attachButton(), &QPushButton::clicked,
+	        this, &OutgoingPostCreator::onAttachButtonClick);
 
-	connect (&panelInstance.attachButton(), &QPushButton::clicked, this, &OutgoingPostCreator::onAttachButtonClick);
-
-	connect (&panelInstance.addEmojiButton(), &QPushButton::clicked, [this] {
-		showEmojiDialog ([this] (Emoji emoji){
-
+	connect(&panelInstance.addEmojiButton(), &QPushButton::clicked, [this] {
+		showEmojiDialog([this](Emoji emoji) {
 			auto* textEdit = ui->textEdit;
-			textEdit->insertPlainText (" :" + emoji.name + ": ");
-			textEdit->setFocus ();
+			textEdit->insertPlainText(" :" + emoji.name + ": ");
+			textEdit->setFocus();
 		});
 	});
 
+	setEditingVisual(false);
 	updateSendButtonState();
 
-	connectLambda (&backendInstance, &Backend::onWebSocketConnect, [this] {
+	connectLambda(&backendInstance, &Backend::onWebSocketConnect, [this] {
 		isConnected = true;
 		updateSendButtonState();
 	});
 
-	connectLambda (&backendInstance, &Backend::onWebSocketDisconnect, [this] {
+	connectLambda(&backendInstance, &Backend::onWebSocketDisconnect, [this] {
 		isConnected = false;
 		updateSendButtonState();
 	});
 
-	connect (&sendRetryTimer, &QTimer::timeout, [this] {
-		qDebug () << "Post send retry";
-		prepareAndSendPost ();
+	connect(&sendRetryTimer, &QTimer::timeout, [this] {
+		qDebug() << "Post send retry";
+		prepareAndSendPost();
 	});
 }
 
 OutgoingPostCreator::~OutgoingPostCreator()
 {
-	for (auto& it: signalConnections) {
-		disconnect (it);
+	for (auto& connection : signalConnections) {
+		disconnect(connection);
 	}
-
 	delete ui;
 }
 
-void OutgoingPostCreator::setStatusLabelText (const QString& string)
+void OutgoingPostCreator::setStatusLabelText(const QString& string)
 {
-	panel->label().setText (string);
+	panel->label().setText(string);
 }
 
-void OutgoingPostCreator::onAttachButtonClick ()
+void OutgoingPostCreator::onAttachButtonClick()
 {
-	QStringList files = QFileDialog::getOpenFileNames (this, "Select File(s) to attach");
-
+	QStringList files = QFileDialog::getOpenFileNames(this, "Select File(s) to attach");
 	if (files.empty()) {
 		return;
 	}
-
-	createAttachmentList (files);
+	createAttachmentList(files);
 }
 
-void OutgoingPostCreator::postEditInitiated (BackendPost& post)
+void OutgoingPostCreator::postEditInitiated(BackendPost& post)
 {
 	if (isCreatingPost()) {
-		qDebug () << "Post edit requested while creating post";
+		qDebug() << "Post edit requested while creating post";
 		emit postEditFinished();
 		return;
 	}
 
-	ui->textEdit->setText (post.message);
-	ui->textEdit->setFocus ();
-	ui->textEdit->moveCursor (QTextCursor::End);
 	postToEdit = &post;
+	ui->textEdit->setText(post.message);
+	ui->textEdit->setFocus();
+	ui->textEdit->moveCursor(QTextCursor::End);
+	setEditingVisual(true);
+	updateSendButtonState();
+}
+
+void OutgoingPostCreator::setEditingVisual(bool editing)
+{
+	if (!panel) {
+		return;
+	}
+
+	if (editing) {
+		const QColor accent = palette().color(QPalette::Highlight);
+		ui->textEdit->setPlaceholderText(tr("Editing message"));
+		ui->textEdit->setStyleSheet(
+			QStringLiteral("QTextEdit { border: 2px solid %1; border-radius: 4px; padding: 2px; }")
+				.arg(accent.name()));
+		panel->label().setText(tr("Editing message · Esc to cancel"));
+		panel->label().setStyleSheet(QStringLiteral("font-weight: 600;"));
+	} else {
+		ui->textEdit->setPlaceholderText(tr("Write a message"));
+		ui->textEdit->setStyleSheet(QString());
+		panel->label().setStyleSheet(QString());
+		if (!outgoingPostData) {
+			panel->label().clear();
+		}
+	}
+
+	updateSendButtonState();
+}
+
+bool OutgoingPostCreator::isEditingPost() const
+{
+	return postToEdit
+		|| (outgoingPostData && outgoingPostData->postToEdit);
 }
 
 static NewPollDialog* newPollDialog;
 
-static QString getStringInsideQuotes (const QString& str, int& nextPos)
+static QString getStringInsideQuotes(const QString& str, int& nextPos)
 {
-	int firstQuoute = str.indexOf('"', nextPos);
-
-	if (firstQuoute == -1) {
+	const int firstQuote = str.indexOf('"', nextPos);
+	if (firstQuote == -1) {
 		return QString();
 	}
 
-	int lastQuote = str.indexOf('"', firstQuoute + 1);
-
+	const int lastQuote = str.indexOf('"', firstQuote + 1);
 	if (lastQuote == -1) {
 		return QString();
 	}
 
 	nextPos = lastQuote + 1;
-#if QT_VERSION < QT_VERSION_CHECK(6,0,0)
-	return QStringRef (&str, firstQuoute + 1, lastQuote - firstQuoute - 1).toString();
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+	return QStringRef(&str, firstQuote + 1, lastQuote - firstQuote - 1).toString();
 #else
-	QStringView v(str);
-	return v.sliced(firstQuoute + 1, lastQuote - firstQuoute - 1).toString();
+	QStringView view(str);
+	return view.sliced(firstQuote + 1, lastQuote - firstQuote - 1).toString();
 #endif
 }
 
-void OutgoingPostCreator::sendPostButtonAction ()
+void OutgoingPostCreator::sendPostButtonAction()
 {
-	QString message = ui->textEdit->toPlainText ();
-
-	//do not send empty messages
+	const QString message = ui->textEdit->toPlainText();
 	if (message.isEmpty() && !attachmentList) {
 		return;
 	}
 
-	//if the message is a poll, open a poll dialog
-	if (message.startsWith ("/poll")) {
-
+	if (message.startsWith("/poll")) {
 		if (postToEdit) {
-			QMessageBox::warning (this, "Error", "Cannot replace a non-poll message with a poll. Either delete the post or add the poll as a new post", QMessageBox::Ok);
+			QMessageBox::warning(this, "Error",
+			                     "Cannot replace a non-poll message with a poll. Either delete the post or add the poll as a new post",
+			                     QMessageBox::Ok);
 			return;
 		}
 
-		//Parse the string and fill initial poll data with any parameters from it
 		BackendNewPollData initialPollData;
-
 		int startPos = 6;
-		QString str = getStringInsideQuotes (message, startPos);
-		qDebug () << "got " << str << " pos " << startPos;
+		QString str = getStringInsideQuotes(message, startPos);
+		qDebug() << "got" << str << "pos" << startPos;
 
 		if (!str.isEmpty()) {
 			initialPollData.question = str;
 		}
 
-		str = getStringInsideQuotes (message, startPos);
-		qDebug () << "got " << str << " pos " << startPos;
-
+		str = getStringInsideQuotes(message, startPos);
 		while (!str.isEmpty()) {
-			initialPollData.options.push_back (str);
-			str = getStringInsideQuotes (message, startPos);
-			qDebug () << "got " << str << " pos " << startPos;
+			initialPollData.options.push_back(str);
+			str = getStringInsideQuotes(message, startPos);
 		}
 
-		if (message.indexOf ("--progress", startPos) != -1) {
+		if (message.indexOf("--progress", startPos) != -1) {
 			initialPollData.showProgress = true;
 		}
-
-		if (message.indexOf ("--anonymous", startPos) != -1) {
+		if (message.indexOf("--anonymous", startPos) != -1) {
 			initialPollData.isAnonymous = true;
 		}
-
-		if (message.indexOf ("--public-add-option", startPos) != -1) {
+		if (message.indexOf("--public-add-option", startPos) != -1) {
 			initialPollData.allowAddOptions = true;
 		}
 
-		newPollDialog = new NewPollDialog (this, initialPollData);
-
-		connect (newPollDialog, &QDialog::accepted, [this] {
-
+		newPollDialog = new NewPollDialog(this, initialPollData);
+		connect(newPollDialog, &QDialog::accepted, [this] {
 			outgoingPostData = std::make_unique<OutgoingPostData>();
-			outgoingPostData->pollData = std::make_unique<BackendNewPollData> (newPollDialog->getData ());
-			startSendPostSequence ();
-
+			outgoingPostData->pollData =
+				std::make_unique<BackendNewPollData>(newPollDialog->getData());
+			startSendPostSequence();
 		});
-
 		newPollDialog->show();
 		return;
 	}
 
 	outgoingPostData = std::make_unique<OutgoingPostData>();
-
 	outgoingPostData->message = message;
 	outgoingPostData->postToEdit = postToEdit;
 	postToEdit = nullptr;
 
 	if (attachmentList) {
 		outgoingPostData->attachmentPaths = attachmentList->getAllFiles();
-		attachmentList->setDisableInput (true);
+		attachmentList->setDisableInput(true);
 	}
 
-	startSendPostSequence ();
+	startSendPostSequence();
 }
 
-/**
- * Call all things that should happen (one time) before sending a post
- */
-void OutgoingPostCreator::startSendPostSequence ()
+void OutgoingPostCreator::startSendPostSequence()
 {
-	sendRetryTimer.start (25000);
-	ui->textEdit->setReadOnly (true);
-	updateSendButtonState ();
-	prepareAndSendPost ();
-	setStatusLabelText ("Sending message...");
+	sendRetryTimer.start(25000);
+	ui->textEdit->setReadOnly(true);
+	updateSendButtonState();
+	prepareAndSendPost();
+	setStatusLabelText(isEditingPost() ? tr("Saving edit…") : tr("Sending message…"));
 }
 
-
-/**
- * Sends a post. If the post has attachments, they will be uploaded separately to the server.
- * The post will be sent when all attachments are uploaded
- * This function can be called from a timer, when retrying post sending
- */
-void OutgoingPostCreator::prepareAndSendPost ()
+void OutgoingPostCreator::prepareAndSendPost()
 {
 	if (outgoingPostData->attachmentPaths.isEmpty()) {
-		sendPost ();
+		sendPost();
 		return;
 	}
 
-	for (auto it = outgoingPostData->attachmentPaths.begin(); it != outgoingPostData->attachmentPaths.end(); ++it) {
+	for (auto it = outgoingPostData->attachmentPaths.begin();
+	     it != outgoingPostData->attachmentPaths.end(); ++it) {
 		auto& file = *it;
-		backend->uploadFile (*channel, file, [this, it] (QString fileId) {
+		backend->uploadFile(*channel, file, [this, it](QString fileId) {
+			outgoingPostData->attachmentIds.push_back(fileId);
+			outgoingPostData->attachmentPaths.erase(it);
+			const qsizetype uploadedFilesCount = outgoingPostData->attachmentIds.size();
+			const qsizetype remainingFileCount = outgoingPostData->attachmentPaths.size();
 
-			outgoingPostData->attachmentIds.push_back (fileId);
-			outgoingPostData->attachmentPaths.erase (it);
-			size_t uploadedFilesCount = outgoingPostData->attachmentIds.size();
-			size_t remainingFileCount = outgoingPostData->attachmentPaths.size();
+			setStatusLabelText("Attached file " + QString::number(uploadedFilesCount)
+			                   + " of " + QString::number(uploadedFilesCount + remainingFileCount));
 
-			setStatusLabelText ("Attached file " + QString::number (uploadedFilesCount)
-					+ " of " + QString::number (uploadedFilesCount + remainingFileCount));
-
-			qDebug () << "Remaining file count: " << remainingFileCount;
-
+			qDebug() << "Remaining file count:" << remainingFileCount;
 			if (remainingFileCount == 0) {
-				sendPost ();
+				sendPost();
 			}
 		});
 	}
 }
 
-/**
- * Immediately sends the packet for the already prepared post.
- * The post can be either a new post, a post edit or a poll
- */
-void OutgoingPostCreator::sendPost ()
+void OutgoingPostCreator::sendPost()
 {
-	QString attachmentsLogStr (outgoingPostData->attachmentIds.isEmpty() ? "" : " (+attachments)");
+	const QString attachmentsLogStr(outgoingPostData->attachmentIds.isEmpty()
+	                                    ? "" : " (+attachments)");
 
 	if (outgoingPostData->postToEdit) {
-		qDebug () << "Send post edit" << attachmentsLogStr;
-		backend->editPost (outgoingPostData->postToEdit->id, outgoingPostData->message, outgoingPostData->attachmentIds);
+		qDebug() << "Send post edit" << attachmentsLogStr;
+		backend->editPost(outgoingPostData->postToEdit->id,
+		                  outgoingPostData->message,
+		                  outgoingPostData->attachmentIds);
 	} else if (outgoingPostData->pollData) {
-		backend->addPoll (*channel, *outgoingPostData->pollData);
+		backend->addPoll(*channel, *outgoingPostData->pollData);
 	} else {
-		qDebug () << "Send post" << attachmentsLogStr;
-		backend->addPost (*channel, outgoingPostData->message, outgoingPostData->attachmentIds, root_id);
+		qDebug() << "Send post" << attachmentsLogStr;
+		backend->addPost(*channel, outgoingPostData->message,
+		                 outgoingPostData->attachmentIds, root_id);
 	}
 }
 
-void OutgoingPostCreator::onDragEnterEvent (QDragEnterEvent* event)
+void OutgoingPostCreator::onDragEnterEvent(QDragEnterEvent* event)
 {
 	if (event->mimeData()->hasUrls()) {
 		event->acceptProposedAction();
 	}
 }
 
-void OutgoingPostCreator::onDragMoveEvent (QDragMoveEvent* event)
+void OutgoingPostCreator::onDragMoveEvent(QDragMoveEvent* event)
 {
 	if (event->mimeData()->hasUrls()) {
 		event->acceptProposedAction();
 	}
 }
 
-void OutgoingPostCreator::onDropEvent (QDropEvent* event)
+void OutgoingPostCreator::onDropEvent(QDropEvent* event)
 {
-	if (isWaitingForPostServerResponse ()) {
+	if (isWaitingForPostServerResponse()) {
 		qDebug() << "Cannot attach files while sending a post";
 		return;
 	}
 
 	QStringList files;
-
-	for (auto& url: event->mimeData ()->urls()) {
-		files.push_back (url.toLocalFile());
+	for (auto& url : event->mimeData()->urls()) {
+		files.push_back(url.toLocalFile());
 	}
-
-	createAttachmentList (files);
+	createAttachmentList(files);
 }
 
-void OutgoingPostCreator::onPostReceived (BackendPost& post)
+void OutgoingPostCreator::onPostReceived(BackendPost& post)
 {
-	if (outgoingPostData && (post.isOwnPost() || post.isOwnPollPost())) {
-
-		sendRetryTimer.stop ();
-
-		setStatusLabelText ("");
-
-		//reset the 'editing post' state
-		if (outgoingPostData->postToEdit) {
-			emit postEditFinished();
-		}
-
-		outgoingPostData.reset();
-
-		if (attachmentList) {
-			delete (attachmentList);
-			attachmentList = nullptr;
-		}
-
-		ui->textEdit->clear();
-		ui->textEdit->setReadOnly (false);
-		updateSendButtonState ();
+	if (!outgoingPostData || (!post.isOwnPost() && !post.isOwnPollPost())) {
+		return;
 	}
+
+	sendRetryTimer.stop();
+	const bool wasEdit = outgoingPostData->postToEdit != nullptr;
+
+	if (wasEdit) {
+		emit postEditFinished();
+	}
+
+	outgoingPostData.reset();
+
+	if (attachmentList) {
+		delete attachmentList;
+		attachmentList = nullptr;
+	}
+
+	ui->textEdit->clear();
+	ui->textEdit->setReadOnly(false);
+	setEditingVisual(false);
+	setStatusLabelText(QString());
+	updateSendButtonState();
 }
 
-void OutgoingPostCreator::createAttachmentList (QStringList& files)
+void OutgoingPostCreator::createAttachmentList(QStringList& files)
 {
 	if (!attachmentList) {
-		attachmentList = new OutgoingAttachmentList (this);
+		attachmentList = new OutgoingAttachmentList(this);
+		attachmentParent->insertWidget(0, attachmentList);
+		updateSendButtonState();
 
-		attachmentParent->insertWidget (0, attachmentList);
-		updateSendButtonState ();
-
-		connect (attachmentList, &OutgoingAttachmentList::deleted, [this] {
-			attachmentParent->removeWidget (attachmentList);
-			delete (attachmentList);
+		connect(attachmentList, &OutgoingAttachmentList::deleted, [this] {
+			attachmentParent->removeWidget(attachmentList);
+			delete attachmentList;
 			attachmentList = nullptr;
-			updateSendButtonState ();
+			updateSendButtonState();
 		});
 	}
 
-	for (auto& filename: files) {
-		attachmentList->addFile (filename);
+	for (auto& filename : files) {
+		attachmentList->addFile(filename);
 	}
 }
 
-void OutgoingPostCreator::updateSendButtonState ()
+void OutgoingPostCreator::updateSendButtonState()
 {
+	if (!panel) {
+		return;
+	}
+
+	const bool editing = isEditingPost();
+	panel->sendButton().setText(editing ? QStringLiteral("✓") : QStringLiteral("➤"));
+	panel->sendButton().setAccessibleName(editing ? tr("Save edited message") : tr("Send"));
+
 	bool sendButtonEnabled = true;
 	QString tooltipText;
 
-	if (!isConnected) { //no connection
-		tooltipText = "Server connection lost";
-
+	if (!isConnected) {
+		tooltipText = tr("Server connection lost");
 		if (outgoingPostData) {
-			tooltipText += ", sending message";
+			tooltipText += tr(", sending message");
 		}
-
 		sendButtonEnabled = false;
-	} else if (outgoingPostData) { //sending message in progress
+	} else if (outgoingPostData) {
 		sendButtonEnabled = false;
-		tooltipText = "Waiting for server response";
+		tooltipText = editing ? tr("Saving edited message") : tr("Waiting for server response");
 	}
 
-	bool attachButtonEnabled = sendButtonEnabled;
+	panel->attachButton().setDisabled(!sendButtonEnabled);
+	panel->attachButton().setToolTip(tooltipText.isEmpty() ? tr("Attach File") : tooltipText);
 
-	panel->attachButton().setDisabled (!attachButtonEnabled);
-	panel->attachButton().setToolTip (tooltipText);
-
-	/**
-	 * Send button is disabled if the post text area is empty
-	 */
 	if (sendButtonEnabled && !isCreatingPost()) {
 		sendButtonEnabled = false;
-		tooltipText = "Cannot send empty message";
+		tooltipText = tr("Cannot send empty message");
 	}
 
-	panel->sendButton().setDisabled (!sendButtonEnabled);
-	panel->sendButton().setToolTip (tooltipText);
+	if (sendButtonEnabled && editing) {
+		tooltipText = tr("Save edited message · Esc to cancel");
+	} else if (sendButtonEnabled && tooltipText.isEmpty()) {
+		tooltipText = tr("Send");
+	}
+
+	panel->sendButton().setDisabled(!sendButtonEnabled);
+	panel->sendButton().setToolTip(tooltipText);
 }
 
-/**
- * returns true if the client is waiting for server response after sending or editing a post,
- * or if the user is in the process of creating or editing a post (if there is typed text or attached files)
- */
-bool OutgoingPostCreator::isCreatingPost ()
+bool OutgoingPostCreator::isCreatingPost()
 {
-	if (isWaitingForPostServerResponse ()) {
+	if (isWaitingForPostServerResponse()) {
 		return true;
 	}
 
-	QString message = ui->textEdit->toPlainText ();
-
-	if (message.isEmpty() && !attachmentList) {
-		return false;
-	}
-
-	return true;
+	const QString message = ui->textEdit->toPlainText();
+	return !message.isEmpty() || attachmentList;
 }
 
-/**
- * returns true if the client is waiting for server response after sending or editing a post
- */
-bool OutgoingPostCreator::isWaitingForPostServerResponse ()
+bool OutgoingPostCreator::isWaitingForPostServerResponse()
 {
-	return outgoingPostData ? true : false;
+	return outgoingPostData != nullptr;
 }
 
-void OutgoingPostCreator::setRootId(QString id) {
-	root_id = id;
+void OutgoingPostCreator::setRootId(QString id)
+{
+	root_id = std::move(id);
 }
 
 } /* namespace Mattermost */
