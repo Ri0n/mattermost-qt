@@ -80,7 +80,7 @@ signals:
 	void dimensionsChanged ();
 
 private:
-    void setAuthor(Backend& backend, const BackendUser* user);
+    void setAuthor(Backend& backendInstance, const BackendUser* user);
     void updateAuthorAvatar();
     void connectReactionActions();
     void connectMessageLinks();
