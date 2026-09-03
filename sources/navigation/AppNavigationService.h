@@ -17,6 +17,7 @@ public:
     static AppNavigationService& instance(Backend& backend);
 
     void openUrl(const QUrl& url);
+    void openChannel(const QString& channelId);
 
 signals:
     void channelRequested(const QString& channelId, const QString& postId);
