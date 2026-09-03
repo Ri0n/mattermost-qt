@@ -6,6 +6,7 @@
 
 #include "ChatArea.h"
 #include "PostsListWidget.h"
+#include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "channel-tree/ChannelItem.h"
 #include "post/PostWidget.h"
