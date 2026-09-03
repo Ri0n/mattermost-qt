@@ -29,6 +29,7 @@ class ThreadTimelineController : public QObject
     Q_OBJECT
 public:
     explicit ThreadTimelineController(ChatArea& area);
+    bool ensurePostVisible(const QString& postId);
 
 private:
     struct ViewportAnchor {
