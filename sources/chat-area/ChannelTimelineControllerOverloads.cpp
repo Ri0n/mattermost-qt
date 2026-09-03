@@ -14,6 +14,8 @@ void ChannelTimelineController::renderTimeline()
     // websocket root-post update. The legacy ChatArea slot inserts a row and then
     // calls adjustSize()/scrollToBottom(), while the original controller lambda
     // separately mutates PostTimeline. Replace both with one incremental handler.
+    // Reinstall this ownership on every activation because deactivate() removes
+    // all channel->controller connections before the next sparse startup.
     QObject::disconnect(&area.channel, &BackendChannel::onNewPost,
                         &area, &ChatArea::appendChannelPost);
     QObject::disconnect(&area.channel, &BackendChannel::onNewPost,
