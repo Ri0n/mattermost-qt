@@ -57,6 +57,7 @@ ThreadTimelineController* createThreadTimelineController(ChatArea& area);
 
 class ChatArea: public QWidget {
 	Q_OBJECT
+	friend class ChannelTimelineController;
 public:
 	explicit ChatArea (Backend& backend, BackendChannel& channel, ChannelItem* treeItem, QWidget *parent = nullptr, bool initialize = true);
 	explicit ChatArea (Backend& backend, BackendChannel& channel, QString rootId, ChatArea* parentArea); //for thread window
@@ -89,7 +90,8 @@ public:
 
 	/**
 	 * Temporarily make a semantic navigation target authoritative for viewport
-	 * restoration while sparse pages and attachment geometry settle.
+	 * restoration while sparse pages and attachment geometry settle. A
+	 * quietPeriodMs of zero keeps the lock until explicit user scrolling.
 	 */
 	void lockNavigationToPost(const QString& postId, int quietPeriodMs = 2000);
 

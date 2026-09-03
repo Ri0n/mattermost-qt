@@ -228,6 +228,43 @@ private slots:
         QCOMPARE(timeline.adjacentGapIndex(9, false, 5), -1);
     }
 
+    void liveTailAppendKeepsExistingIndicesAndGapStable()
+    {
+        PostTimeline timeline;
+        timeline.reset(100);
+
+        QStringList window;
+        for (int i = 20; i < 50; ++i) {
+            window.push_back(QStringLiteral("p%1").arg(i));
+        }
+        timeline.placeWindow(20, window);
+
+        const auto before = timeline.spans();
+        QCOMPARE(before.size(), 3);
+        QCOMPARE(before.at(2).kind, PostTimeline::GapSpan);
+        QCOMPARE(before.at(2).firstIndex, 50);
+        QCOMPARE(before.at(2).count, 50);
+
+        // A websocket post grows the newest edge. Existing rows must not move,
+        // and the old trailing gap must not grow: the new capacity is consumed
+        // immediately by the new newest materialized post.
+        timeline.setTotalCount(101);
+        timeline.placeWindow(100, {QStringLiteral("live")});
+
+        QCOMPARE(timeline.indexOf(QStringLiteral("p20")), 20);
+        QCOMPARE(timeline.indexOf(QStringLiteral("p49")), 49);
+        QCOMPARE(timeline.indexOf(QStringLiteral("live")), 100);
+
+        const auto after = timeline.spans();
+        QCOMPARE(after.size(), 4);
+        QCOMPARE(after.at(2).kind, PostTimeline::GapSpan);
+        QCOMPARE(after.at(2).firstIndex, 50);
+        QCOMPARE(after.at(2).count, 50);
+        QCOMPARE(after.at(3).kind, PostTimeline::LoadedSpan);
+        QCOMPARE(after.at(3).firstIndex, 100);
+        QCOMPARE(after.at(3).postIds, QStringList({QStringLiteral("live")}));
+    }
+
     void pruningKeepsNearestTwoHundredRowsAndVisibleCenter()
     {
         PostTimeline timeline;

@@ -20,6 +20,7 @@ class QEvent;
 
 namespace Mattermost {
 
+class BackendPost;
 class ChatArea;
 struct ChannelNewPosts;
 class ChannelTimelineController;
@@ -39,6 +40,7 @@ public:
                                  bool reachedNewest);
     void beginContextNavigation(const QString& postId);
     void requestOlderPage();
+    void materializeLivePost(BackendPost& post);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
