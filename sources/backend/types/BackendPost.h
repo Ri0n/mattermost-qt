@@ -24,9 +24,10 @@
 
 #pragma once
 
-#include <QJsonObject>
-#include <QVariant>
 #include <QDateTime>
+#include <QJsonObject>
+#include <QStringList>
+#include <QVariant>
 #include <list>
 #include <memory>
 #include "BackendUser.h"
@@ -94,6 +95,7 @@ public:
 	// Transient thread metadata supplied by Mattermost for root posts.
 	int64_t						reply_count = 0;
 	uint64_t					last_reply_at = 0;
+	QStringList                     threadParticipantUserIds;
 
 	std::unique_ptr<BackendPoll> poll;
 	const BackendUser*			author;
