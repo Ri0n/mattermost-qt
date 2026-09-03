@@ -241,6 +241,9 @@ void PostsListWidget::clear()
 	clearTimelineNavigationLock();
 
 	removeNewMessagesSeparatorTimer.stop();
+	timelineReconcileActive = false;
+	timelineReconcileCursor = 0;
+	resumeTimelinePainting();
 	QListWidget::clear();
 	newMessagesSeparator = nullptr;
 	lastOwnPost = nullptr;
@@ -251,6 +254,13 @@ void PostsListWidget::clear()
 
 void PostsListWidget::scheduleSavedScrollAnchorRestore()
 {
+	// A sparse reconciliation restores exactly one controller-selected anchor at
+	// commit time. Per-row insertion/layout callbacks must not enqueue competing
+	// restores while that atomic mutation is still in progress.
+	if (timelineReconcileActive || restoringSavedScroll) {
+		return;
+	}
+
 	if (!timelineNavigationPostId.isEmpty()) {
 		scheduleTimelineNavigationRestore();
 		return;
@@ -405,6 +415,10 @@ void PostsListWidget::scrollToBottom()
 
 void PostsListWidget::insertPost (int position, PostWidget* postWidget)
 {
+	if (timelineReconcileActive && reconcileTimelinePost(postWidget)) {
+		return;
+	}
+
 	QListWidgetItem* newItem = new QListWidgetItem();
 	newItem->setData(Qt::UserRole, ItemType::post);
 	newItem->setData(ItemRole::postId, postWidget->post.id);
@@ -500,10 +514,25 @@ void PostsListWidget::scrollToUnreadPostsOrBottom ()
 
 void PostsListWidget::addDaySeparator (int daysAgo)
 {
+	if (timelineReconcileActive) {
+		if (reconcileTimelineDaySeparator(daysAgo)) {
+			return;
+		}
+		PostSeparatorWidget* separator = new PostDaySeparatorWidget(daysAgo);
+		QListWidgetItem* newItem = new QListWidgetItem();
+		newItem->setData(Qt::UserRole, ItemType::separator);
+		newItem->setData(ItemRole::daySeparatorDays, daysAgo);
+		insertItem(timelineReconcileCursor, newItem);
+		setItemWidget(newItem, separator);
+		++timelineReconcileCursor;
+		return;
+	}
+
 	PostSeparatorWidget* separator = new PostDaySeparatorWidget (daysAgo);
 	QListWidgetItem* newItem = new QListWidgetItem();
 	newItem->setData(Qt::UserRole, ItemType::separator);
-	addItem (newItem);
+	newItem->setData(ItemRole::daySeparatorDays, daysAgo);
+	QListWidget::addItem (newItem);
 	setItemWidget (newItem, separator);
 	if (savedScrollAnchor.valid) {
 		scheduleSavedScrollAnchorRestore();
@@ -512,9 +541,24 @@ void PostsListWidget::addDaySeparator (int daysAgo)
 
 void PostsListWidget::addDaySeparator (int insertPos, int daysAgo)
 {
+	if (timelineReconcileActive) {
+		if (reconcileTimelineDaySeparator(daysAgo)) {
+			return;
+		}
+		PostSeparatorWidget* separator = new PostDaySeparatorWidget(daysAgo);
+		QListWidgetItem* newItem = new QListWidgetItem();
+		newItem->setData(Qt::UserRole, ItemType::separator);
+		newItem->setData(ItemRole::daySeparatorDays, daysAgo);
+		insertItem(timelineReconcileCursor, newItem);
+		setItemWidget(newItem, separator);
+		++timelineReconcileCursor;
+		return;
+	}
+
 	PostSeparatorWidget* separator = new PostDaySeparatorWidget (daysAgo);
 	QListWidgetItem* newItem = new QListWidgetItem();
 	newItem->setData(Qt::UserRole, ItemType::separator);
+	newItem->setData(ItemRole::daySeparatorDays, daysAgo);
 	insertItem (insertPos, newItem);
 	setItemWidget (newItem, separator);
 	if (savedScrollAnchor.valid) {
@@ -532,7 +576,7 @@ void PostsListWidget::addNewMessagesSeparator ()
 	newMessagesSeparator = new QListWidgetItem();
 	newMessagesSeparator->setData(Qt::UserRole, ItemType::separator);
 
-	addItem (newMessagesSeparator);
+	QListWidget::addItem (newMessagesSeparator);
 	setItemWidget (newMessagesSeparator, separator);
 	if (savedScrollAnchor.valid) {
 		scheduleSavedScrollAnchorRestore();
