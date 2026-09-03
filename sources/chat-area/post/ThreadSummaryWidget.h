@@ -1,7 +1,9 @@
 #pragma once
 
-#include <QPointer>
 #include <QWidget>
+
+class QHBoxLayout;
+class QPushButton;
 
 namespace Mattermost {
 
@@ -32,8 +34,8 @@ private:
     Backend& backend;
     BackendChannel& channel;
     BackendPost& rootPost;
-    class QHBoxLayout* layout = nullptr;
-    class QPushButton* button = nullptr;
+    QHBoxLayout* layout = nullptr;
+    QPushButton* button = nullptr;
 };
 
 } // namespace Mattermost
