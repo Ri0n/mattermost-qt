@@ -77,6 +77,7 @@ public:
 	uint64_t					edit_at;
 	uint64_t					delete_at;
 	QString						user_id;
+	QString						sender_name;
 	QString						channel_id;
 #if 1
 	QString						root_id;
