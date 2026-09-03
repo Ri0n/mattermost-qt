@@ -21,6 +21,7 @@
 
 #include <QMouseEvent>
 
+#include "chat-area/post/ReactionChipStyle.h"
 #include "backend/types/BackendPost.h"
 #include "ui_PostReaction.h"
 
@@ -48,24 +49,9 @@ PostReaction::PostReaction (const QString& emojiName, const QString& emojiValue,
     tooltip.chop (1);
     tooltip += QStringLiteral("\nClick to add this reaction");
     setToolTip (tooltip);
-    setCursor(Qt::PointingHandCursor);
 
-    // Keep reaction chips lightweight enough to sit inline with message chrome.
-    // A little extra top padding gives emoji glyphs room without increasing the
-    // visual weight of the bottom edge.
-    setObjectName(QStringLiteral("postReaction"));
-    setAttribute(Qt::WA_StyledBackground, true);
-    ui->horizontalLayout->setContentsMargins(4, 2, 4, 1);
-    ui->horizontalLayout->setSpacing(2);
-    setStyleSheet(QStringLiteral(
-        "QWidget#postReaction {"
-        " border: 1px solid rgba(128, 128, 128, 130);"
-        " border-radius: 4px;"
-        " background-color: rgba(128, 128, 128, 52);"
-        " }"
-        "QWidget#postReaction:hover {"
-        " background-color: rgba(128, 128, 128, 72);"
-        " }"));
+    ReactionChipStyle::apply(this, ui->horizontalLayout,
+                             QStringLiteral("postReaction"));
 }
 
 PostReaction::~PostReaction()
