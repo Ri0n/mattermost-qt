@@ -59,13 +59,13 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
 
     connect(&channel, &BackendChannel::onPostEdited, this,
             [this](BackendPost& edited) {
-        if (edited.id == rootPost.id) {
+        if (edited.id == this->rootPost.id) {
             refresh();
         }
     });
     connect(&channel, &BackendChannel::onNewPost, this,
             [this](BackendPost& reply) {
-        if (reply.root_id == rootPost.id) {
+        if (reply.root_id == this->rootPost.id) {
             refresh();
         }
     });
