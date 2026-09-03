@@ -268,6 +268,8 @@ void PostWidget::addThreadButton()
 		ui->time->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
 		ui->horizontalLayout->insertStretch(1, 1);
 		ui->horizontalLayout->insertWidget(2, threadSummary, 0, Qt::AlignVCenter);
+		const int threadTimeGap = 2 * ui->time->fontMetrics().averageCharWidth();
+		ui->horizontalLayout->insertSpacing(3, threadTimeGap);
 		return;
 	}
 
