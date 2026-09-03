@@ -137,7 +137,6 @@ private:
     bool contextNavigationActive = false;
     bool contextReachedOldest = false;
     bool contextReachedNewest = false;
-    bool liveMaterializerInstalled = false;
 };
 
 } // namespace Mattermost
