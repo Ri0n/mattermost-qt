@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <utility>
 
+#include <QSet>
+
 namespace Mattermost {
 
 PostTimeline::PostTimeline(int initialEstimatedRowHeight)
@@ -199,6 +201,71 @@ int PostTimeline::adjacentGapIndex(int loadedIndex,
         return postIdAt(gapIndex).isEmpty() ? gapIndex : -1;
     }
     return -1;
+}
+
+QVector<int> PostTimeline::pruneLoadedToNearest(int centerIndex, int maxLoadedPosts)
+{
+    QVector<int> removed;
+    const int limit = std::max(0, maxLoadedPosts);
+    if (loadedByIndex.size() <= limit) {
+        return removed;
+    }
+
+    const int center = logicalCount > 0
+        ? std::max(0, std::min(logicalCount - 1, centerIndex))
+        : 0;
+
+    struct Candidate {
+        int index = 0;
+        qint64 distance = 0;
+    };
+
+    QVector<Candidate> candidates;
+    candidates.reserve(loadedByIndex.size());
+    for (auto it = loadedByIndex.cbegin(); it != loadedByIndex.cend(); ++it) {
+        Candidate candidate;
+        candidate.index = it.key();
+        candidate.distance = std::abs(static_cast<qint64>(it.key()) - center);
+        candidates.push_back(candidate);
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& lhs,
+                                                       const Candidate& rhs) {
+        if (lhs.distance != rhs.distance) {
+            return lhs.distance < rhs.distance;
+        }
+        return lhs.index < rhs.index;
+    });
+
+    QSet<int> keep;
+    keep.reserve(limit);
+    for (int i = 0; i < limit && i < candidates.size(); ++i) {
+        keep.insert(candidates.at(i).index);
+    }
+
+    for (auto it = loadedByIndex.begin(); it != loadedByIndex.end();) {
+        if (keep.contains(it.key())) {
+            ++it;
+            continue;
+        }
+
+        const int logicalIndex = it.key();
+        const QString postId = it.value();
+        removed.push_back(logicalIndex);
+        indexByPostId.remove(postId);
+
+        const auto measured = measuredHeights.find(postId);
+        if (measured != measuredHeights.end()) {
+            measuredHeightSum -= measured.value();
+            --measuredHeightCount;
+            measuredHeights.erase(measured);
+        }
+
+        it = loadedByIndex.erase(it);
+    }
+
+    std::sort(removed.begin(), removed.end());
+    return removed;
 }
 
 bool PostTimeline::contains(const QString& postId) const
