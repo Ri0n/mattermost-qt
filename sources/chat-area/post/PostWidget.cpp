@@ -140,7 +140,7 @@ PostWidget::~PostWidget()
 	delete ui;
 }
 
-void PostWidget::setAuthor(Backend& backend, const BackendUser* user)
+void PostWidget::setAuthor(Backend& backendInstance, const BackendUser* user)
 {
 	if (!user) {
 		return;
@@ -159,14 +159,14 @@ void PostWidget::setAuthor(Backend& backend, const BackendUser* user)
 
 	if (user->avatar.isNull()
 		|| user->avatar_picture_update != user->last_picture_update) {
-		UserProfileService::instance(backend).ensureAvatar(*user);
+		UserProfileService::instance(backendInstance).ensureAvatar(*user);
 	} else {
 		updateAuthorAvatar();
 	}
 
 	if (user->status.isEmpty()) {
 		QPointer<PostWidget> guard(this);
-		UserProfileService::instance(backend).ensureStatuses(
+		UserProfileService::instance(backendInstance).ensureStatuses(
 			QStringList {user->id}, [guard] {
 				if (guard) {
 					guard->updateAuthorAvatar();
