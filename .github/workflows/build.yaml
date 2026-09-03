@@ -10,7 +10,7 @@ on:
 permissions:
   contents: read
 
-# Diagnostic pass for incremental sparse timelines after thread-state fixes.
+# Diagnostic pass for sparse drag anchoring and thread-state fixes.
 
 jobs:
   qt6:
