@@ -22,6 +22,8 @@
 #include <QPushButton>
 #include <memory>
 
+#include "backend/types/BackendPost.h"
+
 namespace Ui {
 class PostWidget;
 }
@@ -29,7 +31,6 @@ class PostWidget;
 namespace Mattermost {
 
 class Backend;
-class BackendPost;
 class BackendUser;
 class PostQuoteFrame;
 class PostAttachmentList;
