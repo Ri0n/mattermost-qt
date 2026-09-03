@@ -58,6 +58,8 @@ private:
     void restoreViewportAnchor(const ViewportAnchor& anchor,
                                const QString& focusPostId = QString(),
                                bool focusAtTop = false);
+    bool restoreSavedState(ViewportAnchor& anchor);
+    void persistState();
 
     void renderTimeline(const QString& focusPostId = QString(), bool focusAtTop = false);
     void renderTimeline(const QString& focusPostId,
