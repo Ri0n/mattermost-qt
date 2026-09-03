@@ -40,7 +40,7 @@ public:
                                  bool reachedNewest);
     void beginContextNavigation(const QString& postId);
     void requestOlderPage();
-    void appendLivePost(BackendPost& post);
+    void materializeLivePost(BackendPost& post);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
