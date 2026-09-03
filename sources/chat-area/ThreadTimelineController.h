@@ -68,6 +68,10 @@ private:
     void measureRenderedPosts();
     void schedulePaintResume(quint64 renderId);
 
+    void schedulePrune();
+    void pruneLoadedPosts(quint64 pruneRequestGeneration);
+    int logicalIndexForAnchor(const ViewportAnchor& anchor) const;
+
     ChatArea& area;
     QString rootId;
     QString cursorPostId;
@@ -81,6 +85,7 @@ private:
     int pendingSeekIndex = -1;
     int lastAppliedGapRowHeight = 96;
     quint64 renderGeneration = 0;
+    quint64 pruneGeneration = 0;
     bool initialPrefetchDone = false;
     bool requestInFlight = false;
     bool hasNext = true;
