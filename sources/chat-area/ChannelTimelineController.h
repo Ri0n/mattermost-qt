@@ -96,6 +96,10 @@ private:
     void measureRenderedPosts();
     void schedulePaintResume(quint64 renderId);
 
+    void schedulePrune();
+    void pruneLoadedPosts(quint64 pruneRequestGeneration);
+    int logicalIndexForAnchor(const ViewportAnchor& anchor) const;
+
     int authoritativeFirstIndex(int page, int pageSize) const;
     int channelRootPostCount() const;
 
@@ -121,6 +125,7 @@ private:
 
     quint64 generation = 0;
     quint64 renderGeneration = 0;
+    quint64 pruneGeneration = 0;
     bool active = false;
     bool totalCountExact = false;
     bool initialRenderDone = false;
