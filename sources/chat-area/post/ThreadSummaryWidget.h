@@ -2,8 +2,9 @@
 
 #include <QWidget>
 
+class QEvent;
 class QHBoxLayout;
-class QPushButton;
+class QLabel;
 
 namespace Mattermost {
 
@@ -21,13 +22,14 @@ public:
                         BackendPost& rootPost,
                         QWidget* parent = nullptr);
 
-    QPushButton* buttonWidget() const { return button; }
-
 signals:
     void clicked();
 
 public slots:
     void refresh();
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void rebuildParticipantAvatars();
@@ -37,7 +39,8 @@ private:
     BackendChannel& channel;
     BackendPost& rootPost;
     QHBoxLayout* layout = nullptr;
-    QPushButton* button = nullptr;
+    QWidget* chip = nullptr;
+    QLabel* chipCount = nullptr;
 };
 
 } // namespace Mattermost
