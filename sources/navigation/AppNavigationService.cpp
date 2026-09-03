@@ -1,5 +1,7 @@
 #include "AppNavigationService.h"
 
+#include <functional>
+
 #include <QApplication>
 #include <QDesktopServices>
 #include <QJsonDocument>
@@ -83,7 +85,7 @@ BackendChannel* AppNavigationService::findPostChannel(const QString& postId) con
     }
 
     for (BackendChannel* channel : backend.getStorage().channels) {
-        if (channel && channel->findPostById(postId)) {
+        if (channel && channel->postIdToPost.contains(postId)) {
             return channel;
         }
     }
@@ -129,16 +131,12 @@ void AppNavigationService::openPost(const QString& postId)
 
     NetworkRequest request(QStringLiteral("posts/") + postId);
     QPointer<AppNavigationService> guard(this);
-    httpConnector.get(request,
-        [guard, postId](QVariant, QByteArray data, const QNetworkReply&) {
-            if (!guard) {
+    auto handler = std::function<void(const QJsonDocument&)>(
+        [guard, postId](const QJsonDocument& document) {
+            if (!guard || !document.isObject()) {
                 return;
             }
 
-            const QJsonDocument document = QJsonDocument::fromJson(data);
-            if (!document.isObject()) {
-                return;
-            }
             const QString channelId = document.object()
                 .value(QStringLiteral("channel_id")).toString();
             BackendChannel* channel = guard->backend.getStorage().getChannelById(channelId);
@@ -146,6 +144,7 @@ void AppNavigationService::openPost(const QString& postId)
                 guard->openPostInChannel(*channel, postId);
             }
         });
+    httpConnector.get(request, HttpResponseCallback(std::move(handler)));
 }
 
 void AppNavigationService::openPostInChannel(BackendChannel& channel,
