@@ -45,6 +45,7 @@ BackendPost::BackendPost (const QJsonObject& jsonObject, const Storage& storage)
 	delete_at = jsonObject.value("delete_at").toVariant().toULongLong();
 	is_pinned = jsonObject.value("is_pinned").toBool();
 	user_id = jsonObject.value("user_id").toString();
+	sender_name = jsonObject.value(QStringLiteral("_mmqt_sender_name")).toString();
 	author = storage.getUserById (user_id);
 	channel_id = jsonObject.value("channel_id").toString();
 	root_id = jsonObject.value("root_id").toString();
@@ -200,6 +201,10 @@ QString BackendPost::getAuthorName () const
 {
 	if (author) {
 		return author->getDisplayName ();
+	}
+
+	if (!sender_name.isEmpty()) {
+		return sender_name;
 	}
 
 	return user_id;
