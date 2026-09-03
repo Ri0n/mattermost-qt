@@ -93,6 +93,13 @@ BackendChannel* AppNavigationService::findPostChannel(const QString& postId) con
     return nullptr;
 }
 
+void AppNavigationService::openChannel(const QString& channelId)
+{
+    if (!channelId.isEmpty() && backend.getStorage().getChannelById(channelId)) {
+        emit channelRequested(channelId, QString());
+    }
+}
+
 void AppNavigationService::openUrl(const QUrl& url)
 {
     if (!url.isValid()) {
@@ -107,7 +114,7 @@ void AppNavigationService::openUrl(const QUrl& url)
     const QStringList path = url.path().split(QLatin1Char('/'), Qt::SkipEmptyParts);
     if (path.size() >= 3 && path.at(1) == QStringLiteral("channels")) {
         if (BackendChannel* channel = findChannel(path.at(0), path.at(2))) {
-            emit channelRequested(channel->id, QString());
+            openChannel(channel->id);
             return;
         }
     }
@@ -126,7 +133,7 @@ void AppNavigationService::openUrl(const QUrl& url)
                 continue;
             }
             if (BackendChannel* channel = backend.getStorage().getDirectChannelByUserId(user.id)) {
-                emit channelRequested(channel->id, QString());
+                openChannel(channel->id);
                 return;
             }
             break;
