@@ -75,7 +75,11 @@ bool PostsListWidget::reconcileTimelinePost(PostWidget* postWidget)
             --existingRow;
         }
 
-        delete postWidget;
+        // Channel/Thread render code still holds this just-constructed pointer
+        // for the remainder of the current call (it attaches one measurement
+        // connection immediately after insertPost()). Defer deletion until the
+        // event loop returns so reconciliation cannot create a use-after-free.
+        postWidget->deleteLater();
         ++timelineReconcileCursor;
         return true;
     }
