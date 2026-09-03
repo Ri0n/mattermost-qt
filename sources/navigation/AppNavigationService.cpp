@@ -16,6 +16,7 @@
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendTeam.h"
+#include "backend/types/BackendUser.h"
 #include "mainwindow.h"
 
 namespace Mattermost {
@@ -111,6 +112,29 @@ void AppNavigationService::openUrl(const QUrl& url)
         }
     }
 
+    // Mattermost direct-message deep links use /<team>/messages/@<username>.
+    // Existing DMs are already represented in Storage; route them without
+    // sending a perfectly local navigation action through the browser.
+    if (path.size() >= 3 && path.at(1) == QStringLiteral("messages")) {
+        QString username = path.at(2);
+        if (username.startsWith(QLatin1Char('@'))) {
+            username.remove(0, 1);
+        }
+        for (const auto& entry : backend.getStorage().getAllUsers()) {
+            const BackendUser& user = entry.second;
+            if (QString::compare(user.username, username, Qt::CaseInsensitive) != 0) {
+                continue;
+            }
+            if (BackendChannel* channel = backend.getStorage().getDirectChannelByUserId(user.id)) {
+                emit channelRequested(channel->id, QString());
+                return;
+            }
+            break;
+        }
+    }
+
+    // Both normal permalinks (/<team>/pl/<post>) and Mattermost's
+    // /_redirect/pl/<post> form have "pl" as the second path component.
     if (path.size() >= 3 && path.at(1) == QStringLiteral("pl")) {
         openPost(path.at(2));
         return;
