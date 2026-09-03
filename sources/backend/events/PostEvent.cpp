@@ -39,6 +39,13 @@ PostEvent::PostEvent (const QJsonObject& data, const QJsonObject& broadcast)
     // on the local post so notification/UI code does not need to parse text.
     postObject.insert(QStringLiteral("_mmqt_current_user_mentioned"),
                       !data.value(QStringLiteral("mentions")).toString().isEmpty());
+
+    // `sender_name` lives next to the serialized post in websocket events, not
+    // inside the Post object itself. Preserve it as transient client metadata
+    // so an arriving post can still identify its sender before that user's
+    // profile has been loaded into Storage.
+    postObject.insert(QStringLiteral("_mmqt_sender_name"),
+                      data.value(QStringLiteral("sender_name")).toString());
 }
 
 PostEvent::~PostEvent () = default;
