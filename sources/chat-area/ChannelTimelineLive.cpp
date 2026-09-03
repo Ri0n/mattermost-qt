@@ -19,40 +19,47 @@ void ChannelTimelineController::materializeLivePost(BackendPost& post)
         return;
     }
 
-    const bool alreadyLogical = timeline.contains(post.id);
-    PostsListWidget* list = area.ui ? area.ui->listWidget : nullptr;
-    const bool alreadyVisible = list && list->findPost(post.id);
-    if (alreadyLogical && alreadyVisible) {
+    // REST/context loading may already have delivered the same identity before
+    // the websocket event arrives. In that case neither logical count, unread
+    // state nor UI rows may advance again.
+    if (timeline.contains(post.id)) {
         return;
     }
 
-    if (!alreadyLogical) {
-        // A websocket root post extends the logical history at the newest edge.
-        // Existing indices stay fixed; the new post occupies exactly one new
-        // final slot. Re-delivery of the same ID is therefore idempotent.
-        if (expectedPostCount < INT_MAX) {
-            ++expectedPostCount;
-        }
-        timeline.setTotalCount(expectedPostCount);
-        timeline.placeWindow(expectedPostCount - 1, QStringList {post.id});
+    PostsListWidget* list = area.ui ? area.ui->listWidget : nullptr;
 
-        // Gap anchors are newest-relative because oldest-edge growth shifts the
-        // whole logical coordinate system. Newest-edge growth is the opposite:
-        // increase the stored distance so the same gap location remains fixed.
-        if (lastUserViewportAnchor.kind == ViewportAnchor::Gap
-            && lastUserViewportAnchor.distanceFromNewest >= 0
-            && lastUserViewportAnchor.distanceFromNewest < INT_MAX) {
-            ++lastUserViewportAnchor.distanceFromNewest;
-        }
+    // A websocket root post extends the logical history at the newest edge.
+    // Existing indices stay fixed; the new post occupies exactly one new final
+    // slot. This is deliberately different from oldest-edge growth.
+    if (expectedPostCount < INT_MAX) {
+        ++expectedPostCount;
+    }
+    timeline.setTotalCount(expectedPostCount);
+    timeline.placeWindow(expectedPostCount - 1, QStringList {post.id});
+
+    // Absolute Mattermost page=N windows are newest-relative. Adding one tail
+    // post shifts every page boundary, so cached page numbers are no longer an
+    // authoritative statement that a later logical gap is already covered.
+    // Keep the materialized rows and sequential nextOlderPage cursor, but let
+    // future random seeks reload whatever absolute page now owns their index.
+    loadedPages.clear();
+
+    // Gap anchors are newest-relative because oldest-edge growth shifts the
+    // whole logical coordinate system. Newest-edge growth is the opposite:
+    // increase the stored distance so the same gap location remains fixed.
+    if (lastUserViewportAnchor.kind == ViewportAnchor::Gap
+        && lastUserViewportAnchor.distanceFromNewest >= 0
+        && lastUserViewportAnchor.distanceFromNewest < INT_MAX) {
+        ++lastUserViewportAnchor.distanceFromNewest;
     }
 
-    if (!initialRenderDone || !list || alreadyVisible) {
+    if (!initialRenderDone || !list) {
         scheduleMeasurementPass();
         schedulePrune();
         return;
     }
 
-    int previousLogicalIndex = timeline.indexOf(post.id) - 1;
+    const int previousLogicalIndex = timeline.indexOf(post.id) - 1;
 
     // Only add a date separator when the immediate logical predecessor is also
     // materialized. If a sparse gap precedes the live row, that gap may contain
