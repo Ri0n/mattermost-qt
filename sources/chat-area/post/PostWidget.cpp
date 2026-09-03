@@ -33,9 +33,11 @@
 #include "MessageContentWidget.h"
 #include "MessageFormatter.h"
 #include "PostQuoteFrame.h"
+#include "ThreadSummaryWidget.h"
 #include "attachments/PostAttachmentList.h"
 #include "attachments/PostPoll.h"
 #include "reactions/PostReactionList.h"
+#include "ui/AvatarUtils.h"
 #include "ui_PostWidget.h"
 
 namespace Mattermost {
@@ -44,11 +46,13 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 :QWidget(parent)
 ,post (post)
 ,threadButton(nullptr)
+,backend(backend)
 ,ui(new Ui::PostWidget)
 ,messageContent(nullptr)
 ,parentChatArea(chatArea)
 {
 	ui->setupUi(this);
+	ui->authorAvatar->setFrameShape(QFrame::NoFrame);
 	ui->authorName->setText (post.getDisplayAuthorName ());
 
 	if (post.isOwnPost()) {
@@ -118,6 +122,7 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 			Emoji emoji = EmojiInfo::getEmoji (emojiID);
 			reactions->addReaction (emoji.name, emoji.unicodeString, it.second);
 		}
+		connectReactionActions();
 
 		ui->verticalLayout->addWidget (reactions.get(), 0, Qt::AlignLeft);
 	}
@@ -129,7 +134,9 @@ PostWidget::PostWidget (Backend& backend, BackendPost &post, QWidget *parent, Ch
 		ui->verticalLayout->addWidget (poll.get(), 0, Qt::AlignLeft);
 	}
 
-	if (post.has_thread && !parentChatArea->isThread) {
+	// Every root post is a potential thread. A compact inline action is cheap
+	// enough to expose even before the first reply exists.
+	if (parentChatArea && !parentChatArea->isThread) {
 		addThreadButton();
 	}
 }
@@ -152,9 +159,9 @@ void PostWidget::setAuthor(Backend& backend, const BackendUser* user)
 	}
 
 	// Qt::UniqueConnection is only supported for member-function receivers.
-	// Using it with the previous lambda trips Qt's runtime assertion in debug
-	// builds as soon as a lazily loaded post author is resolved.
 	connect(user, &BackendUser::onAvatarChanged,
+		this, &PostWidget::updateAuthorAvatar, Qt::UniqueConnection);
+	connect(user, &BackendUser::onStatusChanged,
 		this, &PostWidget::updateAuthorAvatar, Qt::UniqueConnection);
 
 	if (user->avatar.isNull()
@@ -163,13 +170,27 @@ void PostWidget::setAuthor(Backend& backend, const BackendUser* user)
 	} else {
 		updateAuthorAvatar();
 	}
+
+	if (user->status.isEmpty()) {
+		QPointer<PostWidget> guard(this);
+		UserProfileService::instance(backend).ensureStatuses(
+			QStringList {user->id}, [guard] {
+				if (guard) {
+					guard->updateAuthorAvatar();
+				}
+			});
+	}
 }
 
 void PostWidget::updateAuthorAvatar()
 {
-	if (post.author) {
-		ui->authorAvatar->setPixmap(post.author->avatar);
+	if (!post.author || post.author->avatar.isNull()) {
+		ui->authorAvatar->clear();
+		return;
 	}
+
+	ui->authorAvatar->setPixmap(
+		AvatarUtils::withStatus(post.author->avatar, 48, post.author->status, 12));
 }
 
 void PostWidget::setEdited (const QString& message)
@@ -202,22 +223,37 @@ void PostWidget::updateReactions ()
 			Emoji emoji = EmojiInfo::getEmoji (emojiID);
 			reactions->addReaction (emoji.name, emoji.unicodeString, it.second);
 		}
+		connectReactionActions();
 
 		ui->verticalLayout->addWidget (reactions.get(), 0, Qt::AlignLeft);
 	}
 }
 
-void PostWidget::addThreadButton ()
+void PostWidget::connectReactionActions()
 {
-	if (!threadButton) {
-		threadButton = new QPushButton(this);
-		connect (threadButton, &QPushButton::clicked, this, &PostWidget::openThreadWindow);
-		ui->verticalLayout->addWidget(threadButton);
+	if (!reactions) {
+		return;
 	}
 
-	threadButton->setText(post.reply_count > 0
-		? tr("Open Thread (%1)").arg(post.reply_count)
-		: tr("Open Thread"));
+	connect(reactions.get(), &PostReactionList::reactionClicked,
+		this, [this](const QString& emojiName) {
+			backend.addPostReaction(post.id, emojiName);
+		});
+}
+
+void PostWidget::addThreadButton ()
+{
+	if (!threadSummary) {
+		threadSummary = new ThreadSummaryWidget(backend, parentChatArea->getChannel(), post, this);
+		threadButton = threadSummary->buttonWidget();
+		connect(threadSummary, &ThreadSummaryWidget::clicked,
+		        this, &PostWidget::openThreadWindow);
+		ui->horizontalLayout->addSpacing(4);
+		ui->horizontalLayout->addWidget(threadSummary, 0, Qt::AlignVCenter);
+		return;
+	}
+
+	threadSummary->refresh();
 }
 
 void PostWidget::openThreadWindow () {
