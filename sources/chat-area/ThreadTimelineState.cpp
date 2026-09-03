@@ -1,5 +1,7 @@
 #include "ThreadTimelineController.h"
 
+#include <algorithm>
+
 #include <QHash>
 
 #include "ChatArea.h"
