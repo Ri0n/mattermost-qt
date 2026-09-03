@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -38,6 +38,9 @@ public:
     ~PostReactionList();
 public:
     void addReaction (const QString& emojiName, const QString& emojiValue, const BackendPostReaction& reactionData);
+
+signals:
+    void reactionClicked(const QString& emojiName);
 
 private:
     Ui::PostReactionList *ui;
