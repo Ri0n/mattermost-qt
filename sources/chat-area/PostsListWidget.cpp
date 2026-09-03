@@ -227,8 +227,16 @@ void PostsListWidget::commitUserScrollAnchor()
 	// samples the final physical bottom state; that becomes the sticky marker.
 	++scrollIntentGeneration;
 	saveScrollAnchor();
-	if (savedScrollAnchor.valid) {
-		emit userViewportChanged(savedScrollAnchor.atBottom);
+
+	// Sparse timelines can place the entire viewport inside a geometry-only gap.
+	// There is then no PostWidget from which saveScrollAnchor() can build its own
+	// semantic post anchor, but the viewport still moved because of explicit user
+	// input. Always report that movement so the owning sparse controller can
+	// capture its logical/pixel gap anchor instead of retaining an older post.
+	if (count() > 0) {
+		emit userViewportChanged(savedScrollAnchor.valid
+			? savedScrollAnchor.atBottom
+			: isAtBottom());
 	}
 }
 
