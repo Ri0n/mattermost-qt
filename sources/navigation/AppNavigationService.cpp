@@ -4,6 +4,7 @@
 #include <QDesktopServices>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMap>
 #include <QPointer>
 
 #include "backend/Backend.h"
@@ -36,9 +37,6 @@ AppNavigationService::AppNavigationService(Backend& backend)
     connect(&httpConnector, &HTTPConnector::onHttpError,
             &backend, &Backend::onHttpError);
 
-    // The service is first materialized by a PostWidget, i.e. after MainWindow
-    // exists. Keep conversation routing centralized without making every post
-    // hold another MainWindow connection.
     for (QWidget* widget : QApplication::topLevelWidgets()) {
         if (auto* mainWindow = qobject_cast<MainWindow*>(widget)) {
             connect(this, &AppNavigationService::channelRequested,
@@ -116,7 +114,10 @@ void AppNavigationService::openUrl(const QUrl& url)
         return;
     }
 
-    QDesktopServices::openUrl(url);
+    const QUrl browserUrl = url.isRelative()
+        ? QUrl(NetworkRequest::host()).resolved(url)
+        : url;
+    QDesktopServices::openUrl(browserUrl);
 }
 
 void AppNavigationService::openPost(const QString& postId)
