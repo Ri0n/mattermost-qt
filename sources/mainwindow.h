@@ -55,6 +55,7 @@ public:
 	~MainWindow();
 public:
 	void initializationComplete ();
+	void openChannelPost(const QString& channelId, const QString& postId = QString());
 
 	void changeEvent (QEvent* event) override;
 	void closeEvent(QCloseEvent *event) override;
