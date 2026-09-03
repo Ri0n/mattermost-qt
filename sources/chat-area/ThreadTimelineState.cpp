@@ -7,6 +7,7 @@
 #include "ChatArea.h"
 #include "backend/Backend.h"
 #include "backend/types/BackendChannel.h"
+#include "ui_ChatArea.h"
 
 namespace Mattermost {
 namespace {
