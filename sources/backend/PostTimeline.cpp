@@ -139,6 +139,68 @@ void PostTimeline::placeWindow(int firstIndex, const QStringList& chronologicalP
     }
 }
 
+bool PostTimeline::alignLoadedSpanToBoundary(const QString& postId, bool oldestBoundary)
+{
+    const int logicalIndex = indexOf(postId);
+    if (logicalIndex < 0 || logicalCount <= 0) {
+        return false;
+    }
+
+    for (const Span& span : spans()) {
+        if (span.kind != LoadedSpan
+            || logicalIndex < span.firstIndex
+            || logicalIndex >= span.firstIndex + span.count
+            || span.postIds.isEmpty()) {
+            continue;
+        }
+
+        const int firstIndex = oldestBoundary
+            ? 0
+            : std::max(0, logicalCount - span.count);
+        if (span.firstIndex != firstIndex) {
+            placeWindow(firstIndex, span.postIds);
+        }
+        return true;
+    }
+    return false;
+}
+
+int PostTimeline::adjacentGapIndex(int loadedIndex,
+                                   bool olderDirection,
+                                   int maxLoadedRowsBeforeGap) const
+{
+    if (loadedIndex < 0 || loadedIndex >= logicalCount
+        || postIdAt(loadedIndex).isEmpty()) {
+        return -1;
+    }
+
+    const int threshold = std::max(0, maxLoadedRowsBeforeGap);
+    for (const Span& span : spans()) {
+        if (span.kind != LoadedSpan
+            || loadedIndex < span.firstIndex
+            || loadedIndex >= span.firstIndex + span.count) {
+            continue;
+        }
+
+        if (olderDirection) {
+            if (span.firstIndex == 0 || loadedIndex - span.firstIndex > threshold) {
+                return -1;
+            }
+            const int gapIndex = span.firstIndex - 1;
+            return postIdAt(gapIndex).isEmpty() ? gapIndex : -1;
+        }
+
+        const int spanLastIndex = span.firstIndex + span.count - 1;
+        if (spanLastIndex >= logicalCount - 1
+            || spanLastIndex - loadedIndex > threshold) {
+            return -1;
+        }
+        const int gapIndex = spanLastIndex + 1;
+        return postIdAt(gapIndex).isEmpty() ? gapIndex : -1;
+    }
+    return -1;
+}
+
 bool PostTimeline::contains(const QString& postId) const
 {
     return indexByPostId.contains(postId);
