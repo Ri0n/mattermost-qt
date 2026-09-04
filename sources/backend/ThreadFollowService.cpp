@@ -62,6 +62,9 @@ void ThreadFollowService::queryThread(const QString& teamId,
         return;
     }
 
+    // This endpoint returns the current user's ThreadResponse, not merely a
+    // boolean following flag. Keep its read metadata so navigation can use the
+    // same last_viewed_at boundary as the Mattermost web client.
     NetworkRequest request(threadPath(teamId, threadId));
     httpConnector.get(request, HttpResponseCallback(
         [callback = std::move(callback)](QVariant status, const QJsonDocument& doc) mutable {
