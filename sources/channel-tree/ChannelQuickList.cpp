@@ -123,7 +123,8 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
     // fallback for unfollowed/already-read threads.
     connect(backend, &Backend::onNewPost, this,
             [this](BackendChannel& channel, const BackendPost& post) {
-        if (!post.isOwnPost() || post.root_id.isEmpty()) {
+        if (!backend || post.user_id != backend->getLoginUser().id
+            || post.root_id.isEmpty()) {
             return;
         }
 
