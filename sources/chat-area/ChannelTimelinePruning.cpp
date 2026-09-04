@@ -2,8 +2,10 @@
 
 #include <algorithm>
 
+#include <QMap>
 #include <QPointer>
 #include <QScrollBar>
+#include <QSignalBlocker>
 
 #include "ChatArea.h"
 #include "PostsListWidget.h"
@@ -76,6 +78,17 @@ void ChannelTimelineController::pruneLoadedPosts(quint64 pruneRequestGeneration)
         return;
     }
 
+    QMap<int, QString> postIdByLogicalIndex;
+    for (const PostTimeline::Span& span : timeline.spans()) {
+        if (span.kind != PostTimeline::LoadedSpan) {
+            continue;
+        }
+        for (int offset = 0; offset < span.postIds.size(); ++offset) {
+            postIdByLogicalIndex.insert(span.firstIndex + offset,
+                                        span.postIds.at(offset));
+        }
+    }
+
     const QVector<int> removed = timeline.pruneLoadedToNearest(
         centerIndex, MaxMaterializedPosts);
     if (removed.isEmpty()) {
@@ -87,11 +100,21 @@ void ChannelTimelineController::pruneLoadedPosts(quint64 pruneRequestGeneration)
     // needs instead of incorrectly treating an old page number as still present.
     loadedPages.clear();
 
-    // The PostsListWidget reconciliation path removes only the now-remote rows,
-    // expands the corresponding gaps, and keeps every surviving PostWidget at
-    // the same identity. The captured visible-post/pixel anchor is restored in
-    // the same synchronous transaction.
-    renderTimeline(QString(), anchor);
+    const int estimatedRowHeight = timeline.estimatedRowHeight();
+    QWidget* paintWidget = list;
+    paintWidget->setUpdatesEnabled(false);
+    const QSignalBlocker scrollSignals(list->verticalScrollBar());
+
+    for (int logicalIndex : removed) {
+        const QString postId = postIdByLogicalIndex.value(logicalIndex);
+        if (!postId.isEmpty()) {
+            list->evictTimelinePostToGap(postId, logicalIndex, estimatedRowHeight);
+        }
+    }
+
+    restoreViewportAnchor(anchor);
+    paintWidget->setUpdatesEnabled(true);
+    list->viewport()->update();
 }
 
 } // namespace Mattermost
