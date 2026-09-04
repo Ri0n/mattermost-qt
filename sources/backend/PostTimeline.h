@@ -32,6 +32,15 @@ public:
         bool isValid() const { return logicalIndex >= 0; }
     };
 
+    struct LogicalWindow {
+        int firstIndex = -1;
+        int count = 0;
+        int targetIndex = -1;
+
+        bool isValid() const { return firstIndex >= 0 && count > 0; }
+        int lastIndex() const { return firstIndex + count - 1; }
+    };
+
     explicit PostTimeline(int initialEstimatedRowHeight = 96);
 
     void reset(int totalCount = 0);
@@ -44,6 +53,22 @@ public:
     int loadedCount() const { return loadedByIndex.size(); }
 
     void placeWindow(int firstIndex, const QStringList& chronologicalPostIds);
+
+    // Map a physical scrollbar position to the logical message index. Random
+    // seek intentionally uses normalized thumb position rather than estimated
+    // pixel heights: gap-height refinement must not move the logical target
+    // while the user is holding the scrollbar thumb.
+    int logicalIndexForScrollPosition(int value, int minimum, int maximum) const;
+
+    // Return a bounded logical window centred on targetIndex whenever possible.
+    LogicalWindow centeredWindow(int targetIndex, int count) const;
+
+    // Fit a window into one existing sparse gap nearest to targetIndex without
+    // displacing already materialized posts. Useful for approximate timestamp
+    // seeks where the server cannot provide an authoritative logical offset.
+    LogicalWindow gapWindowNear(int targetIndex, int count, int minimumIndex = 0) const;
+
+    bool rangeLoaded(int firstIndex, int count) const;
 
     // A cursor response can prove that a loaded span touches the real oldest or
     // newest edge even when that span was originally placed approximately in a
