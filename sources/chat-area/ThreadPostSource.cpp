@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #include <QPointer>
 
@@ -61,7 +62,7 @@ ThreadPostSource::ThreadPostSource(Backend& backendInstance,
         }
         if (post.id == rootId) {
             const int count = currentLogicalCount();
-            if (count != postIds.size()) {
+            if (count != static_cast<int>(postIds.size())) {
                 postIds.resize(count);
                 if (!postIds.isEmpty()) {
                     postIds[0] = rootId;
@@ -106,6 +107,35 @@ int ThreadPostSource::indexOfPost(const QString& postId) const
     return postIndexes.value(postId, -1);
 }
 
+int ThreadPostSource::ensurePostIndex(const QString& postId)
+{
+    const int existing = indexOfPost(postId);
+    if (existing >= 0) {
+        return existing;
+    }
+
+    BackendPost* post = channel.postIdToPost.value(postId, nullptr);
+    if (!post || post->hidden || postIds.isEmpty()
+        || (post->id != rootId && post->root_id != rootId)) {
+        return -1;
+    }
+    if (post->id == rootId) {
+        postIds[0] = rootId;
+        rebuildIndex();
+        emit rangeAvailable(0, 0);
+        return 0;
+    }
+
+    const int index = nearestEmptyIndex(estimatedIndexForPost(*post));
+    if (index < 1) {
+        return -1;
+    }
+    postIds[index] = postId;
+    rebuildIndex();
+    emit rangeAvailable(index, index);
+    return index;
+}
+
 void ThreadPostSource::requestRange(int first,
                                     int last,
                                     RequestReason reason,
@@ -137,7 +167,7 @@ void ThreadPostSource::requestRange(int first,
     // visual target/geometry and never sees this server-specific approximation.
     QPointer<ThreadPostSource> guard(this);
     BackendPost* root = rootPost();
-    if (requestedLast >= postIds.size() - ServerBlockSize) {
+    if (requestedLast >= static_cast<int>(postIds.size()) - ServerBlockSize) {
         PostTimelineService::instance(backend).loadThreadTail(
             channel, rootId, ServerBlockSize, root->last_reply_at,
             [guard, first, last](const PostTimelineService::Page& result) {
@@ -197,6 +227,29 @@ int ThreadPostSource::currentLogicalCount() const
     return std::max(1, static_cast<int>(boundedReplies) + 1);
 }
 
+int ThreadPostSource::nearestEmptyIndex(int preferred) const
+{
+    const int count = static_cast<int>(postIds.size());
+    if (count <= 1) {
+        return -1;
+    }
+    preferred = std::max(1, std::min(preferred, count - 1));
+    if (postIds.at(preferred).isEmpty()) {
+        return preferred;
+    }
+    for (int distance = 1; distance < count; ++distance) {
+        const int before = preferred - distance;
+        if (before >= 1 && postIds.at(before).isEmpty()) {
+            return before;
+        }
+        const int after = preferred + distance;
+        if (after < count && postIds.at(after).isEmpty()) {
+            return after;
+        }
+    }
+    return -1;
+}
+
 void ThreadPostSource::seedCachedPosts()
 {
     BackendPost* root = rootPost();
@@ -252,22 +305,32 @@ void ThreadPostSource::rebuildIndex()
 
 void ThreadPostSource::placeInitial(const QStringList& ids)
 {
-    if (postIds.isEmpty()) {
+    if (postIds.isEmpty() || ids.isEmpty()) {
         return;
     }
-    int first = 0;
-    int sourceOffset = 0;
-    if (ids.first() != rootId) {
-        postIds[0] = rootId;
-        first = 1;
-    }
-    const int count = std::min(static_cast<int>(ids.size()) - sourceOffset,
+
+    int first = ids.first() == rootId ? 0 : 1;
+    const int count = std::min(static_cast<int>(ids.size()),
                                static_cast<int>(postIds.size()) - first);
+    const int last = first + count - 1;
+
     for (int offset = 0; offset < count; ++offset) {
-        postIds[first + offset] = ids.at(sourceOffset + offset);
+        const QString& id = ids.at(offset);
+        const int existing = postIndexes.value(id, -1);
+        if (existing >= 0 && (existing < first || existing > last)) {
+            postIds[existing].clear();
+            emit itemsChanged(existing, existing);
+        }
+    }
+    for (int offset = 0; offset < count; ++offset) {
+        postIds[first + offset] = ids.at(offset);
+    }
+    if (first > 0) {
+        postIds[0] = rootId;
     }
     rebuildIndex();
-    emit rangeAvailable(0, std::max(0, first + count - 1));
+    emit itemsChanged(first, last);
+    emit rangeAvailable(0, std::max(0, last));
 }
 
 void ThreadPostSource::placeTail(const QStringList& ids)
@@ -278,11 +341,20 @@ void ThreadPostSource::placeTail(const QStringList& ids)
     const int count = std::min(static_cast<int>(ids.size()),
                                static_cast<int>(postIds.size()) - 1);
     const int first = static_cast<int>(postIds.size()) - count;
+    const int last = first + count - 1;
+
     for (int offset = 0; offset < count; ++offset) {
-        postIds[first + offset] = ids.at(ids.size() - count + offset);
+        const QString& id = ids.at(ids.size() - count + offset);
+        const int existing = postIndexes.value(id, -1);
+        if (existing >= 0 && (existing < first || existing > last)) {
+            postIds[existing].clear();
+            emit itemsChanged(existing, existing);
+        }
+        postIds[first + offset] = id;
     }
     rebuildIndex();
-    emit rangeAvailable(first, first + count - 1);
+    emit itemsChanged(first, last);
+    emit rangeAvailable(first, last);
 }
 
 void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
@@ -294,11 +366,20 @@ void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
                                static_cast<int>(postIds.size()) - 1);
     int first = targetIndex - (count - 1) / 2;
     first = std::max(1, std::min(first, static_cast<int>(postIds.size()) - count));
+    const int last = first + count - 1;
+
     for (int offset = 0; offset < count; ++offset) {
-        postIds[first + offset] = ids.at(offset);
+        const QString& id = ids.at(offset);
+        const int existing = postIndexes.value(id, -1);
+        if (existing >= 0 && (existing < first || existing > last)) {
+            postIds[existing].clear();
+            emit itemsChanged(existing, existing);
+        }
+        postIds[first + offset] = id;
     }
     rebuildIndex();
-    emit rangeAvailable(first, first + count - 1);
+    emit itemsChanged(first, last);
+    emit rangeAvailable(first, last);
 }
 
 uint64_t ThreadPostSource::estimatedCreateAt(int logicalIndex) const
@@ -320,6 +401,34 @@ uint64_t ThreadPostSource::estimatedCreateAt(int logicalIndex) const
     const long double estimate = static_cast<long double>(oldest)
         + fraction * static_cast<long double>(newest - oldest);
     return static_cast<uint64_t>(std::llround(estimate));
+}
+
+int ThreadPostSource::estimatedIndexForPost(const BackendPost& post) const
+{
+    const int count = static_cast<int>(postIds.size());
+    if (post.id == rootId || count <= 1) {
+        return 0;
+    }
+    if (count == 2) {
+        return 1;
+    }
+
+    BackendPost* root = rootPost();
+    if (!root) {
+        return std::max(1, count / 2);
+    }
+    const uint64_t oldest = root->create_at;
+    const uint64_t newest = std::max(root->last_reply_at, oldest);
+    if (newest <= oldest || post.create_at <= oldest) {
+        return 1;
+    }
+    if (post.create_at >= newest) {
+        return count - 1;
+    }
+
+    const long double fraction = static_cast<long double>(post.create_at - oldest)
+        / static_cast<long double>(newest - oldest);
+    return 1 + static_cast<int>(std::llround(fraction * (count - 2)));
 }
 
 void ThreadPostSource::appendLiveReply(BackendPost& post)
