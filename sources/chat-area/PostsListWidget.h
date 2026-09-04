@@ -173,8 +173,8 @@ public:
 	// evicted in the gaps between those events.
 	bool hasRecentUserScroll(int quietPeriodMs) const;
 	// Convert an "at bottom" anchor into the concrete last visible post. This is
-	// used before hiding a chat so messages arriving while it is inactive cannot
-	// silently move the saved reading position to the newer bottom.
+	// used before hiding a chat so messages arriving while the page is inactive
+	// cannot silently move the saved reading position to the newer bottom.
 	void freezeCurrentViewportAnchor();
 
 	// During a full sparse reconciliation the desired controller sequence is
@@ -195,6 +195,15 @@ public:
 		}
 		return false;
 	}
+
+	/**
+	 * Replace one materialized sparse-timeline post row with gap geometry in
+	 * place. This is used by pruning so remote rows can be evicted without
+	 * describing/reconciling the entire timeline or touching retained widgets.
+	 */
+	bool evictTimelinePostToGap(const QString& postId,
+	                            int logicalIndex,
+	                            int estimatedRowHeight);
 
 	/**
 	 * Sparse controllers still describe the whole desired timeline on every
