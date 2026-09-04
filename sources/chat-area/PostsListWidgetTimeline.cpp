@@ -421,6 +421,10 @@ void PostsListWidget::finishTimelineRebuildAtBottom()
 {
     Q_ASSERT(QThread::currentThread() == thread());
     finishTimelineReconcile();
+    // Reconciliation changes row identities/size hints. Force QListView to
+    // commit the new scrollbar range before restoring Bottom; otherwise the
+    // later deferred layout pass can strand the viewport inside a gap.
+    applyTimelineGeometryNow();
 
     if (!timelineNavigationPostId.isEmpty()) {
         // A pending semantic jump owns the viewport even before its row exists.
@@ -466,6 +470,7 @@ bool PostsListWidget::finishTimelineRebuildAtPost(const QString& postId,
 {
     Q_ASSERT(QThread::currentThread() == thread());
     finishTimelineReconcile();
+    applyTimelineGeometryNow();
 
     if (!timelineNavigationPostId.isEmpty()) {
         restoringSavedScroll = false;
@@ -536,6 +541,7 @@ void PostsListWidget::finishTimelineRebuildAtPixel(qint64 pixelOffset)
 {
     Q_ASSERT(QThread::currentThread() == thread());
     finishTimelineReconcile();
+    applyTimelineGeometryNow();
 
     if (!timelineNavigationPostId.isEmpty()) {
         restoringSavedScroll = false;
