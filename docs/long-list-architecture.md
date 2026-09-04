@@ -23,7 +23,7 @@ If another class needs something visible, it asks `LongListWidget` in logical-it
 QAbstractScrollArea
         |
         v
- LongListWidget                    generic
+ LongListWidget                    generic geometry + viewport intent
         |
         v
    ChatLogWidget                   Mattermost post UI + semantic post identity
@@ -39,9 +39,10 @@ QAbstractScrollArea
           memory / HTTP / SQLite
 ```
 
-`LongListWidget` owns geometry. `ChatLogWidget` owns post-specific presentation, actions and semantic
-post-ID navigation. A post source owns logical-index-to-post identity and range availability.
-`PostTimelineService` owns range retrieval, in-flight request coalescing and cache tiers.
+`LongListWidget` owns geometry, scrolling, viewport anchoring and persistent logical-item viewport
+locks. `ChatLogWidget` owns post-specific presentation, actions and semantic post-ID identity. A post
+source owns logical-index-to-post identity and range availability. `PostTimelineService` owns range
+retrieval, in-flight request coalescing and cache tiers.
 
 Channel and thread logs share the same widget and therefore the same scrollbar, materialization,
 seek, resize and pruning semantics. Their only meaningful difference is how a logical range is
@@ -57,29 +58,36 @@ resolved/fetched.
 - availability bits for logical items;
 - a bounded set of materialized child `QWidget`s;
 - one vertical scrollbar;
-- the current logical viewport anchor;
+- the current ordinary logical viewport anchor;
+- an optional persistent logical-item viewport lock;
 - random-thumb-seek generation/debounce state;
 - pending block requests;
-- asynchronous item-geometry dirtiness.
+- asynchronous item-geometry dirtiness;
+- recognition of direct user scroll intent.
 
 It emits logical range requests and never knows what an item represents.
 
-The initial API is intentionally small:
+The core API is intentionally small:
 
 ```cpp
 setItemCount(count);
+insertItems(first, count);
 setDefaultItemHeight(height);
 setRangeAvailable(first, last);
 itemsChanged(first, last);
 finishRangeRequest(first, last);
 scrollToIndex(index, alignment);
 scrollToEnd();
+lockViewportToItem(index, alignment, quietPeriodMs);
+remapViewportLockedItem(index);
+clearViewportLock();
 
 signals:
     rangeRequested(first, last, reason, generation);
     visibleRangeChanged(first, last);
     materializedRangeChanged(first, last);
     userViewportChanged(atEnd);
+    viewportLockReleased();
 ```
 
 A subclass supplies a concrete widget for an available logical item through
@@ -110,7 +118,7 @@ Any operation that can change effective item heights uses one synchronous transa
 `LongListWidget`:
 
 ```text
-capture logical anchor
+capture ordinary anchor / inspect persistent viewport lock
         |
 block scrollbar signals
 freeze viewport updates
@@ -120,7 +128,7 @@ measure dirty sizeHints
 update height index
 recompute scrollbar range
         |
-restore logical anchor against NEW geometry
+restore seek target, persistent lock, or ordinary anchor against NEW geometry
 position materialized widgets
         |
 unfreeze viewport
@@ -138,38 +146,86 @@ widgets together before the viewport is allowed to move or repaint.
 A delayed image, Markdown reflow, reaction row or thread button therefore cannot independently move
 the chat viewport.
 
-## Anchor semantics
+## Ordinary anchor semantics
 
-For ordinary reading, the anchor is a logical item plus an offset inside that item. If the viewport
-is explicitly attached to the newest edge, the anchor is `Bottom` instead.
+For ordinary reading, the anchor is the logical item intersecting the viewport top plus the offset
+inside that item. If the viewport is explicitly attached to the newest edge, the anchor is `Bottom`
+instead.
 
 Consequences:
 
-- height changes above the viewport preserve the same logical reading position;
+- height changes entirely above the viewport preserve the visible content at exactly the same screen
+  coordinates;
 - height changes while sticky-bottom is active preserve the real end;
 - appending a logical item while sticky-bottom is active keeps the viewport on the new end;
+- prepending real logical items shifts logical indices without moving the already visible content;
 - a window resize cannot leave an unreachable last few pixels;
 - pruning/materialization cannot reinterpret a pixel offset as a different logical item.
 
-Only direct user input or an explicit `scrollToIndex()` / `scrollToEnd()` call changes logical
-viewport intent.
+A geometry change *inside* the visible region cannot keep every row on both sides at the same Y: if a
+visible item grows by 200 pixels, some content must make room for those pixels. The invariant is that
+`LongListWidget` preserves its chosen semantic anchor and introduces no additional artificial jump.
 
-This logical anchor is deliberately not a Mattermost post identity. When a source later discovers
-that a post belongs at a different logical index, the domain layer described below owns that identity
-change.
+Only direct user input or an explicit logical navigation operation changes viewport intent.
 
-## Wheel scrolling
+## Persistent viewport lock semantics
 
-Wheel scrolling is ordinary pixel movement. After the scrollbar value changes, `LongListWidget`
-computes the visible logical range plus a configurable buffer. Missing data is requested in whole
-blocks.
+Explicit semantic navigation needs a stronger invariant than the ordinary top-of-viewport anchor.
+For example, a permalink target may be placed near the middle of the viewport and then experience
+attachment loading, Markdown reflow, logical prepends or a provisional-to-authoritative index remap.
+
+`LongListWidget::lockViewportToItem()` applies the requested `Alignment` **once** and then records the
+target item's **top edge as a fraction of the viewport height**:
 
 ```text
-wheel
+itemTopFraction = itemTopViewportY / viewportHeight
+```
+
+After that, alignment is no longer re-applied. Geometry transactions restore the item top from the
+stored fraction:
+
+```text
+same viewport height:
+    500 px / 1000 px -> 500 px / 1000 px
+
+viewport resized to half height:
+    500 px / 1000 px -> 250 px / 500 px
+```
+
+This gives two desired properties at once:
+
+- ordinary reflow/loading with unchanged viewport height keeps the locked item at the same absolute
+  screen Y;
+- resizing the viewport keeps the locked item at the same relative vertical position.
+
+The lock is expressed only in logical-item coordinates at the public boundary. All conversion to
+content pixels and scrollbar values remains private to `LongListWidget`.
+
+`remapViewportLockedItem(newIndex)` changes only the logical index represented by the lock. The stored
+screen position is preserved; the item is **not** centered again. Logical insertions before the lock
+automatically shift its index as part of the same structural transaction.
+
+A direct wheel, scrollbar action or thumb drag immediately gives authority back to the user and
+releases the persistent lock. A positive quiet period may also release it; zero means that only user
+intent or explicit teardown releases it.
+
+## Wheel and scrollbar scrolling
+
+Wheel scrolling is ordinary pixel movement. Recognition of wheel, scrollbar action and thumb-drag
+user intent belongs entirely to `LongListWidget`; domain subclasses do not override wheel handling or
+inspect scrollbar signals.
+
+After the scrollbar value changes, `LongListWidget` computes the visible logical range plus a
+configurable buffer. Missing data is requested in whole blocks.
+
+```text
+user scroll gesture
+  -> release persistent viewport lock
   -> change scrollbar value
   -> compute logical visible + buffer range
   -> materialize available items
   -> request unavailable blocks
+  -> emit userViewportChanged(atEnd)
 ```
 
 Loading adjacent data never recenters the viewport.
@@ -239,15 +295,15 @@ not to the lifetime of its current QWidget.
 
 - `PostWidget` construction;
 - post identity;
-- semantic post-ID navigation;
+- semantic post-ID navigation identity;
 - selection/copy;
 - context menus;
 - edit/highlight operations;
 - unread/day decorations;
-- post-specific navigation requests.
+- post-specific range-loading requests.
 
-It must **not** reimplement scrollbar math, pixel anchoring, materialization, range buffering, seek
-or item resize handling.
+It must **not** reimplement scrollbar math, pixel anchoring, viewport-lock timing, user scroll gesture
+recognition, materialization, range buffering, seek or item resize handling.
 
 Day separators and the new-messages marker must not become fake logical list items. Prefer either:
 
@@ -263,30 +319,32 @@ logical index. This matters because a cached context may know the target post be
 its authoritative server page boundary.
 
 `AbstractPostSource::ensurePostIndex(postId)` may therefore adopt an already cached target into an
-estimated empty logical slot. This slot is provisional. When an authoritative page arrives, the
-source is allowed to remove that provisional occurrence and map the same post ID to its real index.
+estimated empty logical slot when the source has an exact logical coordinate space. This slot is
+provisional. When an authoritative page arrives, the source is allowed to remove that provisional
+occurrence and map the same post ID to its real index.
 
 The ownership split is:
 
 ```text
 post ID / provisional -> authoritative index    PostSource
-semantic navigation lock by post ID             ChatLogWidget
+semantic post ID identity                       ChatLogWidget
+logical item -> persistent viewport position    LongListWidget
 index -> pixels / scrollbar / geometry           LongListWidget
 ```
 
-While a semantic navigation lock is active, `ChatLogWidget` remembers the target post ID and the
-last logical index at which it was anchored. If source signals move that ID to another index,
-`ChatLogWidget` issues a new logical `scrollToIndex()` request. It never calculates or stores a pixel
-position. Ordinary `LongListWidget` geometry transactions continue to preserve the current logical
-anchor between such identity remaps.
+While semantic navigation is active, `ChatLogWidget` remembers only the target post ID and the last
+logical index representing it. If source signals move that ID to another index, `ChatLogWidget` calls
+`remapViewportLockedItem(newIndex)`. It does **not** call `scrollToIndex(Center)` again and never
+calculates or stores a pixel position.
 
-A real user wheel/scrollbar gesture cancels the semantic lock. A positive quiet period may also
-expire it; a zero quiet period means that only user intent (or view/source teardown) releases it.
+The existing viewport position therefore survives both source identity remaps and all subsequent
+geometry changes. `LongListWidget::viewportLockReleased()` tells `ChatLogWidget` when user intent,
+timeout or teardown has ended that semantic navigation state.
 
-Availability must follow the same identity rule. `itemsChanged(first,last)` can mean that a
-provisional slot became empty even if no QWidget was ever materialized there, so `ChatLogWidget`
-must synchronize `LongListWidget` availability bits with `PostSource::isAvailable()` for the whole
-changed range, not only for concrete widgets.
+Availability follows the same identity rule. `itemsChanged(first,last)` can mean that a provisional
+slot became empty even if no QWidget was ever materialized there, so `ChatLogWidget` synchronizes
+`LongListWidget` availability bits with `PostSource::isAvailable()` for the whole changed range, not
+only for concrete widgets.
 
 ## Post sources
 
@@ -301,9 +359,12 @@ public:
     virtual int indexOfPost(const QString& postId) const = 0;
     virtual int ensurePostIndex(const QString& postId);
     virtual void requestRange(int first, int last, RequestReason, quint64 generation) = 0;
+    virtual bool canRequestBeforeFirst() const;
+    virtual void requestBeforeFirst(RequestReason, quint64 generation);
 
 signals:
     itemCountChanged(count);
+    itemsInserted(first, count);
     rangeAvailable(first, last);
     itemsChanged(first, last);
     rangeRequestFinished(first, last);
@@ -322,24 +383,37 @@ Normal open policy also belongs outside geometry:
 ```text
 ordinary channel open -> ChatLogWidget::scrollToEnd()
 ordinary thread open  -> ChatLogWidget::scrollToEnd()
-permalink/Attention/Recent -> semantic post-ID lock + scrollToIndex(resolved target)
+permalink/Attention/Recent -> semantic post-ID identity + LongListWidget viewport lock
 ```
 
 ### Exact versus unknown logical count
 
 `LongListWidget::itemCount()` describes actual logical items, not spare capacity and not a UI gap.
 When `total_msg_count_root` is available, `ChannelPostSource` can provide exact oldest-to-newest
-indices immediately.
+indices immediately and may use provisional empty slots for cached semantic targets.
 
 Some Mattermost versions do not provide `total_msg_count_root`. A cached newest suffix is then **not**
 an exact complete channel and must not silently become one, otherwise index 0 falsely looks like the
 oldest edge and older history can never be requested.
 
-The current fixed-count API does not yet define prepend discovery for that compatibility case. The
-migration must add an explicit source/list structural contract (for example logical insertion at the
-oldest edge with anchor-preserving index shift) before treating the no-root-count fallback as
-complete. Do not solve this by reintroducing a gap widget or by pretending `total_msg_count` is an
-exact root-post count: it may include thread replies and would create phantom logical rows.
+Unknown-count mode therefore uses a contiguous sequence of **actually discovered root posts**. When
+the visible window reaches its oldest edge, `ChannelPostSource` requests a cursor page before the
+first known post. New real rows are prepended through:
+
+```text
+PostSource::itemsInserted(0, count)
+        -> LongListWidget::insertItems(0, count)
+        -> shift logical indices / Fenwick heights / materialized map
+        -> restore Bottom, persistent lock, or ordinary anchor
+```
+
+No spare logical capacity and no fake placeholder rows are introduced. Outstanding view-side pending
+range bits are discarded on a structural index shift; the service layer still coalesces equivalent
+HTTP work. If the server reports no older cursor/data, the source marks the oldest boundary reached
+and stops repeating that request.
+
+Do not substitute `total_msg_count` for the missing root count: it may include thread replies and
+would create phantom logical rows.
 
 ## Cache boundary
 
@@ -359,16 +433,19 @@ New production code outside `LongListWidget` must not call, for a chat log:
 
 ```text
 verticalScrollBar()->setValue(...)
+connect to scrollbar signals to infer chat viewport intent
+override wheel handling to implement chat scrolling
 scrollToBottom()
 scrollToItem(...)
 setUpdatesEnabled(false/true) for list transactions
 doItemsLayout() for chat-log geometry
 calculate gap height / pixel seek position
+store a pixel viewport anchor or navigation offset
 create a placeholder item representing missing posts
 ```
 
-`ChatLogWidget` may request `scrollToIndex()`/`scrollToEnd()` from its base using logical indices; it
-must not bypass those APIs to manipulate pixels itself.
+`ChatLogWidget` may request logical operations from its base (`scrollToIndex`, `scrollToEnd`,
+`lockViewportToItem`, `remapViewportLockedItem`) but must not bypass those APIs to manipulate pixels.
 
 A temporary migration adapter that needs one of the prohibited operations must live under
 `deprecated/` and must not be linked into the final target.
@@ -387,7 +464,8 @@ Old responsibility -> new owner:
 | channel/thread viewport checks | `LongListWidget` |
 | channel/thread pruning | `LongListWidget` materialization budget |
 | `PostsListWidget` sparse pixel-anchor restore | `LongListWidget` |
-| `PostsListWidget` semantic post navigation lock | `ChatLogWidget` post-ID lock |
+| `PostsListWidget` semantic post navigation identity | `ChatLogWidget` post-ID identity |
+| `PostsListWidget` semantic viewport position lock | `LongListWidget` persistent viewport lock |
 | `ResizableListWidget` chat-row size anchoring | `LongListWidget` child event filter |
 | channel/thread HTTP adapters | post sources / `PostTimelineService` |
 | PostWidget-specific actions | `ChatLogWidget` |
@@ -406,6 +484,11 @@ headers.
 - delayed sizeHint growth above the viewport preserves the logical anchor;
 - delayed sizeHint growth at bottom preserves the true newest edge;
 - logical item-count growth while sticky-bottom is active follows the new end;
+- prepend shifts logical indices without moving the existing viewport;
+- prepend preserves sticky-bottom on the same newest logical item;
+- a persistent viewport lock keeps the same absolute item Y through reflow;
+- a persistent viewport lock keeps the same relative Y through viewport resize;
+- remapping a persistent viewport lock to a new logical index preserves screen position;
 - arbitrary late reflow cannot leave the viewport with no materialized items;
 - window resize preserves the end and immediately updates reachable scrollbar range;
 - random seek uses normalized logical target and 100 ms debounce;
