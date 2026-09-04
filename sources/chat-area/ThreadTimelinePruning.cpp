@@ -21,7 +21,8 @@ constexpr int PruneIdleMs = 350;
 
 void ThreadTimelineController::schedulePrune()
 {
-    if (timeline.loadedCount() <= MaxMaterializedPosts) {
+    if (timeline.loadedCount() <= MaxMaterializedPosts
+        || seekState.isActive(seekState.currentTicket())) {
         return;
     }
 
@@ -60,6 +61,12 @@ void ThreadTimelineController::pruneLoadedPosts(quint64 pruneRequestGeneration)
     if (pruneRequestGeneration != pruneGeneration
         || timeline.loadedCount() <= MaxMaterializedPosts
         || requestInFlight || rebuilding || !area.ui || !area.ui->listWidget) {
+        return;
+    }
+
+    if (seekState.isActive(seekState.currentTicket())) {
+        // finishSeek() owns the next prune scheduling. Never evict the window
+        // while a seed/edge/measurement transaction still owns the viewport.
         return;
     }
 
