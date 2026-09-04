@@ -34,10 +34,11 @@ void ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
         return;
     }
 
-    // The Mattermost-specific view owns semantic post identity. LongListWidget
-    // still owns every pixel/scrollbar operation; if an authoritative page moves
-    // this post from an estimated slot, ChatLogWidget recenters the new logical
-    // index until a real user gesture (or the quiet-period timeout) releases it.
+    // ChatLogWidget owns only semantic post identity. LongListWidget owns the
+    // actual viewport lock: Center is applied once, then the target post's top
+    // keeps the same screen Y through reflow and the same Y/viewportHeight ratio
+    // through window resize. Authoritative source remaps only change the locked
+    // logical index; they never recenter the post.
     ui->listWidget->lockNavigationToPost(postId,
                                          LongListWidget::Alignment::Center,
                                          quietPeriodMs);
