@@ -19,10 +19,12 @@
 
 namespace Mattermost {
 
+class BackendPost;
 class ChatArea;
 class ThreadTimelineController;
 
 ThreadTimelineController* createThreadTimelineController(ChatArea& area);
+ThreadTimelineController* createConfiguredThreadTimelineController(ChatArea& area);
 
 class ThreadTimelineController : public QObject
 {
@@ -30,6 +32,8 @@ class ThreadTimelineController : public QObject
 public:
     explicit ThreadTimelineController(ChatArea& area);
     bool ensurePostVisible(const QString& postId);
+    void installIncrementalLiveUpdates();
+    void materializeLivePost(BackendPost& post);
 
 private:
     struct ViewportAnchor {
