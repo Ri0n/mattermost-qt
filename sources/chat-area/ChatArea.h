@@ -54,6 +54,7 @@ class ChannelTimelineController;
 class ThreadTimelineController;
 ChannelTimelineController* createChannelTimelineController(ChatArea& area);
 ThreadTimelineController* createThreadTimelineController(ChatArea& area);
+ThreadTimelineController* createConfiguredThreadTimelineController(ChatArea& area);
 
 class ChatArea: public QWidget {
 	Q_OBJECT
@@ -140,7 +141,7 @@ public:
 	Backend& 						backend;
 	BackendChannel& 				channel;
 	ChannelItem* 					treeItem;
-	QString 						lastReadPostId;
+	QString 							lastReadPostId;
 	QPointer<QDockWidget>			pinnedPostsDockWidget;
 	void						init();
 	void						deinit();
@@ -166,7 +167,7 @@ public:
 	// initialized when these factories run. Controllers defer UI access until
 	// the next event-loop turn, after the constructor body has completed.
 	ChannelTimelineController*		channelTimelineController = createChannelTimelineController(*this);
-	ThreadTimelineController*		threadTimelineController = createThreadTimelineController(*this);
+	ThreadTimelineController*		threadTimelineController = createConfiguredThreadTimelineController(*this);
 };
 
 } /* namespace Mattermost */
