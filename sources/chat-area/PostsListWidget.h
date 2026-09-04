@@ -177,6 +177,25 @@ public:
 	// silently move the saved reading position to the newer bottom.
 	void freezeCurrentViewportAnchor();
 
+	// During a full sparse reconciliation the desired controller sequence is
+	// described again, but an already materialized row must keep its PostWidget.
+	// Let PostWidget construction cheaply detect that case before it repeats
+	// Markdown/layout/profile/attachment work for a throwaway duplicate.
+	bool canReuseTimelinePost(const QString& postId) const
+	{
+		if (!timelineReconcileActive || postId.isEmpty()) {
+			return false;
+		}
+		for (int row = timelineReconcileCursor; row < count(); ++row) {
+			const QListWidgetItem* candidate = item(row);
+			if (isPostItem(candidate)
+				&& candidate->data(ItemRole::postId).toString() == postId) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/**
 	 * Sparse controllers still describe the whole desired timeline on every
 	 * model change, but this is now a reconciliation transaction: existing post
