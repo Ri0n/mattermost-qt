@@ -6,6 +6,7 @@
 
 #include <QHash>
 #include <QMap>
+#include <QSet>
 #include <QStringList>
 #include <QVector>
 
@@ -208,6 +209,96 @@ public:
     // page-based controllers invalidate any page bookkeeping that referred to
     // the evicted materialization.
     QVector<int> pruneLoadedToNearest(int centerIndex, int maxLoadedPosts);
+
+    // Same pruning policy, but with a hard logical protection range. This is the
+    // UI contract used by both channel and thread controllers: visible rows plus
+    // their safety margin are never evicted, even if the protected set alone
+    // temporarily exceeds the nominal materialization budget.
+    QVector<int> pruneLoadedToNearest(int centerIndex,
+                                      int maxLoadedPosts,
+                                      int protectedFirstIndex,
+                                      int protectedLastIndex)
+    {
+        QVector<int> removed;
+        const int limit = std::max(0, maxLoadedPosts);
+        if (loadedByIndex.size() <= limit) {
+            return removed;
+        }
+
+        const int center = logicalCount > 0
+            ? std::max(0, std::min(logicalCount - 1, centerIndex))
+            : 0;
+        const int protectedFirst = logicalCount > 0
+            ? std::max(0, std::min(logicalCount - 1, protectedFirstIndex))
+            : 0;
+        const int protectedLast = logicalCount > 0
+            ? std::max(protectedFirst,
+                       std::min(logicalCount - 1, protectedLastIndex))
+            : -1;
+
+        struct Candidate {
+            int index = 0;
+            qint64 distance = 0;
+        };
+
+        QSet<int> keep;
+        QVector<Candidate> candidates;
+        candidates.reserve(loadedByIndex.size());
+
+        for (auto it = loadedByIndex.cbegin(); it != loadedByIndex.cend(); ++it) {
+            if (protectedLast >= protectedFirst
+                && it.key() >= protectedFirst && it.key() <= protectedLast) {
+                keep.insert(it.key());
+                continue;
+            }
+
+            Candidate candidate;
+            candidate.index = it.key();
+            candidate.distance = std::llabs(static_cast<long long>(it.key())
+                                             - static_cast<long long>(center));
+            candidates.push_back(candidate);
+        }
+
+        std::sort(candidates.begin(), candidates.end(), [](const Candidate& lhs,
+                                                           const Candidate& rhs) {
+            if (lhs.distance != rhs.distance) {
+                return lhs.distance < rhs.distance;
+            }
+            return lhs.index < rhs.index;
+        });
+
+        const int targetKeepCount = std::max(limit, keep.size());
+        for (const Candidate& candidate : candidates) {
+            if (keep.size() >= targetKeepCount) {
+                break;
+            }
+            keep.insert(candidate.index);
+        }
+
+        for (auto it = loadedByIndex.begin(); it != loadedByIndex.end();) {
+            if (keep.contains(it.key())) {
+                ++it;
+                continue;
+            }
+
+            const int logicalIndex = it.key();
+            const QString postId = it.value();
+            removed.push_back(logicalIndex);
+            indexByPostId.remove(postId);
+
+            const auto measured = measuredHeights.find(postId);
+            if (measured != measuredHeights.end()) {
+                measuredHeightSum -= measured.value();
+                --measuredHeightCount;
+                measuredHeights.erase(measured);
+            }
+
+            it = loadedByIndex.erase(it);
+        }
+
+        std::sort(removed.begin(), removed.end());
+        return removed;
+    }
 
     bool contains(const QString& postId) const;
     int indexOf(const QString& postId) const;
