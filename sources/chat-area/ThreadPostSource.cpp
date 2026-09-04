@@ -256,12 +256,17 @@ void ThreadPostSource::requestRange(int first,
         emit rangeAvailable(0, 0);
     }
 
-    // The two real boundaries are authoritative. Middle seeks intentionally use
-    // only an approximate timestamp mapping; LongListWidget owns the actual
-    // visual target/geometry and never sees this server-specific approximation.
+    // The two real boundaries are authoritative. A request touching the oldest
+    // edge must prefer the initial page even when a short thread makes the same
+    // block overlap the tail window. Otherwise the last page can be fetched
+    // forever while real holes at indices 1..N remain unresolved.
+    // Middle seeks intentionally use only an approximate timestamp mapping;
+    // LongListWidget owns the actual visual target/geometry and never sees this
+    // server-specific approximation.
     QPointer<ThreadPostSource> guard(this);
     BackendPost* root = rootPost();
-    if (requestedLast >= static_cast<int>(postIds.size()) - ServerBlockSize) {
+    if (requestedFirst > 1
+        && requestedLast >= static_cast<int>(postIds.size()) - ServerBlockSize) {
         qCDebug(lcThreadTimelineTrace).nospace()
             << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
             << " branch=tail lastReplyAt=" << root->last_reply_at;
