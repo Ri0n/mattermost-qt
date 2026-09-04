@@ -635,7 +635,7 @@ void MainWindow::createMenu()
 		msgBox->open();
 	});
 
-	mainMenu->addAction("About QT", [this] {
+	helpMenu->addAction("About QT", [this] {
 		QMessageBox::aboutQt(this, "About QT");
 	});
 
