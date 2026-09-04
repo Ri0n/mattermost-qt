@@ -80,7 +80,7 @@ bool ChatLogWidget::ensurePostVisible(const QString& postId, Alignment alignment
     if (!postSource || postId.isEmpty()) {
         return false;
     }
-    const int index = postSource->indexOfPost(postId);
+    const int index = postSource->ensurePostIndex(postId);
     if (index < 0) {
         return false;
     }
