@@ -183,6 +183,52 @@ private slots:
                  "Appending a logical item must keep an already sticky viewport at the new end");
     }
 
+    void prependShiftsLogicalAnchorWithoutMovingContent()
+    {
+        TestLongListWidget list;
+        list.resize(480, 320);
+        list.setDefaultItemHeight(64);
+        list.setItemCount(200);
+        list.setRangeAvailable(0, 199);
+        list.show();
+        settleEvents();
+
+        list.scrollToIndex(100, Mattermost::LongListWidget::Alignment::Top);
+        settleEvents();
+        const int before = list.indexAtViewportPosition(2);
+        QCOMPARE(before, 100);
+
+        list.insertItems(0, 10);
+        list.setRangeAvailable(0, 9);
+        settleEvents(12);
+
+        const int after = list.indexAtViewportPosition(2);
+        QCOMPARE(after, before + 10);
+        QVERIFY2(list.materializedRange().contains(after),
+                 "Prepending real items must shift the materialized logical window with its anchor");
+    }
+
+    void prependKeepsStickyBottomOnSameNewestItem()
+    {
+        TestLongListWidget list;
+        list.resize(480, 320);
+        list.setDefaultItemHeight(60);
+        list.setItemCount(200);
+        list.setRangeAvailable(0, 199);
+        list.show();
+        settleEvents();
+        list.scrollToEnd();
+        settleEvents();
+
+        list.insertItems(0, 10);
+        list.setRangeAvailable(0, 9);
+        settleEvents(12);
+
+        QCOMPARE(list.verticalScrollBar()->value(), list.verticalScrollBar()->maximum());
+        QVERIFY2(list.visibleRange().contains(209),
+                 "Discovering older items must not detach a sticky viewport from the same newest item");
+    }
+
     void lateGeometryCannotLeaveViewportWithoutMaterializedItems()
     {
         TestLongListWidget list;
