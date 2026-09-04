@@ -6,6 +6,8 @@
 #include "AbstractPostSource.h"
 #include "widgets/LongListWidget.h"
 
+class QWheelEvent;
+
 namespace Mattermost {
 
 class Backend;
@@ -41,6 +43,7 @@ signals:
 protected:
     QWidget* createItemWidget(int index) override;
     void destroyItemWidget(int index, QWidget* widget) override;
+    void wheelEvent(QWheelEvent* event) override;
 
 private:
     static AbstractPostSource::RequestReason toSourceReason(RequestReason reason);
