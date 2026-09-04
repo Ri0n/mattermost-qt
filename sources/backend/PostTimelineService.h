@@ -32,6 +32,7 @@ public:
         QStringList postIds; // chronological: oldest -> newest
         QString prevPostId;
         QString nextPostId;
+        QString firstUnreadPostId;
         bool hasNext = false;
         bool success = false;
     };
@@ -45,6 +46,16 @@ public:
                          int page,
                          int perPage,
                          PageCallback callback);
+
+    /**
+     * Fetch the server-selected initial window around the user's unread
+     * boundary, matching Mattermost webapp's first-channel-open path.
+     */
+    void loadChannelUnread(BackendChannel& channel,
+                           int limitBefore,
+                           int limitAfter,
+                           uint64_t lastViewedAt,
+                           PageCallback callback);
 
     /** Extend an arbitrary channel window toward older posts from a known post. */
     void loadChannelBefore(BackendChannel& channel,
