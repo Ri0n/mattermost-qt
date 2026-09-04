@@ -16,6 +16,8 @@ namespace Mattermost {
 
 namespace {
 
+constexpr int MinimumPrefetchItems = 5;
+
 bool sameRange(const LongListWidget::Range& lhs, const LongListWidget::Range& rhs)
 {
     return lhs.first == rhs.first && lhs.last == rhs.last;
@@ -769,6 +771,20 @@ LongListWidget::Range LongListWidget::desiredRangeForViewport() const
         top + viewport()->height() + buffer - 1);
     result.first = heights.indexAtPixel(firstPixel);
     result.last = heights.indexAtPixel(std::max(firstPixel, lastPixel));
+
+    // The pixel/screen buffer is not enough by itself: a few unusually tall
+    // items can shrink it to only one or two logical rows. Keep a hard minimum
+    // logical look-ahead so an adjacent unavailable range is requested before
+    // the user can scroll into it. With five items, a request starts as soon as
+    // fewer than five concrete rows remain between the viewport and the gap.
+    const Range visible = visibleRange();
+    if (visible.isValid()) {
+        result.first = std::min(result.first,
+                                std::max(0, visible.first - MinimumPrefetchItems));
+        result.last = std::max(result.last,
+                               std::min(logicalCount - 1,
+                                        visible.last + MinimumPrefetchItems));
+    }
     return result;
 }
 

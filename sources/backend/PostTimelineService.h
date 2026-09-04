@@ -63,9 +63,10 @@ public:
                           PageCallback callback);
 
     /**
-     * Fetch replies after a thread cursor. Empty cursor starts at the root.
-     * Mattermost always includes the root in paginated thread responses; the
-     * returned Page contains it only for the initial request.
+     * Fetch a thread page in the forward/down direction. Mattermost treats
+     * (fromCreateAt, fromPost) as a compound cursor. When fromPost is supplied
+     * with fromCreateAt == 0, the service resolves the cached post's create_at
+     * before issuing the request; it never sends a bare fromPost cursor.
      */
     void loadThreadPage(BackendChannel& channel,
                         const QString& rootId,
@@ -102,7 +103,8 @@ public:
 
     /**
      * Approximate random seek into a large thread by creation timestamp. This
-     * is used when the user drags the scrollbar into an unloaded gap.
+     * is used only to seed a disconnected middle window; adjacent expansion
+     * should continue with exact before/after post cursors.
      */
     void loadThreadFromTime(BackendChannel& channel,
                             const QString& rootId,

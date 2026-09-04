@@ -115,6 +115,46 @@ private slots:
         QCOMPARE(list.materializedCount(), 0);
     }
 
+    void requestsGapBeforeFewerThanFiveItemsRemain()
+    {
+        TestLongListWidget list;
+        list.resize(480, 120);
+        list.setDefaultItemHeight(100);
+        list.setRequestBlockSize(10);
+        list.setPrefetchScreens(0);
+        list.setItemCount(100);
+        list.setRangeAvailable(50, 99);
+        QSignalSpy requests(&list, &Mattermost::LongListWidget::rangeRequested);
+        list.show();
+        settleEvents();
+        requests.clear();
+
+        // Exactly five known logical rows remain before the gap: 50..54.
+        // The hard margin may include index 50, but it must not yet reach 49.
+        list.scrollToIndex(55, Mattermost::LongListWidget::Alignment::Top);
+        settleEvents(12);
+        QCOMPARE(requests.count(), 0);
+
+        // Moving one item upward leaves only four known rows (50..53) before
+        // the gap. The desired range must now include index 49 and therefore
+        // request its whole 10-item block before the viewport reaches the gap.
+        list.scrollToIndex(54, Mattermost::LongListWidget::Alignment::Top);
+        settleEvents(12);
+        QVERIFY2(requests.count() > 0,
+                 "A gap must be requested before fewer than five known items remain");
+
+        bool requestedPreviousBlock = false;
+        for (int i = 0; i < requests.count(); ++i) {
+            const QList<QVariant> request = requests.at(i);
+            if (request.at(0).toInt() == 40 && request.at(1).toInt() == 49) {
+                requestedPreviousBlock = true;
+                break;
+            }
+        }
+        QVERIFY2(requestedPreviousBlock,
+                 "The five-item logical prefetch margin must request block 40..49");
+    }
+
     void materializationIsBoundedWithoutPlaceholderRows()
     {
         TestLongListWidget list;
