@@ -164,60 +164,6 @@ void PostTimelineService::loadChannelPage(BackendChannel& channel,
         });
 }
 
-void PostTimelineService::loadChannelUnread(BackendChannel& channel,
-                                            int limitBefore,
-                                            int limitAfter,
-                                            uint64_t lastViewedAt,
-                                            PageCallback callback)
-{
-    const int safeLimitBefore = std::max(0, limitBefore);
-    const int safeLimitAfter = std::max(1, limitAfter);
-    const QString path = QStringLiteral("users/me/channels/") + channel.id
-        + QStringLiteral("/posts/unread?limit_before=") + QString::number(safeLimitBefore)
-        + QStringLiteral("&limit_after=") + QString::number(safeLimitAfter)
-        // Match the webapp's collapsed-thread channel view, but deliberately do
-        // not set skipFetchThreads: the initial response may carry useful root
-        // thread metadata such as participants/last_reply_at.
-        + QStringLiteral("&collapsedThreads=true");
-
-    QPointer<BackendChannel> channelGuard(&channel);
-    coalescedGet(path,
-        [channelGuard, lastViewedAt, callback = std::move(callback)](
-            QVariant status, const QJsonDocument& doc) mutable {
-            Page result;
-            result.success = status.toInt() == QNetworkReply::NoError && doc.isObject();
-            if (!result.success || !channelGuard) {
-                if (callback) {
-                    callback(result);
-                }
-                return;
-            }
-
-            const QJsonObject root = doc.object();
-            const QJsonObject posts = root.value(QStringLiteral("posts")).toObject();
-            ingest(*channelGuard, posts);
-            result.postIds = chronologicalOrder(posts);
-            result.prevPostId = root.value(QStringLiteral("prev_post_id")).toString();
-            result.nextPostId = root.value(QStringLiteral("next_post_id")).toString();
-
-            // The unread endpoint chooses the server-side window from the
-            // membership's last_viewed_at. Preserve that old boundary locally:
-            // the channel may be acknowledged as viewed while this request is
-            // in flight, but the first unread row for this opening must not move.
-            for (const QString& postId : result.postIds) {
-                BackendPost* post = channelGuard->postIdToPost.value(postId, nullptr);
-                if (post && post->create_at > lastViewedAt) {
-                    result.firstUnreadPostId = postId;
-                    break;
-                }
-            }
-
-            if (callback) {
-                callback(result);
-            }
-        });
-}
-
 void PostTimelineService::loadChannelBefore(BackendChannel& channel,
                                             const QString& beforePostId,
                                             int perPage,
