@@ -1,19 +1,21 @@
-add_executable(posts-list-item-test
-    PostsListItemTest.cpp
+add_executable(long-list-widget-test
+    LongListWidgetTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/widgets/LongListWidget.cpp"
 )
 
-target_include_directories(posts-list-item-test
+target_include_directories(long-list-widget-test
     PRIVATE
         "${CMAKE_SOURCE_DIR}/sources"
 )
 
-target_link_libraries(posts-list-item-test
+target_link_libraries(long-list-widget-test
     PRIVATE
         Qt${QT_VERSION_MAJOR}::Test
         Qt${QT_VERSION_MAJOR}::Widgets
 )
 
-add_test(NAME posts-list-item-test COMMAND posts-list-item-test)
+add_test(NAME long-list-widget-test COMMAND long-list-widget-test)
+set_tests_properties(long-list-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 add_executable(message-formatter-test
     MessageFormatterTest.cpp
@@ -78,25 +80,6 @@ target_link_libraries(post-attachment-list-widget-test
 add_test(NAME post-attachment-list-widget-test COMMAND post-attachment-list-widget-test)
 set_tests_properties(post-attachment-list-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-add_executable(resizable-list-widget-test
-    ResizableListWidgetTest.cpp
-    "${CMAKE_SOURCE_DIR}/sources/chat-area/ResizableListWidget.cpp"
-)
-
-target_include_directories(resizable-list-widget-test
-    PRIVATE
-        "${CMAKE_SOURCE_DIR}/sources"
-)
-
-target_link_libraries(resizable-list-widget-test
-    PRIVATE
-        Qt${QT_VERSION_MAJOR}::Test
-        Qt${QT_VERSION_MAJOR}::Widgets
-)
-
-add_test(NAME resizable-list-widget-test COMMAND resizable-list-widget-test)
-set_tests_properties(resizable-list-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
 add_executable(channel-activity-tracker-test
     ChannelActivityTrackerTest.cpp
     "${CMAKE_SOURCE_DIR}/sources/backend/ChannelActivityTracker.cpp"
@@ -157,24 +140,6 @@ target_link_libraries(sidebar-item-delegate-test
 add_test(NAME sidebar-item-delegate-test COMMAND sidebar-item-delegate-test)
 set_tests_properties(sidebar-item-delegate-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-add_executable(post-timeline-test
-    PostTimelineTest.cpp
-    "${CMAKE_SOURCE_DIR}/sources/backend/PostTimeline.cpp"
-)
-
-target_include_directories(post-timeline-test
-    PRIVATE
-        "${CMAKE_SOURCE_DIR}/sources"
-)
-
-target_link_libraries(post-timeline-test
-    PRIVATE
-        Qt${QT_VERSION_MAJOR}::Test
-        Qt${QT_VERSION_MAJOR}::Core
-)
-
-add_test(NAME post-timeline-test COMMAND post-timeline-test)
-
 add_executable(post-window-selection-test
     PostWindowSelectionTest.cpp
 )
@@ -208,56 +173,3 @@ target_link_libraries(post-navigation-window-test
 )
 
 add_test(NAME post-navigation-window-test COMMAND post-navigation-window-test)
-
-add_executable(thread-timeline-policy-test
-    ThreadTimelinePolicyTest.cpp
-)
-
-target_include_directories(thread-timeline-policy-test
-    PRIVATE
-        "${CMAKE_SOURCE_DIR}/sources"
-)
-
-target_link_libraries(thread-timeline-policy-test
-    PRIVATE
-        Qt${QT_VERSION_MAJOR}::Test
-        Qt${QT_VERSION_MAJOR}::Core
-)
-
-add_test(NAME thread-timeline-policy-test COMMAND thread-timeline-policy-test)
-
-add_executable(thread-live-timeline-test
-    ThreadLiveTimelineTest.cpp
-    "${CMAKE_SOURCE_DIR}/sources/backend/PostTimeline.cpp"
-)
-
-target_include_directories(thread-live-timeline-test
-    PRIVATE
-        "${CMAKE_SOURCE_DIR}/sources"
-)
-
-target_link_libraries(thread-live-timeline-test
-    PRIVATE
-        Qt${QT_VERSION_MAJOR}::Test
-        Qt${QT_VERSION_MAJOR}::Core
-)
-
-add_test(NAME thread-live-timeline-test COMMAND thread-live-timeline-test)
-
-add_executable(timeline-seek-policy-test
-    TimelineSeekPolicyTest.cpp
-    "${CMAKE_SOURCE_DIR}/sources/backend/PostTimeline.cpp"
-)
-
-target_include_directories(timeline-seek-policy-test
-    PRIVATE
-        "${CMAKE_SOURCE_DIR}/sources"
-)
-
-target_link_libraries(timeline-seek-policy-test
-    PRIVATE
-        Qt${QT_VERSION_MAJOR}::Test
-        Qt${QT_VERSION_MAJOR}::Core
-)
-
-add_test(NAME timeline-seek-policy-test COMMAND timeline-seek-policy-test)
