@@ -75,6 +75,41 @@ private slots:
         QCOMPARE(spans.at(3).postIds, QStringList({QStringLiteral("live")}));
     }
 
+    void pruningNeverEvictsProtectedViewportMargin()
+    {
+        PostTimeline timeline;
+        timeline.reset(1000);
+
+        QStringList firstWindow;
+        for (int i = 0; i < 140; ++i) {
+            firstWindow.push_back(QStringLiteral("a%1").arg(i));
+        }
+        timeline.placeWindow(100, firstWindow); // 100..239
+
+        QStringList secondWindow;
+        for (int i = 0; i < 140; ++i) {
+            secondWindow.push_back(QStringLiteral("b%1").arg(i));
+        }
+        timeline.placeWindow(500, secondWindow); // 500..639
+        QCOMPARE(timeline.loadedCount(), 280);
+
+        // Pretend the real viewport intersects logical rows 520..529. The UI
+        // contract protects ten rows on each side, i.e. 510..539. Those rows
+        // must survive even if a stale/simplified centre would otherwise make a
+        // different subset look marginally closer.
+        const QVector<int> removed = timeline.pruneLoadedToNearest(
+            524, 200, 510, 539);
+
+        QCOMPARE(timeline.loadedCount(), 200);
+        for (int index = 510; index <= 539; ++index) {
+            QVERIFY2(!timeline.postIdAt(index).isEmpty(),
+                     qPrintable(QStringLiteral("protected logical row %1 was pruned").arg(index)));
+        }
+        for (int index : removed) {
+            QVERIFY(index < 510 || index > 539);
+        }
+    }
+
     void backendReplyCountDoesNotCreateSecondLiveSlot()
     {
         // BackendChannel updates root.reply_count before emitting onNewPost.
