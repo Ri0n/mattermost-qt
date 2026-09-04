@@ -243,3 +243,21 @@ target_link_libraries(thread-live-timeline-test
 )
 
 add_test(NAME thread-live-timeline-test COMMAND thread-live-timeline-test)
+
+add_executable(timeline-seek-policy-test
+    TimelineSeekPolicyTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/backend/PostTimeline.cpp"
+)
+
+target_include_directories(timeline-seek-policy-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(timeline-seek-policy-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME timeline-seek-policy-test COMMAND timeline-seek-policy-test)
