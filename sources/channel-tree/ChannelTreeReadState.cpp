@@ -4,6 +4,7 @@
 #include <QPointer>
 #include <QTimer>
 
+#include "ChannelItem.h"
 #include "backend/types/BackendChannel.h"
 #include "chat-area/ChatArea.h"
 
