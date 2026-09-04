@@ -1,6 +1,7 @@
 #include "ChannelTimelineController.h"
 
 #include <algorithm>
+#include <climits>
 
 #include <QMap>
 #include <QPointer>
@@ -15,7 +16,12 @@ namespace Mattermost {
 namespace {
 
 constexpr int MaxMaterializedPosts = 200;
-constexpr int PruneIdleMs = 350;
+constexpr int ProtectedViewportRows = 10;
+// Slow wheel scrolling is a sequence of small independent Qt events. A 350 ms
+// prune was able to run between them and turn rows the user was still reading
+// back into gaps. Keep a more conservative idle window; memory may temporarily
+// exceed 200 rows while the user is actively navigating.
+constexpr int PruneIdleMs = 1000;
 
 } // namespace
 
@@ -84,7 +90,31 @@ void ChannelTimelineController::pruneLoadedPosts(quint64 pruneRequestGeneration)
     }
 
     const ViewportAnchor anchor = stableViewportAnchor();
-    const int centerIndex = logicalIndexForAnchor(anchor);
+
+    // Pruning is a memory policy, never navigation. Use the actual concrete rows
+    // intersecting the viewport as the authoritative keep range; a single saved
+    // center anchor can be stale after slow wheel/layout activity.
+    int firstVisibleIndex = INT_MAX;
+    int lastVisibleIndex = -1;
+    const QStringList visibleIds = list->visibleTimelinePostIds();
+    for (const QString& id : visibleIds) {
+        const int index = timeline.indexOf(id);
+        if (index < 0) {
+            continue;
+        }
+        firstVisibleIndex = std::min(firstVisibleIndex, index);
+        lastVisibleIndex = std::max(lastVisibleIndex, index);
+    }
+
+    int centerIndex = logicalIndexForAnchor(anchor);
+    int protectedFirst = centerIndex;
+    int protectedLast = centerIndex;
+    if (lastVisibleIndex >= 0) {
+        centerIndex = firstVisibleIndex + (lastVisibleIndex - firstVisibleIndex) / 2;
+        protectedFirst = std::max(0, firstVisibleIndex - ProtectedViewportRows);
+        protectedLast = std::min(timeline.totalCount() - 1,
+                                 lastVisibleIndex + ProtectedViewportRows);
+    }
     if (centerIndex < 0) {
         return;
     }
@@ -101,7 +131,7 @@ void ChannelTimelineController::pruneLoadedPosts(quint64 pruneRequestGeneration)
     }
 
     const QVector<int> removed = timeline.pruneLoadedToNearest(
-        centerIndex, MaxMaterializedPosts);
+        centerIndex, MaxMaterializedPosts, protectedFirst, protectedLast);
     if (removed.isEmpty()) {
         return;
     }
@@ -123,6 +153,10 @@ void ChannelTimelineController::pruneLoadedPosts(quint64 pruneRequestGeneration)
         }
     }
 
+    // QListView applies sizeHint/range updates lazily. Commit the new gap
+    // geometry first, then restore against that new geometry while signals and
+    // painting are still frozen.
+    list->applyTimelineGeometryNow();
     restoreViewportAnchor(anchor);
     paintWidget->setUpdatesEnabled(true);
     list->viewport()->update();
