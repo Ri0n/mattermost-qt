@@ -13,7 +13,7 @@ namespace Mattermost {
 class Backend;
 class BackendChannel;
 
-/** Main-channel root posts mapped onto stable oldest->newest logical indices. */
+/** Main-channel root posts mapped onto oldest->newest logical indices. */
 class ChannelPostSource : public AbstractPostSource
 {
     Q_OBJECT
@@ -33,6 +33,9 @@ public:
                       RequestReason reason,
                       quint64 generation) override;
 
+    bool canRequestBeforeFirst() const override;
+    void requestBeforeFirst(RequestReason reason, quint64 generation) override;
+
 private:
     static constexpr int ServerPageSize = 10;
 
@@ -41,14 +44,20 @@ private:
     int estimateIndexForPost(const BackendPost& post) const;
     int nearestEmptyIndex(int preferred) const;
     void seedCachedPosts();
+    void seedUnknownNewestPost();
     void rebuildIndex();
     void placePage(int page, const QStringList& chronologicalIds);
+    void prependDiscovered(const QStringList& chronologicalIds);
     void appendLivePost(BackendPost& post);
 
     Backend& backend;
     BackendChannel& channel;
     QVector<QString> postIds;
     QHash<QString, int> postIndexes;
+
+    const bool exactRootCount;
+    bool moreBeforeFirst = false;
+    bool beforeRequestInFlight = false;
 };
 
 } // namespace Mattermost
