@@ -1,6 +1,7 @@
 #include "ThreadTimelineController.h"
 
 #include <algorithm>
+#include <climits>
 
 #include <QMap>
 #include <QPointer>
@@ -15,7 +16,8 @@ namespace Mattermost {
 namespace {
 
 constexpr int MaxMaterializedPosts = 200;
-constexpr int PruneIdleMs = 350;
+constexpr int ProtectedViewportRows = 10;
+constexpr int PruneIdleMs = 1000;
 
 } // namespace
 
@@ -78,7 +80,28 @@ void ThreadTimelineController::pruneLoadedPosts(quint64 pruneRequestGeneration)
     }
 
     const ViewportAnchor anchor = captureViewportAnchor();
-    const int centerIndex = logicalIndexForAnchor(anchor);
+
+    int firstVisibleIndex = INT_MAX;
+    int lastVisibleIndex = -1;
+    const QStringList visibleIds = list->visibleTimelinePostIds();
+    for (const QString& id : visibleIds) {
+        const int index = timeline.indexOf(id);
+        if (index < 0) {
+            continue;
+        }
+        firstVisibleIndex = std::min(firstVisibleIndex, index);
+        lastVisibleIndex = std::max(lastVisibleIndex, index);
+    }
+
+    int centerIndex = logicalIndexForAnchor(anchor);
+    int protectedFirst = centerIndex;
+    int protectedLast = centerIndex;
+    if (lastVisibleIndex >= 0) {
+        centerIndex = firstVisibleIndex + (lastVisibleIndex - firstVisibleIndex) / 2;
+        protectedFirst = std::max(0, firstVisibleIndex - ProtectedViewportRows);
+        protectedLast = std::min(timeline.totalCount() - 1,
+                                 lastVisibleIndex + ProtectedViewportRows);
+    }
     if (centerIndex < 0) {
         return;
     }
@@ -98,7 +121,7 @@ void ThreadTimelineController::pruneLoadedPosts(quint64 pruneRequestGeneration)
     }
 
     const QVector<int> removed = timeline.pruneLoadedToNearest(
-        centerIndex, MaxMaterializedPosts);
+        centerIndex, MaxMaterializedPosts, protectedFirst, protectedLast);
     if (removed.isEmpty()) {
         return;
     }
@@ -115,9 +138,10 @@ void ThreadTimelineController::pruneLoadedPosts(quint64 pruneRequestGeneration)
         }
     }
 
-    // Restore the same concrete post/gap/bottom anchor while painting and
-    // scrollbar signals are still frozen. This avoids both a visible jump and
-    // an automatic gap seek caused solely by pruning geometry changes.
+    // Commit sizeHint/scroll-range changes before restoring the concrete viewport
+    // anchor. Restoring against stale pre-layout geometry is what can make the
+    // visible rows vanish into a gap on the following Qt layout pass.
+    list->applyTimelineGeometryNow();
     restoreViewportAnchor(anchor);
     paintWidget->setUpdatesEnabled(true);
     list->viewport()->update();
