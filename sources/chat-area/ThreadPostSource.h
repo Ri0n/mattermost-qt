@@ -41,6 +41,7 @@ private:
     int nearestEmptyIndex(int preferred) const;
     void seedCachedPosts();
     void rebuildIndex();
+    void placeExactWindow(int first, const QStringList& ids);
     void placeInitial(const QStringList& ids);
     void placeTail(const QStringList& ids);
     void placeApproximate(int targetIndex, const QStringList& ids);
