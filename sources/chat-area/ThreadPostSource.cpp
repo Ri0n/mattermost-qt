@@ -583,9 +583,9 @@ void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
                                static_cast<int>(postIds.size()) - 1);
     const int maxFirst = std::max(1, static_cast<int>(postIds.size()) - count);
 
-    // loadThreadFromTime() uses direction=down: the server result starts at the
-    // estimated timestamp, it is not centered around it. The estimated logical
-    // target is therefore the correct fallback *start* of this page.
+    // The supplied target is the expected start of this forward page. For
+    // timestamp seeks that is approximate; for fromPost cursor expansion it is
+    // exact. Existing overlap can refine/verify that origin in either case.
     const int fallbackFirst = std::max(1, std::min(targetIndex, maxFirst));
     int first = fallbackFirst;
 
