@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <functional>
+
 #include <QObject>
 #include <QStringList>
 #include <QUrl>
@@ -15,11 +18,18 @@ class AppNavigationService final : public QObject
 {
     Q_OBJECT
 public:
+    using NavigationCallback = std::function<void(bool)>;
+
     static AppNavigationService& instance(Backend& backend);
 
     void openUrl(const QUrl& url);
     void openChannel(const QString& channelId);
     void openPost(const QString& postId);
+    void openThreadAtLastViewed(const QString& channelId,
+                                const QString& rootId,
+                                uint64_t lastViewedAt,
+                                const QString& fallbackPostId = QString(),
+                                NavigationCallback callback = {});
 
 signals:
     void channelRequested(const QString& channelId,
