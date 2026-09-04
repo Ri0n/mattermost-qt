@@ -350,10 +350,10 @@ void ChannelTimelineController::finishSeek(const TimelineSeekState::Ticket& tick
     seekViewportAnchor = ViewportAnchor();
     schedulePrune();
 
-    // A user wheel/drag may have moved again while the final expansion request
-    // was in flight. Re-evaluate the actual viewport once the old generation no
-    // longer owns networking; if it is already covered this is a cheap no-op.
-    scheduleViewportCheck();
+    // A completed bounded seek is terminal. New user input is the only thing
+    // that may start another viewport check. If the user moved while an older
+    // request was in flight, that movement already created a newer ready ticket;
+    // the stale callback resumes it directly.
 }
 
 } // namespace Mattermost
