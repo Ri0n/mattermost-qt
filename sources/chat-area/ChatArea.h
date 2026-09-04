@@ -74,8 +74,9 @@ public:
 	                             bool reachedNewest);
 
 	/**
-	 * Compatibility surface for semantic navigation callers. LongListWidget owns
-	 * the actual durable anchor and suppresses layout-induced scroll changes.
+	 * Keep semantic navigation attached to a post ID while the source may replace
+	 * an estimated logical slot with its authoritative index. Pixel anchoring
+	 * remains exclusively inside LongListWidget.
 	 */
 	void lockNavigationToPost(const QString& postId, int quietPeriodMs = 2000);
 
