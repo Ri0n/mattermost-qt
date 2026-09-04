@@ -21,7 +21,12 @@ constexpr int PruneIdleMs = 350;
 
 void ChannelTimelineController::schedulePrune()
 {
-    if (!active || timeline.loadedCount() <= MaxMaterializedPosts) {
+    // A seek generation owns its materialized window until it has finished
+    // seed/edge loading and geometry refinement. Evicting rows during that
+    // transaction is exactly the race that can make a just-loaded window appear
+    // briefly and then disappear. finishSeek() schedules pruning afterwards.
+    if (!active || timeline.loadedCount() <= MaxMaterializedPosts
+        || seekState.isActive(seekState.currentTicket())) {
         return;
     }
 
@@ -62,6 +67,12 @@ void ChannelTimelineController::pruneLoadedPosts(quint64 pruneRequestGeneration)
     if (!active || pruneRequestGeneration != pruneGeneration
         || timeline.loadedCount() <= MaxMaterializedPosts
         || requestInFlight || rebuilding || !area.ui || !area.ui->listWidget) {
+        return;
+    }
+
+    if (seekState.isActive(seekState.currentTicket())) {
+        // Do not keep a second pruning timer racing the seek. finishSeek() will
+        // schedule a fresh idle prune for the final viewport/window.
         return;
     }
 
