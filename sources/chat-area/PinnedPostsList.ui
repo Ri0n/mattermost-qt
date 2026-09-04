@@ -30,7 +30,7 @@
     <number>2</number>
    </property>
    <item>
-    <widget class="ResizableListWidget" name="listWidget">
+    <widget class="QListWidget" name="listWidget">
      <property name="font">
       <font>
        <pointsize>8</pointsize>
@@ -52,13 +52,6 @@
    </item>
   </layout>
  </widget>
- <customwidgets>
-  <customwidget>
-   <class>ResizableListWidget</class>
-   <extends>QListWidget</extends>
-   <header>chat-area/ResizableListWidget.h</header>
-  </customwidget>
- </customwidgets>
  <resources/>
  <connections/>
 </ui>
