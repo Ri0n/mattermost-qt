@@ -267,7 +267,7 @@ public:
             return lhs.index < rhs.index;
         });
 
-        const int targetKeepCount = std::max(limit, keep.size());
+        const int targetKeepCount = std::max(limit, static_cast<int>(keep.size()));
         for (const Candidate& candidate : candidates) {
             if (keep.size() >= targetKeepCount) {
                 break;
