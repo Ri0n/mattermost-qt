@@ -181,6 +181,22 @@ void AppNavigationService::openPost(const QString& postId)
 void AppNavigationService::openPostInChannel(BackendChannel& channel,
                                              const QString& postId)
 {
+    // A cached reply already carries its exact thread identity. Thread timeline
+    // navigation can materialize that cached reply directly, so fetching a
+    // channel before/after window (plus the target itself) would be three
+    // redundant REST requests and the resulting root-channel context is unused.
+    if (BackendPost* cached = channel.postIdToPost.value(postId, nullptr)) {
+        if (!cached->root_id.isEmpty()) {
+            emit channelRequested(channel.id,
+                                  postId,
+                                  cached->root_id,
+                                  QStringList(),
+                                  false,
+                                  false);
+            return;
+        }
+    }
+
     QPointer<AppNavigationService> guard(this);
     const QString channelId = channel.id;
     PostNavigationService::instance(backend).loadAround(
