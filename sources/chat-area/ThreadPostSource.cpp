@@ -466,6 +466,7 @@ void ThreadPostSource::placeInitial(const QStringList& ids)
         << " target=[" << first << ',' << last << ']'
         << " before=" << slotSummary(postIds);
 
+    bool targetChanged = false;
     for (int offset = 0; offset < count; ++offset) {
         const QString& id = ids.at(offset);
         const int existing = postIndexes.value(id, -1);
@@ -473,18 +474,26 @@ void ThreadPostSource::placeInitial(const QStringList& ids)
             postIds[existing].clear();
             emit itemsChanged(existing, existing);
         }
+        if (postIds.at(first + offset) != id) {
+            targetChanged = true;
+        }
     }
     for (int offset = 0; offset < count; ++offset) {
         postIds[first + offset] = ids.at(offset);
     }
     if (first > 0) {
+        if (postIds[0] != rootId) {
+            targetChanged = true;
+        }
         postIds[0] = rootId;
     }
     rebuildIndex();
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PLACE_INITIAL_DONE source=" << static_cast<const void*>(this)
         << ' ' << slotSummary(postIds);
-    emit itemsChanged(first, last);
+    if (targetChanged) {
+        emit itemsChanged(first, last);
+    }
     emit rangeAvailable(0, std::max(0, last));
 }
 
@@ -503,6 +512,7 @@ void ThreadPostSource::placeTail(const QStringList& ids)
         << " target=[" << first << ',' << last << ']'
         << " before=" << slotSummary(postIds);
 
+    bool targetChanged = false;
     for (int offset = 0; offset < count; ++offset) {
         const QString& id = ids.at(ids.size() - count + offset);
         const int existing = postIndexes.value(id, -1);
@@ -510,13 +520,18 @@ void ThreadPostSource::placeTail(const QStringList& ids)
             postIds[existing].clear();
             emit itemsChanged(existing, existing);
         }
+        if (postIds.at(first + offset) != id) {
+            targetChanged = true;
+        }
         postIds[first + offset] = id;
     }
     rebuildIndex();
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PLACE_TAIL_DONE source=" << static_cast<const void*>(this)
         << ' ' << slotSummary(postIds);
-    emit itemsChanged(first, last);
+    if (targetChanged) {
+        emit itemsChanged(first, last);
+    }
     emit rangeAvailable(first, last);
 }
 
@@ -537,6 +552,7 @@ void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
         << " targetRange=[" << first << ',' << last << ']'
         << " before=" << slotSummary(postIds);
 
+    bool targetChanged = false;
     for (int offset = 0; offset < count; ++offset) {
         const QString& id = ids.at(offset);
         const int existing = postIndexes.value(id, -1);
@@ -544,13 +560,18 @@ void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
             postIds[existing].clear();
             emit itemsChanged(existing, existing);
         }
+        if (postIds.at(first + offset) != id) {
+            targetChanged = true;
+        }
         postIds[first + offset] = id;
     }
     rebuildIndex();
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PLACE_APPROX_DONE source=" << static_cast<const void*>(this)
         << ' ' << slotSummary(postIds);
-    emit itemsChanged(first, last);
+    if (targetChanged) {
+        emit itemsChanged(first, last);
+    }
     emit rangeAvailable(first, last);
 }
 
