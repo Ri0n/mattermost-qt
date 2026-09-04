@@ -37,6 +37,17 @@ public:
     virtual BackendPost* postAt(int index) const = 0;
     virtual int indexOfPost(const QString& postId) const = 0;
 
+    /**
+     * Return a logical index for an already cached semantic target. Sources may
+     * temporarily place a target into an estimated empty slot when the server
+     * has not yet supplied an authoritative page boundary. Later page loads are
+     * allowed to replace that estimate by identity.
+     */
+    virtual int ensurePostIndex(const QString& postId)
+    {
+        return indexOfPost(postId);
+    }
+
     virtual void requestRange(int first,
                               int last,
                               RequestReason reason,
