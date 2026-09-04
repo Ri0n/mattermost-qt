@@ -635,7 +635,7 @@ void MainWindow::createMenu()
 		msgBox->open();
 	});
 
-	helpMenu->addAction("About QT", [this] {
+	mainMenu->addAction("About QT", [this] {
 		QMessageBox::aboutQt(this, "About QT");
 	});
 
@@ -705,7 +705,7 @@ void MainWindow::initializationComplete()
 
 void MainWindow::messageNotify(BackendChannel& channel, const BackendPost& post)
 {
-	if (post.author && post.author->id == backend.getLoginUser().id) {
+	if (post.isOwnPost()) {
 		return;
 	}
 
@@ -716,7 +716,19 @@ void MainWindow::messageNotify(BackendChannel& channel, const BackendPost& post)
 	if (sidebar.isChannelMuted(channel)) {
 		return;
 	}
-	if (!post.root_id.isEmpty() && !post.currentUserMentioned) {
+
+	const bool directConversation = channel.type == BackendChannel::directChannel
+		|| channel.type == BackendChannel::groupChannel;
+	if (post.root_id.isEmpty()) {
+		// Ordinary activity in public/private channels belongs in unread state,
+		// not in desktop attention. Only mentions and direct/group messages are
+		// actionable enough to flash the taskbar or show a desktop notification.
+		if (!directConversation && !post.currentUserMentioned) {
+			return;
+		}
+	} else if (!post.currentUserMentioned) {
+		// Until full followed-thread desktop notification preferences are modeled,
+		// keep thread notifications mention-driven just as before.
 		return;
 	}
 
