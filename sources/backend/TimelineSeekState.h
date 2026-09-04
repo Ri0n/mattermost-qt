@@ -120,9 +120,13 @@ public:
     }
 
     /**
-     * Pick the less-covered side of the current contiguous loaded window. This
-     * keeps the target approximately centred while growing the window and never
-     * retries an edge already proven to be a real server boundary.
+     * Grow a contiguous window until TARGET has useful coverage on both sides,
+     * not merely until the span contains enough rows in total. An absolute
+     * server page can place TARGET at one edge of the first 10-row seed; stopping
+     * at 30 total rows in that state leaves the viewport visibly biased and can
+     * immediately expose another gap.
+     *
+     * Real oldest/newest boundaries relax the corresponding side requirement.
      */
     Edge nextEdge(const Ticket& ticket,
                   int loadedFirst,
@@ -130,7 +134,7 @@ public:
                   int requiredRows) const
     {
         if (!isActive(ticket) || loadedFirst < 0 || loadedLast < loadedFirst
-            || requiredRows <= loadedLast - loadedFirst + 1) {
+            || requiredRows <= 0) {
             return NoEdge;
         }
 
@@ -139,16 +143,27 @@ public:
         const int before = target - loadedFirst;
         const int after = loadedLast - target;
 
-        if (!olderBoundary && !newerBoundary) {
-            return before <= after ? OlderEdge : NewerEdge;
+        const int desiredBefore = (requiredRows - 1) / 2;
+        const int desiredAfter = requiredRows - 1 - desiredBefore;
+        const bool needOlder = !olderBoundary && before < desiredBefore;
+        const bool needNewer = !newerBoundary && after < desiredAfter;
+
+        if (!needOlder && !needNewer) {
+            return NoEdge;
         }
-        if (!olderBoundary) {
+        if (needOlder && !needNewer) {
             return OlderEdge;
         }
-        if (!newerBoundary) {
+        if (!needOlder && needNewer) {
             return NewerEdge;
         }
-        return NoEdge;
+
+        // Both sides are short. Prefer the side with the larger absolute deficit;
+        // ties go older first, producing the intended seed + older + newer staged
+        // order without encoding channel/thread endpoint details here.
+        const int olderDeficit = desiredBefore - before;
+        const int newerDeficit = desiredAfter - after;
+        return olderDeficit >= newerDeficit ? OlderEdge : NewerEdge;
     }
 
     bool noteExpansionRequest(const Ticket& ticket, int maximumRequests)
