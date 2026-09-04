@@ -30,6 +30,8 @@ class ThreadFollowService : public QObject
 {
     Q_OBJECT
 public:
+    // Per-user ThreadResponse state. lastViewedAt is the canonical Mattermost
+    // read boundary used by both Attention and Recent thread navigation.
     struct ThreadState {
         bool available = false;
         uint64_t lastViewedAt = 0;
