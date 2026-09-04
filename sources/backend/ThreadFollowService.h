@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
 
 #include <QObject>
@@ -29,8 +30,20 @@ class ThreadFollowService : public QObject
 {
     Q_OBJECT
 public:
+    struct ThreadState {
+        bool available = false;
+        uint64_t lastViewedAt = 0;
+        uint64_t lastReplyAt = 0;
+        int unreadReplies = 0;
+        int unreadMentions = 0;
+    };
+
+    using ThreadStateCallback = std::function<void(const ThreadState&)>;
+
     static ThreadFollowService& instance(Backend& backend);
 
+    void queryThread(const QString& teamId, const QString& threadId,
+                     ThreadStateCallback callback);
     void queryFollowing(const QString& teamId, const QString& threadId,
                         std::function<void(bool)> callback);
     void setFollowing(const QString& teamId, const QString& threadId, bool following,
