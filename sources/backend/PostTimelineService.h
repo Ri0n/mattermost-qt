@@ -12,10 +12,14 @@
 #include <cstdint>
 #include <functional>
 
+#include <QHash>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QList>
 #include <QObject>
 #include <QPointer>
 #include <QStringList>
+#include <QVariant>
 
 #include "HTTPConnector.h"
 
@@ -118,7 +122,16 @@ public:
                             PageCallback callback);
 
 private:
+    using JsonCallback = std::function<void(QVariant, const QJsonDocument&)>;
+
     explicit PostTimelineService(Backend& backend);
+
+    /**
+     * One HTTP request per exact timeline URL. Concurrent callers fan out from
+     * the same response instead of issuing duplicate range requests. Each
+     * caller still performs its own idempotent BackendChannel ingestion/parser.
+     */
+    void coalescedGet(const QString& path, JsonCallback callback);
 
     void loadChannelCursor(BackendChannel& channel,
                            const QString& direction,
@@ -141,6 +154,7 @@ private:
 
     Backend& backend;
     HTTPConnector httpConnector;
+    QHash<QString, QList<JsonCallback>> inFlightGets;
 };
 
 } // namespace Mattermost
