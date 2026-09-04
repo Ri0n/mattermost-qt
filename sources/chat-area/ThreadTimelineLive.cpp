@@ -105,17 +105,11 @@ ThreadTimelineController* createConfiguredThreadTimelineController(ChatArea& are
         return nullptr;
     }
 
-    // start() was queued by the controller constructor before this callback is
-    // queued. Replace its legacy live handler in the same event-loop turn,
-    // rather than leaving a second-turn window in which a reply can still take
-    // the full-render path. One more event-loop turn gives explicit
-    // permalink/Attention/Recent navigation a chance to install its semantic
-    // target before the ordinary "open at newest" policy runs.
+    // start() owns initial positioning. This queued hook only replaces the
+    // legacy live-post handler; keeping a second independent initial-open timer
+    // would reintroduce competing owners of the thread viewport.
     QTimer::singleShot(0, controller, [controller] {
         controller->installIncrementalLiveUpdates();
-        QTimer::singleShot(0, controller, [controller] {
-            controller->openNewestOnInitialOpen();
-        });
     });
     return controller;
 }
@@ -152,43 +146,32 @@ void ThreadTimelineController::openNewestOnInitialOpen()
     BackendPost* rootPost = area.channel.postIdToPost.value(rootId, nullptr);
     expectedPostCount = std::max(expectedPostCount,
                                  expectedThreadPostCount(rootPost, expectedPostCount));
+    timeline.setTotalCount(expectedPostCount);
+    if (rootPost && !timeline.contains(rootId)) {
+        timeline.placeWindow(0, QStringList {rootId});
+    }
 
-    // A compact thread is already completely covered by the normal first page.
-    // Wait for that one request rather than issuing a redundant tail request.
-    if (threadInitialPageContainsNewest(expectedPostCount, InitialThreadWindowSize)) {
-        if (!initialPrefetchDone) {
-            if (requestInFlight) {
-                QPointer<ThreadTimelineController> guard(this);
-                QTimer::singleShot(25, this, [guard] {
-                    if (guard) {
-                        guard->openNewestOnInitialOpen();
-                    }
-                });
-                return;
-            }
-            // The initial request failed or there is only the root. Whatever is
-            // currently materialized is the best available newest edge.
-        }
-
-        if (!list->hasTimelineNavigationLock()) {
-            list->scrollToBottom();
-        }
+    // Root-only thread: there is no sparse tail to materialize. Render the root
+    // and establish bottom only after that concrete row exists.
+    if (expectedPostCount <= 1) {
+        ViewportAnchor bottomAnchor;
+        bottomAnchor.kind = ViewportAnchor::Bottom;
+        renderTimeline(QString(), false, bottomAnchor);
+        scheduleMeasurementPass();
+        persistState();
         initialNewestOpenDone = true;
         return;
     }
 
+    // The previous implementation treated a <=30-reply thread as if start()
+    // had already fetched its first page. start() is now intentionally tail-first,
+    // so that assumption left only root+gap materialized and scrollToBottom()
+    // landed on an empty gap. Every non-empty ordinary thread must fetch the
+    // newest window first, compact or large, before bottom becomes visible.
     if (!rootPost || rootPost->last_reply_at == 0) {
-        // Metadata may arrive slightly after the root itself. Do not manufacture
-        // an approximate timestamp; retry once the normal first page has had a
-        // chance to refresh the root metadata.
-        if (requestInFlight) {
-            QPointer<ThreadTimelineController> guard(this);
-            QTimer::singleShot(25, this, [guard] {
-                if (guard) {
-                    guard->openNewestOnInitialOpen();
-                }
-            });
-        }
+        // Channel root posts normally carry reply_count/last_reply_at. If a
+        // server omitted the timestamp, do not fake a bottom position over an
+        // unmaterialized gap. A later root metadata update/navigation can retry.
         return;
     }
 
@@ -217,11 +200,6 @@ void ThreadTimelineController::openNewestOnInitialOpen()
 
             QStringList tailIds = page.postIds;
             tailIds.removeAll(guard->rootId);
-            if (tailIds.isEmpty()) {
-                currentList->scrollToBottom();
-                guard->initialNewestOpenDone = true;
-                return;
-            }
 
             BackendPost* currentRoot = guard->area.channel.postIdToPost.value(
                 guard->rootId, nullptr);
@@ -229,18 +207,27 @@ void ThreadTimelineController::openNewestOnInitialOpen()
                 guard->expectedPostCount,
                 expectedThreadPostCount(currentRoot, guard->expectedPostCount));
             guard->timeline.setTotalCount(guard->expectedPostCount);
+            if (currentRoot && !guard->timeline.contains(guard->rootId)) {
+                guard->timeline.placeWindow(0, QStringList {guard->rootId});
+            }
 
-            const int firstIndex = threadTailWindowFirstIndex(
-                guard->expectedPostCount, static_cast<int>(tailIds.size()));
-            guard->timeline.placeWindow(firstIndex, tailIds);
+            if (!tailIds.isEmpty()) {
+                const int firstIndex = threadTailWindowFirstIndex(
+                    guard->expectedPostCount, static_cast<int>(tailIds.size()));
+                guard->timeline.placeWindow(firstIndex, tailIds);
+                // The response is explicitly the newest server window. Align it
+                // to the newest logical boundary even if reply_count metadata was
+                // briefly stale; bottom must end on a PostWidget, never a gap.
+                guard->timeline.alignLoadedSpanToBoundary(tailIds.last(), false);
+            }
 
             ViewportAnchor bottomAnchor;
             bottomAnchor.kind = ViewportAnchor::Bottom;
             guard->renderTimeline(QString(), false, bottomAnchor);
             guard->scheduleMeasurementPass();
-            guard->schedulePrune();
             guard->persistState();
             guard->initialNewestOpenDone = true;
+            guard->schedulePrune();
         });
 }
 
