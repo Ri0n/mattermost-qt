@@ -53,8 +53,23 @@ public:
                               RequestReason reason,
                               quint64 generation) = 0;
 
+    /**
+     * Compatibility path for a sequence whose oldest boundary is not yet known.
+     * Exact-count sources leave this disabled and use requestRange() normally.
+     */
+    virtual bool canRequestBeforeFirst() const { return false; }
+    virtual void requestBeforeFirst(RequestReason reason, quint64 generation)
+    {
+        Q_UNUSED(reason)
+        Q_UNUSED(generation)
+    }
+
 signals:
     void itemCountChanged(int count);
+
+    /** Existing logical items shifted right because real items were prepended. */
+    void itemsInserted(int first, int count);
+
     void rangeAvailable(int first, int last);
     void itemsChanged(int first, int last);
 
