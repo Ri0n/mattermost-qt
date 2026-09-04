@@ -28,6 +28,7 @@
 #include <QMessageBox>
 #include <QPointer>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QStyle>
 #include <QSystemTrayIcon>
@@ -147,7 +148,6 @@ MainWindow::MainWindow(QWidget* parent, QSystemTrayIcon& trayIcon, Backend& _bac
 	sidebar.clear();
 	userProfiles.clear();
 	sidebar.retrieveChannelMemberships();
-
 	connect(&currentUser, &BackendUser::onStatusChanged, [this, &currentUser] {
 		ui->statusLabel->setText(currentUser.status);
 	});
@@ -444,8 +444,13 @@ void MainWindow::refreshChannelUnreadFilter()
 
 			// Mattermost's category channel_ids order is not guaranteed to track
 			// live DM activity. Keep the server category membership but display
-			// direct conversations strictly newest-first.
+			// direct conversations strictly newest-first. Reordering a current
+			// QTreeWidgetItem can transiently make Qt select a neighbour, so keep
+			// the model mutation selection-atomic and never expose that temporary
+			// current item as navigation.
 			if (directMessages && categoryItem->childCount() > 1) {
+				QTreeWidgetItem* selectedItem = ui->channelList->currentItem();
+				QSignalBlocker selectionSignals(ui->channelList);
 				QVector<QTreeWidgetItem*> children;
 				children.reserve(categoryItem->childCount());
 				for (int i = 0; i < categoryItem->childCount(); ++i) {
@@ -471,6 +476,9 @@ void MainWindow::refreshChannelUnreadFilter()
 						categoryItem->insertChild(desiredIndex,
 						                          categoryItem->takeChild(currentIndex));
 					}
+				}
+				if (selectedItem && selectedItem->treeWidget() == ui->channelList) {
+					ui->channelList->setCurrentItem(selectedItem);
 				}
 			}
 
@@ -573,7 +581,6 @@ void MainWindow::openAttentionThread(const QString& channelId, const QString& ro
 					threadArea = area;
 					break;
 				}
-			}
 
 			if (!threadArea) {
 				threadArea = new ChatArea(guard->backend, *currentChannel, rootPostId, parentArea);
