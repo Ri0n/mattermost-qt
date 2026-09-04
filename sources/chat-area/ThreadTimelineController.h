@@ -66,6 +66,7 @@ private:
                          TimelineSeekState::Edge edge);
     void finishSeek(const TimelineSeekState::Ticket& ticket);
     QString seekFocusPostId(const TimelineSeekState::Ticket& ticket) const;
+    void renderSeekWindow(const TimelineSeekState::Ticket& ticket);
     void scheduleViewportCheck();
     void checkViewport();
     int logicalIndexNearViewport(int extraScreens, bool* viewportCenterInsideGap) const;
@@ -98,6 +99,7 @@ private:
     TimelineSeekState seekState;
     QTimer seekTimer;
     QTimer measurementTimer;
+    ViewportAnchor seekViewportAnchor;
     int expectedPostCount = 1;
     int nextLogicalIndex = 0;
     int initialPagesRemaining = 0;
@@ -112,6 +114,7 @@ private:
     bool rebuilding = false;
     bool initialNewestRequestInFlight = false;
     bool initialNewestOpenDone = false;
+    bool seekPreserveViewport = false;
 };
 
 } // namespace Mattermost
