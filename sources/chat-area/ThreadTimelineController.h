@@ -16,6 +16,7 @@
 #include <QTimer>
 
 #include "backend/PostTimeline.h"
+#include "backend/TimelineSeekState.h"
 
 namespace Mattermost {
 
@@ -55,7 +56,9 @@ private:
 
     void start();
     void requestNextPage();
-    void requestSeek(int logicalIndex);
+    void updateSeekTargetFromScrollbar(bool readyImmediately);
+    void resumeSeekIfReady();
+    void requestSeek(const TimelineSeekState::Ticket& ticket);
     void scheduleViewportCheck();
     void checkViewport();
     int logicalIndexNearViewport(int extraScreens, bool* viewportCenterInsideGap) const;
@@ -85,6 +88,7 @@ private:
     QString cursorPostId;
     uint64_t cursorCreateAt = 0;
     PostTimeline timeline;
+    TimelineSeekState seekState;
     QTimer seekTimer;
     QTimer measurementTimer;
     int expectedPostCount = 1;
