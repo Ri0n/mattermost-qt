@@ -12,13 +12,16 @@ should update this document together with code when an invariant changes.
 2. A normal channel/thread open means **newest**. Attention, Recent and permalink navigation are
    explicit semantic targets and override the default newest position.
 3. A user gesture owns the viewport. Layout, image reflow, pruning, websocket events and stale
-   HTTP responses may not move it.
+   HTTP responses may not move it. A sparse post list has exactly **one viewport owner**:
+   `PostsListWidget`. `ResizableListWidget` may resize rows but must not queue an independent
+   physical anchor restore for a `PostsListWidget`.
 4. Random scrollbar seek is logical, not pixel-derived:
    `fraction = (value-min)/(max-min)`, `target ~= fraction * (logicalCount-1)`.
    Refining estimated row heights must not change an active drag target.
 5. One seek generation is a bounded transaction: debounce -> seed -> edges -> measure -> optional
    bounded refinement -> commit. A newer user target invalidates the old generation for UI
-   mutation, but successful old responses are still ingested into the memory cache.
+   mutation, but successful old responses are still ingested into the memory cache. Completing a
+   generation is terminal; completion itself must not schedule another seek/check.
 6. Materialized UI is bounded to roughly 200 posts per channel/thread. The visible logical range
    plus at least 10 posts on both sides is never a pruning candidate. Prefer evicting the farthest
    rows first.
@@ -28,25 +31,29 @@ should update this document together with code when an invariant changes.
    block scrollbar-driven controller reactions, disable viewport painting, mutate rows/size hints,
    force QListView geometry/layout to the new state, restore the semantic anchor, then re-enable
    painting/signals. Never restore an anchor against stale pre-layout geometry.
-9. `renderTimeline()`/reconciliation must never itself schedule an unbounded
-   `render -> viewportCheck -> fetch -> render` feedback loop.
-10. Network requests belong to `PostTimelineService`. Exact duplicate in-flight range requests
+9. Learned row height belongs to post identity for the lifetime of `PostTimeline`, not to a
+   materialized QWidget. Pruning/topology relocation must not forget it, because doing so changes
+   the estimated height of every gap merely as a side effect of memory eviction.
+10. `renderTimeline()`/reconciliation must never itself schedule an unbounded
+    `render -> viewportCheck -> fetch -> render` feedback loop.
+11. Network requests belong to `PostTimelineService`. Exact duplicate in-flight range requests
     are coalesced there. Controllers decide *what logical range is needed*, not HTTP dedup policy.
-11. Backend/memory cache ingestion happens before UI-generation checks. Stale responses are useful
+12. Backend/memory cache ingestion happens before UI-generation checks. Stale responses are useful
     cache data even when they are no longer allowed to move the current viewport.
-12. Persistent SQLite post/timeline cache is a separate follow-up layer. It must sit below the same
+13. Persistent SQLite post/timeline cache is a separate follow-up layer. It must sit below the same
     `PostTimelineService`/memory model contract rather than becoming a second navigation system.
 
 ## Components and source map
 
 | Responsibility | Implementation |
 | --- | --- |
-| Sparse logical topology, loaded spans, gaps, measured heights, logical/pixel mapping | `sources/backend/PostTimeline.{h,cpp}` |
-| Shared seek generation/state and edge choice | `sources/backend/TimelineSeekState.h` |
+| Sparse logical topology, loaded spans, gaps, learned row heights, logical/pixel mapping | `sources/backend/PostTimeline.{h,cpp}` |
+| Shared seek generation/state and balanced edge choice | `sources/backend/TimelineSeekState.h` |
 | Timeline HTTP access, ingestion and in-flight request coalescing | `sources/backend/PostTimelineService.{h,cpp}`, `PostTimelineThreadCursor.cpp` |
 | Channel endpoint adapter and channel-specific metadata | `sources/chat-area/ChannelTimelineController*` |
 | Thread endpoint adapter and thread-specific metadata | `sources/chat-area/ThreadTimelineController*` |
-| Concrete rows, gap rows, saved semantic viewport anchor, Qt reconciliation transaction | `sources/chat-area/PostsListWidget*`, `ResizableListWidget*` |
+| Sparse semantic viewport owner, concrete rows/gaps, reconciliation and anchor generations | `sources/chat-area/PostsListWidget*` |
+| Generic row sizing for list widgets; **no independent anchor restore for PostsListWidget** | `sources/chat-area/ResizableListWidget*` |
 | Exact/Attention/Recent navigation orchestration | `sources/navigation/AppNavigationService.*`, sidebar widgets |
 | Live channel append | `sources/chat-area/ChannelTimelineLive.cpp` |
 | Live thread append / newest-tail open | `sources/chat-area/ThreadTimelineLive.cpp` |
@@ -108,7 +115,7 @@ sequenceDiagram
     S-->>C: seed response
     alt generation N still current
         C->>M: place/merge seed inside target gap
-        C->>L: atomic geometry transaction, preserve target/viewport
+        C->>L: atomic geometry transaction, centre target
         C->>S: 10 older / 10 newer as needed
         S-->>C: edge response(s)
         C->>M: merge contiguous window
@@ -121,9 +128,10 @@ sequenceDiagram
     C->>Q: complete generation N
 ```
 
-The first stage targets roughly 30 rows (`10 + 10 + 10`). Refinement is based on actual rendered
-height and aims to cover the viewport plus about one viewport of buffer above and below. It is
-bounded; it must never turn into an autonomous page-walking loop.
+The first stage targets roughly 30 rows (`10 + 10 + 10`). It requires useful coverage on **both
+sides** of TARGET, not merely 30 contiguous rows with TARGET at an edge. Refinement is based on
+actual rendered height and aims to cover the viewport plus about one viewport of buffer above and
+below. It is bounded and completion is terminal; it must never turn into autonomous page walking.
 
 ## Slow wheel / local prefetch
 
@@ -132,9 +140,10 @@ intent. When the viewport approaches a gap, load a small adjacent page/window an
 preserving that anchor. Do not re-center a server result as if the user had dragged the thumb.
 
 A delayed/stale wheel response may populate memory/sparse topology, but it may not move a viewport
-that has since received newer user input.
+that has since received newer user input. User input is also what schedules the next viewport
+check; finishing an older prefetch does not recursively initiate another one.
 
-## Geometry transaction
+## Geometry transaction and viewport ownership
 
 All operations below use the same transaction:
 
@@ -156,6 +165,13 @@ block controller reactions + painting
 Restoring before QListView has applied the new geometry is invalid: Qt may later change the range
 and leave the viewport inside a gap even though the restore was mathematically correct for the old
 layout.
+
+`PostsListWidget` is the only viewport owner for sparse timelines. This matters because
+`ResizableListWidget` historically had a generic physical-row anchor for asynchronous
+`LayoutRequest`/`Resize`: it captured a `QPersistentModelIndex` and restored it on a later event-loop
+turn. Running that mechanism underneath `PostsListWidget` creates two independent owners; the base
+callback can move the scrollbar *after* a newer wheel/seek/navigation anchor has already committed.
+For `PostsListWidget`, row sizing remains active but that generic base anchor is disabled.
 
 ## Live append
 
@@ -179,6 +195,8 @@ Pruning is a memory operation, never navigation.
 4. Keep additional loaded rows by distance from the viewport until the ~200-row budget is met.
 5. Remove only selected distant concrete rows, grow/merge corresponding gaps, force geometry,
    restore the same viewport anchor, paint once.
+6. Keep measured height metadata for evicted post identities. Eviction must not change the learned
+   average gap row height or cause a second global scrollbar rescale.
 
 Future persistent cache eviction is a separate layer: pruning a `PostWidget` does not imply deleting
 its BackendPost/disk payload.
@@ -200,14 +218,17 @@ The planned SQLite cache stores Mattermost post payloads plus indexed fields nee
 by actual query patterns). Cache schema/indexes should be designed from concrete lookup paths, not
 from the current `BackendPost` field list.
 
-## Tests that should guard the contract
+## Tests that guard the contract
 
 - normalized scrollbar fraction -> stable logical target;
 - newer seek generation invalidates older UI response;
-- staged window growth is bounded and balances edges;
+- staged window growth is bounded and balances both sides of TARGET;
 - loaded windows merge without relocating retained IDs;
 - live append preserves all previous logical indices;
 - pruning never removes visible ±10 protected rows;
+- pruning does not discard measured row geometry or rescale all gaps;
 - newest-tail placement ends on a concrete newest post, not a gap;
-- geometry transaction tests should verify that anchor restoration is performed after the new Qt
-  layout/range is committed (widget-level offscreen test where practical).
+- the generic `ResizableListWidget` deferred anchor cannot override a newer external/sparse viewport
+  owner after asynchronous row growth;
+- geometry transaction tests verify that anchor restoration is performed after the new Qt
+  layout/range is committed.
