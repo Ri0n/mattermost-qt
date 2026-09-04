@@ -318,7 +318,10 @@ void ThreadTimelineController::finishSeek(const TimelineSeekState::Ticket& ticke
     seekViewportAnchor = ViewportAnchor();
     persistState();
     schedulePrune();
-    scheduleViewportCheck();
+
+    // A completed bounded seek is terminal. New wheel/drag input schedules the
+    // next viewport check. Stale callbacks still resume a newer ready ticket
+    // directly, so no autonomous finish -> check -> seek loop is required.
 }
 
 } // namespace Mattermost
