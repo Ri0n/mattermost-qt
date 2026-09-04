@@ -1,6 +1,7 @@
 #include "ChannelPostSource.h"
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 
 #include <QPointer>
@@ -75,7 +76,7 @@ ChannelPostSource::ChannelPostSource(Backend& backendInstance,
     connect(&channel, &BackendChannel::onNewPosts, this,
             [this](const ChannelNewPosts&) {
         const int count = currentLogicalCount();
-        if (count != postIds.size()) {
+        if (count != static_cast<int>(postIds.size())) {
             postIds.resize(count);
             rebuildIndex();
             emit itemCountChanged(count);
@@ -100,6 +101,29 @@ BackendPost* ChannelPostSource::postAt(int index) const
 int ChannelPostSource::indexOfPost(const QString& postId) const
 {
     return postIndexes.value(postId, -1);
+}
+
+int ChannelPostSource::ensurePostIndex(const QString& postId)
+{
+    const int existing = indexOfPost(postId);
+    if (existing >= 0) {
+        return existing;
+    }
+
+    BackendPost* post = channel.postIdToPost.value(postId, nullptr);
+    if (!post || post->hidden || !post->root_id.isEmpty() || postIds.isEmpty()) {
+        return -1;
+    }
+
+    const int index = nearestEmptyIndex(estimateIndexForPost(*post));
+    if (index < 0) {
+        return -1;
+    }
+
+    postIds[index] = postId;
+    rebuildIndex();
+    emit rangeAvailable(index, index);
+    return index;
 }
 
 void ChannelPostSource::requestRange(int first,
@@ -168,6 +192,81 @@ int ChannelPostSource::pageForIndex(int index) const
     return (static_cast<int>(postIds.size()) - 1 - index) / ServerPageSize;
 }
 
+int ChannelPostSource::estimateIndexForPost(const BackendPost& post) const
+{
+    const int count = static_cast<int>(postIds.size());
+    if (count <= 1) {
+        return 0;
+    }
+
+    int lowerIndex = -1;
+    int upperIndex = -1;
+    uint64_t lowerTime = 0;
+    uint64_t upperTime = std::numeric_limits<uint64_t>::max();
+
+    for (int index = 0; index < count; ++index) {
+        BackendPost* current = postAt(index);
+        if (!current || current->id == post.id) {
+            continue;
+        }
+        if (current->create_at <= post.create_at && current->create_at >= lowerTime) {
+            lowerTime = current->create_at;
+            lowerIndex = index;
+        }
+        if (current->create_at >= post.create_at && current->create_at <= upperTime) {
+            upperTime = current->create_at;
+            upperIndex = index;
+        }
+    }
+
+    if (lowerIndex >= 0 && upperIndex >= 0 && upperIndex > lowerIndex
+        && upperTime > lowerTime) {
+        const long double fraction = static_cast<long double>(post.create_at - lowerTime)
+            / static_cast<long double>(upperTime - lowerTime);
+        return lowerIndex + static_cast<int>(std::llround(
+            fraction * static_cast<long double>(upperIndex - lowerIndex)));
+    }
+    if (lowerIndex >= 0) {
+        return std::min(count - 1, lowerIndex + 1);
+    }
+    if (upperIndex >= 0) {
+        return std::max(0, upperIndex - 1);
+    }
+
+    const uint64_t oldest = channel.create_at;
+    const uint64_t newest = std::max(channel.last_post_at, oldest);
+    if (newest > oldest && post.create_at >= oldest) {
+        const long double fraction = std::min<long double>(1.0L,
+            static_cast<long double>(post.create_at - oldest)
+                / static_cast<long double>(newest - oldest));
+        return static_cast<int>(std::llround(fraction * (count - 1)));
+    }
+    return count / 2;
+}
+
+int ChannelPostSource::nearestEmptyIndex(int preferred) const
+{
+    const int count = static_cast<int>(postIds.size());
+    if (count <= 0) {
+        return -1;
+    }
+    preferred = std::max(0, std::min(preferred, count - 1));
+    if (postIds.at(preferred).isEmpty()) {
+        return preferred;
+    }
+    for (int distance = 1; distance < count; ++distance) {
+        const int before = preferred - distance;
+        if (before >= 0 && postIds.at(before).isEmpty()) {
+            return before;
+        }
+        const int after = preferred + distance;
+        if (after < count && postIds.at(after).isEmpty()) {
+            return after;
+        }
+    }
+    return -1;
+}
+
 void ChannelPostSource::seedCachedPosts()
 {
     const QVector<BackendPost*> cached = cachedRootPosts(channel);
@@ -177,8 +276,7 @@ void ChannelPostSource::seedCachedPosts()
 
     // Cached channel startup data is useful only when it reaches the real newest
     // edge. Arbitrary permalink/context cache entries must not be guessed into
-    // absolute logical positions; normal range requests will place them from an
-    // authoritative server page instead.
+    // absolute logical positions; semantic navigation adopts those on demand.
     const BackendPost* newest = cached.last();
     if (postIds.size() > cached.size()
         && channel.last_post_at != 0
@@ -217,11 +315,24 @@ void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
         static_cast<int>(postIds.size()) - page * ServerPageSize - chronologicalIds.size());
     const int count = std::min(static_cast<int>(chronologicalIds.size()),
                                static_cast<int>(postIds.size()) - first);
+    const int last = first + count - 1;
+
+    // A semantic target may have occupied an estimated slot. Once an
+    // authoritative page arrives, identity wins and the temporary occurrence is
+    // removed before the page is written into its real logical range.
+    for (int offset = 0; offset < count; ++offset) {
+        const int existing = postIndexes.value(chronologicalIds.at(offset), -1);
+        if (existing >= 0 && (existing < first || existing > last)) {
+            postIds[existing].clear();
+            emit itemsChanged(existing, existing);
+        }
+    }
     for (int offset = 0; offset < count; ++offset) {
         postIds[first + offset] = chronologicalIds.at(offset);
     }
     rebuildIndex();
-    emit rangeAvailable(first, first + count - 1);
+    emit itemsChanged(first, last);
+    emit rangeAvailable(first, last);
 }
 
 void ChannelPostSource::appendLivePost(BackendPost& post)
