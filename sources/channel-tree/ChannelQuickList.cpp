@@ -10,13 +10,16 @@
 
 #include <QHeaderView>
 #include <QIcon>
+#include <QPointer>
 #include <QVector>
 
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
 #include "backend/Storage.h"
+#include "backend/ThreadFollowService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
+#include "backend/types/BackendTeam.h"
 #include "backend/types/BackendUser.h"
 #include "channel-tree/ChannelIcons.h"
 #include "channel-tree/ChannelItemDelegate.h"
@@ -50,16 +53,45 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
             return;
         }
 
-        const QString recentPostId = current->data(0, RecentPostIdRole).toString();
-        if (backend && !recentPostId.isEmpty()) {
-            // A user interaction in a thread is a more precise navigation target
-            // than its parent channel. Reuse permalink navigation so the exact
-            // reply is loaded and the corresponding thread window is opened.
-            AppNavigationService::instance(*backend).openPost(recentPostId);
+        const QString channelId = current->data(0, SidebarItem::IdRole).toString();
+        const QString threadId = current->data(0, SidebarItem::ThreadIdRole).toString();
+        const QString fallbackPostId = current->data(0, RecentPostIdRole).toString();
+
+        if (backend && !threadId.isEmpty() && !channelId.isEmpty()) {
+            BackendChannel* channel = backend->getStorage().getChannelById(channelId);
+            const QString teamId = channel && channel->team ? channel->team->id : QString();
+            if (teamId.isEmpty()) {
+                if (!fallbackPostId.isEmpty()) {
+                    AppNavigationService::instance(*backend).openPost(fallbackPostId);
+                }
+                return;
+            }
+
+            // A followed thread has its own read boundary. Query the canonical
+            // ThreadResponse and navigate to the first reply after
+            // last_viewed_at; if the thread is no longer followed, retain the
+            // user's last local interaction as a deterministic fallback target.
+            QPointer<ChannelQuickList> guard(this);
+            ThreadFollowService::instance(*backend).queryThread(
+                teamId, threadId,
+                [guard, channelId, threadId, fallbackPostId](
+                    const ThreadFollowService::ThreadState& state) {
+                    if (!guard || !guard->backend) {
+                        return;
+                    }
+                    auto& navigation = AppNavigationService::instance(*guard->backend);
+                    if (state.available) {
+                        navigation.openThreadAtLastViewed(channelId,
+                                                          threadId,
+                                                          state.lastViewedAt,
+                                                          fallbackPostId);
+                    } else if (!fallbackPostId.isEmpty()) {
+                        navigation.openPost(fallbackPostId);
+                    }
+                });
             return;
         }
 
-        const QString channelId = current->data(0, SidebarItem::IdRole).toString();
         if (!channelId.isEmpty()) {
             // ChannelTree/ChatArea owns read acknowledgement. It waits until
             // the selected channel's newest content has actually been rendered.
@@ -85,10 +117,10 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
     backend = &sourceBackend;
 
     // Mattermost's channel recency represents viewed/opened channels, not every
-    // incoming post. Keep that behavior, but remember an exact thread reply when
-    // the current user actively participates there. This lets the persistent
-    // Recent tab represent the user's latest navigation target without allowing
-    // noisy incoming channels to reorder the list.
+    // incoming post. Keep that behavior, but remember the user's latest thread
+    // interaction. When that Recent row is opened, the followed-thread
+    // last_viewed_at boundary is authoritative; the exact reply remains only a
+    // fallback for unfollowed/already-read threads.
     connect(backend, &Backend::onNewPost, this,
             [this](BackendChannel& channel, const BackendPost& post) {
         if (!post.isOwnPost() || post.root_id.isEmpty()) {
@@ -97,7 +129,7 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
 
         RecentThreadTarget target;
         target.rootPostId = post.root_id;
-        target.postId = post.id;
+        target.fallbackPostId = post.id;
         target.interactionAt = post.create_at;
 
         const auto existing = recentThreadTargets.constFind(channel.id);
@@ -146,7 +178,7 @@ void ChannelQuickList::refresh()
         if (target != recentThreadTargets.cend()
             && target->interactionAt >= channelRecentTime) {
             sortTime = std::max(sortTime, target->interactionAt);
-            recentPostId = target->postId;
+            recentPostId = target->fallbackPostId;
             recentRootId = target->rootPostId;
         }
 
