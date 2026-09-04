@@ -166,13 +166,25 @@ LongListWidget::LongListWidget(QWidget* parent)
     seekTimer.setInterval(seekDebounceInterval);
     connect(&seekTimer, &QTimer::timeout, this, &LongListWidget::activateSeekTarget);
 
+    viewportLockTimer.setSingleShot(true);
+    connect(&viewportLockTimer, &QTimer::timeout, this, [this] {
+        releaseViewportLock(true);
+    });
+
     QScrollBar* bar = verticalScrollBar();
     connect(bar, &QScrollBar::valueChanged, this, [this] { onScrollValueChanged(); });
     connect(bar, &QScrollBar::sliderMoved, this, &LongListWidget::onSliderMoved);
+    connect(bar, &QScrollBar::actionTriggered, this, [this](int) {
+        // actionTriggered is a user scrollbar action. setValue() used by our
+        // geometry transactions does not emit it. Defer until Qt has applied
+        // the action's new value so observers see the final at-end state.
+        QTimer::singleShot(0, this, [this] { noteUserViewportChange(); });
+    });
     connect(bar, &QScrollBar::sliderReleased, this, [this, bar] {
         onSliderMoved(bar->value());
         seekTimer.stop();
         activateSeekTarget();
+        noteUserViewportChange();
     });
 }
 
@@ -196,9 +208,9 @@ void LongListWidget::setItemCount(int count)
     // Growing the logical tail changes maximumContentOffset immediately, before
     // commitGeometry() can capture its anchor. Remember an existing sticky-end
     // state while the old geometry is still authoritative and restore it after
-    // resizing the height index. A previously empty list has no user viewport
-    // intent, so initial population remains controlled by the caller.
-    const bool preserveBottom = logicalCount > 0 && isAtEnd();
+    // resizing the height index. A semantic viewport lock has stronger intent
+    // than sticky-bottom and is restored by commitGeometry() instead.
+    const bool preserveBottom = logicalCount > 0 && !hasViewportLock() && isAtEnd();
 
     const int oldCount = logicalCount;
     logicalCount = count;
@@ -226,6 +238,9 @@ void LongListWidget::setItemCount(int count)
     if (seekTarget >= count) {
         clearSeek();
     }
+    if (viewportLock.index >= count) {
+        releaseViewportLock(true);
+    }
 
     commitGeometry();
     if (preserveBottom && logicalCount > 0) {
@@ -246,6 +261,9 @@ void LongListWidget::insertItems(int first, int count)
     ViewAnchor anchor = captureAnchor();
     if (anchor.kind == ViewAnchor::Item && anchor.index >= first) {
         anchor.index += count;
+    }
+    if (viewportLock.index >= first) {
+        viewportLock.index += count;
     }
     const qint64 oldOffset = contentOffset();
 
@@ -290,7 +308,11 @@ void LongListWidget::insertItems(int first, int count)
     viewport()->setUpdatesEnabled(false);
     committingGeometry = true;
     updateScrollBarRange(oldOffset);
-    restoreAnchor(anchor);
+    if (hasViewportLock()) {
+        restoreViewportLock();
+    } else {
+        restoreAnchor(anchor);
+    }
     layoutMaterialized();
     committingGeometry = false;
     viewport()->setUpdatesEnabled(true);
@@ -448,6 +470,10 @@ void LongListWidget::scrollToIndex(int index, Alignment alignment)
         return;
     }
 
+    if (hasViewportLock() && viewportLock.index != index) {
+        releaseViewportLock(true);
+    }
+
     clearSeek();
     const qint64 itemTop = heights.prefixHeight(index);
     const qint64 itemBottom = heights.prefixHeight(index + 1);
@@ -478,17 +504,72 @@ void LongListWidget::scrollToIndex(int index, Alignment alignment)
     verticalScrollBar()->setValue(scrollValueForContentOffset(target));
     internalScrollChange = false;
     layoutMaterialized();
+    if (hasViewportLock() && viewportLock.index == index) {
+        captureViewportLockFraction();
+    }
     scheduleSync(RequestReason::EnsureVisible);
 }
 
 void LongListWidget::scrollToEnd()
 {
+    if (hasViewportLock()) {
+        releaseViewportLock(true);
+    }
     clearSeek();
     internalScrollChange = true;
     verticalScrollBar()->setValue(verticalScrollBar()->maximum());
     internalScrollChange = false;
     layoutMaterialized();
     scheduleSync(RequestReason::EnsureVisible);
+}
+
+bool LongListWidget::lockViewportToItem(int index,
+                                        Alignment alignment,
+                                        int quietPeriodMs)
+{
+    if (index < 0 || index >= logicalCount) {
+        clearViewportLock();
+        return false;
+    }
+
+    // Replace any previous lock without reporting an intermediate unlock to the
+    // domain layer. Apply alignment once, then preserve the resulting item-top
+    // coordinate rather than repeatedly re-applying Center/Top/Bottom.
+    releaseViewportLock(false);
+    scrollToIndex(index, alignment);
+
+    viewportLock.index = index;
+    viewportLock.quietPeriodMs = std::max(0, quietPeriodMs);
+    captureViewportLockFraction();
+    touchViewportLock();
+    return true;
+}
+
+bool LongListWidget::remapViewportLockedItem(int index)
+{
+    if (!hasViewportLock() || index < 0 || index >= logicalCount) {
+        return false;
+    }
+    if (viewportLock.index == index) {
+        touchViewportLock();
+        return true;
+    }
+
+    viewportLock.index = index;
+    QSignalBlocker blocker(verticalScrollBar());
+    viewport()->setUpdatesEnabled(false);
+    restoreViewportLock();
+    layoutMaterialized();
+    viewport()->setUpdatesEnabled(true);
+    viewport()->update();
+    touchViewportLock();
+    scheduleSync(RequestReason::EnsureVisible);
+    return true;
+}
+
+void LongListWidget::clearViewportLock()
+{
+    releaseViewportLock(true);
 }
 
 void LongListWidget::destroyItemWidget(int, QWidget* widget)
@@ -536,7 +617,14 @@ void LongListWidget::resizeEvent(QResizeEvent* event)
     }
     dirtyGeometry.clear();
     updateScrollBarRange(oldOffset);
-    restoreAnchor(anchor);
+    if (hasViewportLock()) {
+        // viewportLock.itemTopFraction was captured against the old viewport.
+        // Using it with the new viewport height intentionally scales the locked
+        // item's screen Y (e.g. 500/1000 -> 250/500).
+        restoreViewportLock();
+    } else {
+        restoreAnchor(anchor);
+    }
     layoutMaterialized();
     committingGeometry = false;
     viewport()->setUpdatesEnabled(true);
@@ -561,6 +649,7 @@ void LongListWidget::wheelEvent(QWheelEvent* event)
         wheelInProgress = false;
         event->accept();
         scheduleSync(RequestReason::Scroll);
+        noteUserViewportChange();
         return;
     }
     QAbstractScrollArea::wheelEvent(event);
@@ -619,6 +708,8 @@ void LongListWidget::synchronizeRange(const Range& desired,
     updateScrollBarRange(oldOffset);
     if (centerSeekTarget && seekTarget >= 0 && materialized.contains(seekTarget)) {
         restoreSeekTarget();
+    } else if (hasViewportLock()) {
+        restoreViewportLock();
     } else {
         restoreAnchor(anchor);
     }
@@ -829,6 +920,8 @@ void LongListWidget::commitGeometry()
     updateScrollBarRange(oldOffset);
     if (seekActive && seekTarget >= 0 && materialized.contains(seekTarget)) {
         restoreSeekTarget();
+    } else if (hasViewportLock()) {
+        restoreViewportLock();
     } else {
         restoreAnchor(anchor);
     }
@@ -928,6 +1021,56 @@ void LongListWidget::restoreSeekTarget()
     verticalScrollBar()->setValue(scrollValueForContentOffset(offset));
 }
 
+void LongListWidget::captureViewportLockFraction()
+{
+    if (!hasViewportLock() || viewportLock.index >= logicalCount) {
+        return;
+    }
+    const int viewportHeight = std::max(1, viewport()->height());
+    const qint64 itemTopY = heights.prefixHeight(viewportLock.index) - contentOffset();
+    viewportLock.itemTopFraction = static_cast<long double>(itemTopY)
+        / static_cast<long double>(viewportHeight);
+}
+
+void LongListWidget::restoreViewportLock()
+{
+    if (!hasViewportLock() || viewportLock.index >= logicalCount) {
+        return;
+    }
+    const long double desiredViewportY = viewportLock.itemTopFraction
+        * static_cast<long double>(std::max(1, viewport()->height()));
+    const qint64 targetOffset = heights.prefixHeight(viewportLock.index)
+        - static_cast<qint64>(std::llround(desiredViewportY));
+    verticalScrollBar()->setValue(scrollValueForContentOffset(targetOffset));
+}
+
+void LongListWidget::touchViewportLock()
+{
+    if (!hasViewportLock()) {
+        return;
+    }
+    viewportLockTimer.stop();
+    if (viewportLock.quietPeriodMs > 0) {
+        viewportLockTimer.start(viewportLock.quietPeriodMs);
+    }
+}
+
+void LongListWidget::releaseViewportLock(bool notify)
+{
+    const bool wasLocked = hasViewportLock();
+    viewportLockTimer.stop();
+    viewportLock = ViewportLock();
+    if (wasLocked && notify) {
+        emit viewportLockReleased();
+    }
+}
+
+void LongListWidget::noteUserViewportChange()
+{
+    releaseViewportLock(true);
+    emit userViewportChanged(isAtEnd());
+}
+
 qint64 LongListWidget::maximumContentOffset() const
 {
     return std::max<qint64>(0, heights.totalHeight() - viewport()->height());
@@ -1005,6 +1148,11 @@ void LongListWidget::onScrollValueChanged()
 
 void LongListWidget::onSliderMoved(int value)
 {
+    // sliderMoved is emitted only for interactive thumb movement. The first
+    // move immediately gives the user authority over the viewport, even before
+    // sliderReleased publishes the final viewport state.
+    releaseViewportLock(true);
+
     const int target = logicalTargetForScrollValue(value);
     if (target < 0) {
         return;
