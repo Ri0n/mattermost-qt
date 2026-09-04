@@ -56,11 +56,15 @@ void MainWindow::openChannelPost(const QString& channelId,
         // ThreadTimelineController starts on the next event-loop turn. Queue the
         // semantic target behind that start so even a reply outside the initial
         // 30-row thread page can be materialized immediately from the cached post.
+        // Keep the same semantic lock used by channel permalink navigation: an
+        // overlapping async thread page or attachment reflow must not move the
+        // unread/permalink target before the user scrolls.
         QPointer<ChatArea> threadGuard(threadArea);
         QTimer::singleShot(0, threadArea, [threadGuard, postId] {
             if (!threadGuard) {
                 return;
             }
+            threadGuard->lockNavigationToPost(postId, 0);
             threadGuard->ensurePostVisible(postId);
             threadGuard->goToPost(postId);
         });
