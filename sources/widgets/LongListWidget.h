@@ -58,6 +58,9 @@ public:
     int itemCount() const { return logicalCount; }
     void setItemCount(int count);
 
+    /** Insert real logical items and preserve the current semantic viewport anchor. */
+    void insertItems(int first, int count);
+
     int defaultItemHeight() const { return defaultHeight; }
     void setDefaultItemHeight(int height);
 
@@ -142,6 +145,7 @@ private:
     public:
         void reset(int count, int height);
         void resize(int count, int height);
+        void insert(int first, int count, int height);
         int size() const { return static_cast<int>(values.size()); }
         int value(int index) const;
         void setValue(int index, int value);
@@ -151,6 +155,7 @@ private:
 
     private:
         void add(int index, qint64 delta);
+        void rebuildFenwick();
 
         QVector<int> values;
         QVector<qint64> fenwick;
