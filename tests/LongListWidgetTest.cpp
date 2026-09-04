@@ -258,6 +258,39 @@ private slots:
                  "Reflow above a locked item must keep its viewport Y stable");
     }
 
+    void unavailableMeasuredItemResetsEstimateWithoutMovingLock()
+    {
+        TestLongListWidget list;
+        list.resize(480, 400);
+        list.setDefaultItemHeight(60);
+        list.setItemCount(300);
+        list.setRangeAvailable(0, 299);
+        list.show();
+        settleEvents();
+
+        QVERIFY(list.lockViewportToItem(150,
+                                        Mattermost::LongListWidget::Alignment::Center,
+                                        0));
+        settleEvents(12);
+        QVERIFY(list.itemWidget(149) != nullptr);
+
+        list.setSyntheticHeight(149, 260);
+        settleEvents(16);
+        QWidget* locked = list.itemWidget(150);
+        QVERIFY(locked != nullptr);
+        const int yBefore = locked->y();
+        const qint64 heightBefore = list.contentHeight();
+
+        list.setRangeAvailable(149, 149, false);
+        settleEvents(16);
+
+        locked = list.itemWidget(150);
+        QVERIFY(locked != nullptr);
+        QCOMPARE(list.contentHeight(), heightBefore - 200);
+        QVERIFY2(qAbs(locked->y() - yBefore) <= 2,
+                 "Dropping stale provisional geometry must preserve the active viewport lock");
+    }
+
     void viewportLockScalesRelativeYAcrossResize()
     {
         TestLongListWidget list;
@@ -288,6 +321,13 @@ private slots:
             * static_cast<qreal>(viewportAfter) / static_cast<qreal>(viewportBefore));
         QVERIFY2(qAbs(locked->y() - expectedY) <= 2,
                  "A locked item's Y must scale with viewport height across resize");
+
+        list.resize(480, 500);
+        settleEvents(16);
+        locked = list.itemWidget(150);
+        QVERIFY(locked != nullptr);
+        QVERIFY2(qAbs(locked->y() - yBefore) <= 2,
+                 "Expanding the viewport again must restore the locked item's original relative Y");
     }
 
     void viewportLockRemapKeepsScreenPosition()
