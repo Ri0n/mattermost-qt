@@ -48,6 +48,7 @@
 #include "backend/types/BackendTeam.h"
 #include "backend/types/BackendUser.h"
 #include "channel-tree/ChannelIcons.h"
+#include "navigation/AppNavigationService.h"
 
 namespace Mattermost {
 
@@ -584,6 +585,8 @@ void AttentionList::fetchTeamPage(const std::shared_ptr<QStringList>& teamIds,
                 entry.teamId = teamId;
                 entry.authorId = post.value(QStringLiteral("user_id")).toString();
                 entry.message = post.value(QStringLiteral("message")).toString();
+                entry.lastViewedAt = object.value(QStringLiteral("last_viewed_at"))
+                    .toVariant().toULongLong();
                 entry.lastReplyAt = object.value(QStringLiteral("last_reply_at"))
                     .toVariant().toULongLong();
                 if (entry.lastReplyAt == 0) {
@@ -650,24 +653,32 @@ void AttentionList::openThread(const QString& channelId,
         return;
     }
 
-    NetworkRequest request(
-        QStringLiteral("posts/") + threadId + QStringLiteral("/thread?per_page=100"));
-    httpConnector.get(request, HttpResponseCallback(
-        [this, channelId, threadId, teamId](const QJsonDocument& doc) {
-            if (!backend) {
-                return;
+    uint64_t lastViewedAt = 0;
+    if (hasRetainedThread && retainedThread.id == threadId) {
+        lastViewedAt = retainedThread.lastViewedAt;
+    } else {
+        for (const ThreadEntry& thread : std::as_const(serverThreads)) {
+            if (thread.id == threadId) {
+                lastViewedAt = thread.lastViewedAt;
+                break;
             }
-            BackendChannel* currentChannel = backend->getStorage().getChannelById(channelId);
-            if (!currentChannel) {
-                return;
-            }
+        }
+    }
 
-            const QJsonObject root = doc.object();
-            currentChannel->addPosts(root.value(QStringLiteral("order")).toArray(),
-                                     root.value(QStringLiteral("posts")).toObject());
-            emit threadSelected(channelId, threadId);
-            markThreadRead(teamId, threadId);
-        }));
+    // The unread ThreadResponse already gave us the exact server read boundary.
+    // Fetch only a compact window beginning there, navigate to the first reply
+    // after last_viewed_at, and acknowledge the thread only after that semantic
+    // navigation has actually been dispatched. This replaces the old eager
+    // per_page=100 thread download.
+    QPointer<AttentionList> guard(this);
+    AppNavigationService::instance(*backend).openThreadAtLastViewed(
+        channelId, threadId, lastViewedAt, QString(),
+        [guard, teamId, threadId](bool opened) {
+            if (!guard || !opened || guard->retainedThreadId != threadId) {
+                return;
+            }
+            guard->markThreadRead(teamId, threadId);
+        });
 }
 
 void AttentionList::markThreadRead(const QString& teamId, const QString& threadId)
