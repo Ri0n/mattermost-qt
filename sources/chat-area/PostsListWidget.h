@@ -269,6 +269,14 @@ signals:
 	// Emitted only for wheel/keyboard/scrollbar input, never for layout-driven
 	// scrollbar movement or automatic anchor restoration.
 	void userViewportChanged (bool atBottom);
+protected:
+	void externalViewportGeometryChanged() override
+	{
+		// ResizableListWidget has committed delayed PostWidget sizeHint changes to
+		// QListView. Restore the already committed sparse semantic anchor against
+		// that new range; never adopt the layout-driven scrollbar position.
+		scheduleSavedScrollAnchorRestore();
+	}
 private:
 	struct SavedScrollAnchor {
 		QString postId;
