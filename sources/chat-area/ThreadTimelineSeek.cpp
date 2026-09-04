@@ -10,6 +10,7 @@
 #include "ThreadTimelineController.h"
 
 #include <algorithm>
+#include <utility>
 
 #include <QPointer>
 #include <QTimer>
@@ -144,6 +145,14 @@ void ThreadTimelineController::requestSeekExpansion(
         return;
     }
 
+    // Logical row 0 is the root and there can be no older reply before row 1.
+    if (loaded.firstIndex <= 1) {
+        seekState.markBoundary(ticket, TimelineSeekState::OlderEdge);
+    }
+    if (loaded.lastIndex() >= timeline.totalCount() - 1) {
+        seekState.markBoundary(ticket, TimelineSeekState::NewerEdge);
+    }
+
     const int requiredRows = afterMeasurement
         ? timeline.rowsForViewportCoverage(
               area.ui->listWidget->viewport()->height(), 1,
@@ -233,7 +242,7 @@ void ThreadTimelineController::requestSeekEdge(
         }
 
         if (edge == TimelineSeekState::OlderEdge) {
-            const int available = std::max(0, current.firstIndex - 1); // row 0 is thread root
+            const int available = std::max(0, current.firstIndex - 1); // row 0 is root
             if (missing.size() > available) {
                 missing = missing.mid(missing.size() - available);
             }
@@ -251,7 +260,8 @@ void ThreadTimelineController::requestSeekEdge(
             if (!missing.isEmpty()) {
                 guard->timeline.placeWindow(current.lastIndex() + 1, missing);
             }
-            if (ids.size() < SeekEdgeSize || current.lastIndex() >= guard->timeline.totalCount() - 1) {
+            if (ids.size() < SeekEdgeSize
+                || current.lastIndex() >= guard->timeline.totalCount() - 1) {
                 guard->seekState.markBoundary(ticket, edge);
             }
         }
