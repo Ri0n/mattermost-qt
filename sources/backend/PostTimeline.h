@@ -151,6 +151,44 @@ public:
         return true;
     }
 
+    // Return the real contiguous loaded span containing logicalIndex. Seek
+    // expansion uses this after every server block so already materialized rows
+    // are merged naturally instead of being treated as separate windows.
+    LogicalWindow loadedWindowContaining(int logicalIndex) const
+    {
+        LogicalWindow result;
+        if (logicalIndex < 0 || logicalIndex >= logicalCount) {
+            return result;
+        }
+        for (const Span& span : spans()) {
+            if (span.kind != LoadedSpan
+                || logicalIndex < span.firstIndex
+                || logicalIndex >= span.firstIndex + span.count) {
+                continue;
+            }
+            result.firstIndex = span.firstIndex;
+            result.count = span.count;
+            result.targetIndex = logicalIndex;
+            return result;
+        }
+        return result;
+    }
+
+    // A seek should cover the viewport plus roughly one viewport of read-ahead
+    // on each side. Keep a useful minimum (the normal 10+10+10 transaction) and
+    // cap refinement so a pathological tiny-row layout cannot run away.
+    int rowsForViewportCoverage(int viewportHeight,
+                                int bufferScreens = 1,
+                                int minimumRows = 30,
+                                int maximumRows = 90) const
+    {
+        const int rowHeight = std::max(1, estimatedRowHeight());
+        const int screens = 1 + 2 * std::max(0, bufferScreens);
+        const qint64 pixels = static_cast<qint64>(std::max(0, viewportHeight)) * screens;
+        const int byHeight = static_cast<int>((pixels + rowHeight - 1) / rowHeight);
+        return std::max(minimumRows, std::min(maximumRows, byHeight));
+    }
+
     // A cursor response can prove that a loaded span touches the real oldest or
     // newest edge even when that span was originally placed approximately in a
     // sparse gap. Move the whole contiguous span to the authoritative edge and
