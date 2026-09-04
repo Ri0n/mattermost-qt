@@ -96,7 +96,7 @@ BackendChannel* AppNavigationService::findPostChannel(const QString& postId) con
 void AppNavigationService::openChannel(const QString& channelId)
 {
     if (!channelId.isEmpty() && backend.getStorage().getChannelById(channelId)) {
-        emit channelRequested(channelId, QString());
+        emit channelRequested(channelId, QString(), QString(), QStringList(), false, false);
     }
 }
 
@@ -185,10 +185,25 @@ void AppNavigationService::openPostInChannel(BackendChannel& channel,
     const QString channelId = channel.id;
     PostNavigationService::instance(backend).loadAround(
         channel, postId,
-        [guard, channelId, postId](bool success) {
-            if (guard && success) {
-                emit guard->channelRequested(channelId, postId);
+        [guard, channelId, postId](const PostNavigationService::Context& context) {
+            if (!guard || !context.success) {
+                return;
             }
+
+            QString rootId;
+            if (BackendChannel* currentChannel =
+                    guard->backend.getStorage().getChannelById(channelId)) {
+                if (BackendPost* target = currentChannel->postIdToPost.value(postId, nullptr)) {
+                    rootId = target->root_id;
+                }
+            }
+
+            emit guard->channelRequested(channelId,
+                                         postId,
+                                         rootId,
+                                         context.postIds,
+                                         context.reachedOldest,
+                                         context.reachedNewest);
         },
         true);
 }

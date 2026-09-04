@@ -21,6 +21,7 @@
 
 #include <memory>
 #include <QMainWindow>
+#include <QStringList>
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
 
 QT_BEGIN_NAMESPACE
@@ -55,7 +56,12 @@ public:
 	~MainWindow();
 public:
 	void initializationComplete ();
-	void openChannelPost(const QString& channelId, const QString& postId = QString());
+	void openChannelPost(const QString& channelId,
+	                     const QString& postId = QString(),
+	                     const QString& rootId = QString(),
+	                     const QStringList& contextPostIds = QStringList(),
+	                     bool reachedOldest = false,
+	                     bool reachedNewest = false);
 
 	void changeEvent (QEvent* event) override;
 	void closeEvent(QCloseEvent *event) override;

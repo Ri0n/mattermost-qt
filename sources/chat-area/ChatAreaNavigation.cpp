@@ -4,22 +4,47 @@
 
 #include "ChannelTimelineController.h"
 #include "PostsListWidget.h"
+#include "ThreadTimelineController.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "post/PostWidget.h"
 #include "ui_ChatArea.h"
 
 namespace Mattermost {
+namespace {
+
+bool hasPostRow(const PostsListWidget* list, const QString& postId)
+{
+    if (!list || postId.isEmpty()) {
+        return false;
+    }
+
+    for (int row = 0; row < list->count(); ++row) {
+        const QListWidgetItem* item = list->item(row);
+        if (PostsListWidget::isPostItem(item)
+            && item->data(ItemRole::postId).toString() == postId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 bool ChatArea::ensurePostVisible(const QString& postId)
 {
-    if (isThread || postId.isEmpty() || !ui || !ui->listWidget) {
+    if (postId.isEmpty() || !ui || !ui->listWidget) {
         return false;
     }
 
     PostsListWidget* list = ui->listWidget;
-    if (list->findPost(postId)) {
+    if (hasPostRow(list, postId)) {
         return true;
+    }
+
+    if (isThread) {
+        return threadTimelineController
+            && threadTimelineController->ensurePostVisible(postId);
     }
 
     if (channelTimelineController
@@ -30,8 +55,8 @@ bool ChatArea::ensurePostVisible(const QString& postId)
     // Compatibility fallback for a ChatArea that has not activated its sparse
     // controller yet (for example during construction/deactivation races).
     BackendPost* post = channel.postIdToPost.value(postId, nullptr);
-    // Replies are intentionally hidden from the main channel timeline. Pinned
-    // reply navigation resolves to its root before reaching this method.
+    // Replies are intentionally hidden from the main channel timeline. Permalink
+    // reply navigation is routed to its thread before reaching this fallback.
     if (!post || post->hidden || !post->root_id.isEmpty()) {
         return false;
     }
@@ -58,7 +83,7 @@ bool ChatArea::ensurePostVisible(const QString& postId)
 
     list->insertPost(insertRow, new PostWidget(backend, *post, list, this, nullptr));
     list->updateGeometry();
-    return list->findPost(postId) != nullptr;
+    return hasPostRow(list, postId);
 }
 
 bool ChatArea::ensurePinnedPostVisible(const QString& postId,
