@@ -225,3 +225,21 @@ target_link_libraries(thread-timeline-policy-test
 )
 
 add_test(NAME thread-timeline-policy-test COMMAND thread-timeline-policy-test)
+
+add_executable(thread-live-timeline-test
+    ThreadLiveTimelineTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/backend/PostTimeline.cpp"
+)
+
+target_include_directories(thread-live-timeline-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(thread-live-timeline-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME thread-live-timeline-test COMMAND thread-live-timeline-test)
