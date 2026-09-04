@@ -35,6 +35,14 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
         postSource->requestRange(first, last, toSourceReason(reason), generation);
     });
 
+    connect(this, &LongListWidget::visibleRangeChanged, this,
+            [this](int first, int) {
+        if (!postSource || first < 0 || first > 1 || !postSource->canRequestBeforeFirst()) {
+            return;
+        }
+        postSource->requestBeforeFirst(AbstractPostSource::RequestReason::Scroll, 0);
+    });
+
     // QScrollBar::setValue() used by LongListWidget's geometry transactions does
     // not emit actionTriggered/sliderReleased, so these are safe user-gesture
     // notifications. Defer actionTriggered because Qt updates the value as part
@@ -211,9 +219,16 @@ QWidget* ChatLogWidget::createItemWidget(int index)
         }
     }
 
+    const QString postId = post->id;
     auto* widget = new PostWidget(*backend, *post, viewport(), chatArea, lastRootPost);
-    connect(widget, &PostWidget::dimensionsChanged, this, [this, index] {
-        itemsChanged(index, index);
+    connect(widget, &PostWidget::dimensionsChanged, this, [this, postId] {
+        if (!postSource) {
+            return;
+        }
+        const int currentIndex = postSource->indexOfPost(postId);
+        if (currentIndex >= 0) {
+            itemsChanged(currentIndex, currentIndex);
+        }
     });
     return widget;
 }
@@ -256,6 +271,11 @@ void ChatLogWidget::reconnectSource()
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::itemCountChanged,
                                         this, [this](int count) {
         setItemCount(count);
+        restoreNavigationTarget();
+    }));
+    sourceConnections.push_back(connect(postSource, &AbstractPostSource::itemsInserted,
+                                        this, [this](int first, int count) {
+        insertItems(first, count);
         restoreNavigationTarget();
     }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::rangeAvailable,
