@@ -159,6 +159,30 @@ private slots:
                  "Late sizeHint changes must not detach a sticky-bottom viewport from the end");
     }
 
+    void itemCountGrowthKeepsStickyBottom()
+    {
+        TestLongListWidget list;
+        list.resize(480, 320);
+        list.setDefaultItemHeight(60);
+        list.setItemCount(200);
+        list.setRangeAvailable(0, 199);
+        list.show();
+        settleEvents();
+        list.scrollToEnd();
+        settleEvents();
+
+        QCOMPARE(list.verticalScrollBar()->value(), list.verticalScrollBar()->maximum());
+        QVERIFY(list.visibleRange().contains(199));
+
+        list.setItemCount(201);
+        list.setRangeAvailable(200, 200);
+        settleEvents(12);
+
+        QCOMPARE(list.verticalScrollBar()->value(), list.verticalScrollBar()->maximum());
+        QVERIFY2(list.visibleRange().contains(200),
+                 "Appending a logical item must keep an already sticky viewport at the new end");
+    }
+
     void lateGeometryCannotLeaveViewportWithoutMaterializedItems()
     {
         TestLongListWidget list;
