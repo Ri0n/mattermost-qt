@@ -110,6 +110,27 @@ public:
     void scrollToIndex(int index, Alignment alignment = Alignment::EnsureVisible);
     void scrollToEnd();
 
+    /**
+     * Pin the top edge of a logical item to its current relative viewport Y.
+     * The initial alignment is applied once; later geometry changes preserve
+     * the same absolute Y while the viewport height is unchanged and the same
+     * Y / viewportHeight fraction across a resize. Direct user scrolling
+     * releases the lock. A zero quiet period keeps it until that user gesture.
+     */
+    bool lockViewportToItem(int index,
+                            Alignment alignment = Alignment::Center,
+                            int quietPeriodMs = 2000);
+
+    /**
+     * Change the logical index represented by an active viewport lock without
+     * changing its screen position. Used when source identity is remapped from
+     * an estimated slot to an authoritative slot.
+     */
+    bool remapViewportLockedItem(int index);
+
+    void clearViewportLock();
+    bool hasViewportLock() const { return viewportLock.index >= 0; }
+
 signals:
     /**
      * Request logical items. first/last are inclusive. generation changes for
@@ -124,6 +145,9 @@ signals:
 
     /** Emitted only for direct user scrollbar/wheel movement. */
     void userViewportChanged(bool atEnd);
+
+    /** Emitted when a viewport lock is released by timeout, user input or caller. */
+    void viewportLockReleased();
 
 protected:
     /** Return a new widget for an available logical item. Ownership is transferred. */
@@ -171,6 +195,12 @@ private:
         qint64 offsetInsideItem = 0;
     };
 
+    struct ViewportLock {
+        int index = -1;
+        long double itemTopFraction = 0.0L;
+        int quietPeriodMs = 0;
+    };
+
     void scheduleSync(RequestReason reason);
     void synchronize();
     void synchronizeRange(const Range& desired,
@@ -198,6 +228,11 @@ private:
     ViewAnchor captureAnchor() const;
     void restoreAnchor(const ViewAnchor& anchor);
     void restoreSeekTarget();
+    void captureViewportLockFraction();
+    void restoreViewportLock();
+    void touchViewportLock();
+    void releaseViewportLock(bool notify);
+    void noteUserViewportChange();
 
     qint64 maximumContentOffset() const;
     qint64 contentOffset() const;
@@ -232,6 +267,7 @@ private:
     QTimer syncTimer;
     QTimer geometryTimer;
     QTimer seekTimer;
+    QTimer viewportLockTimer;
     RequestReason pendingSyncReason = RequestReason::Initial;
 
     bool synchronizing = false;
@@ -242,6 +278,8 @@ private:
     quint64 seekGeneration = 0;
     int seekTarget = -1;
     bool seekActive = false;
+
+    ViewportLock viewportLock;
 
     Range lastVisibleRange;
     Range lastMaterializedRange;
