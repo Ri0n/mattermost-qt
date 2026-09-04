@@ -59,4 +59,16 @@ protected:
      * of a second anchoring switch.
      */
     bool usesInternalViewportAnchoring() const;
+
+    /**
+     * Called after an externally anchored list has committed delayed row size
+     * changes to QListView geometry. The external viewport owner can restore its
+     * semantic anchor against the new scrollbar range here.
+     */
+    virtual void externalViewportGeometryChanged() {}
+
+private:
+    void scheduleExternalViewportGeometryCommit();
+
+    bool externalViewportGeometryCommitScheduled = false;
 };
