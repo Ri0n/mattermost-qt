@@ -22,6 +22,10 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
     setPrefetchScreens(1);
     setSeekDebounceMs(100);
 
+    navigationLockTimer.setSingleShot(true);
+    connect(&navigationLockTimer, &QTimer::timeout,
+            this, &ChatLogWidget::clearNavigationLock);
+
     connect(this, &LongListWidget::rangeRequested, this,
             [this](int first, int last, RequestReason reason, quint64 generation) {
         if (!postSource) {
@@ -43,6 +47,12 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
     connect(verticalScrollBar(), &QScrollBar::sliderReleased, this, [this] {
         emit userViewportChanged(isAtEnd());
     });
+
+    // Semantic navigation is intentionally canceled only by real user scroll
+    // gestures. Geometry corrections and source-driven remapping never emit
+    // userViewportChanged(), so they keep the post-ID lock intact.
+    connect(this, &LongListWidget::userViewportChanged, this,
+            [this](bool) { clearNavigationLock(); });
 }
 
 ChatLogWidget::~ChatLogWidget()
@@ -64,6 +74,7 @@ void ChatLogWidget::setSource(AbstractPostSource* sourceInstance)
         return;
     }
 
+    clearNavigationLock();
     for (const QMetaObject::Connection& connection : sourceConnections) {
         disconnect(connection);
     }
@@ -122,6 +133,37 @@ void ChatLogWidget::refreshPost(const QString& postId)
     if (index >= 0) {
         rematerializeRange(index, index);
     }
+}
+
+bool ChatLogWidget::lockNavigationToPost(const QString& postId,
+                                         Alignment alignment,
+                                         int quietPeriodMs)
+{
+    if (!postSource || postId.isEmpty()) {
+        clearNavigationLock();
+        return false;
+    }
+
+    const int index = postSource->ensurePostIndex(postId);
+    if (index < 0) {
+        clearNavigationLock();
+        return false;
+    }
+
+    navigationPostId = postId;
+    navigationAlignment = alignment;
+    navigationLogicalIndex = -1;
+    navigationQuietPeriodMs = std::max(0, quietPeriodMs);
+    restoreNavigationTarget(true);
+    return true;
+}
+
+void ChatLogWidget::clearNavigationLock()
+{
+    navigationLockTimer.stop();
+    navigationPostId.clear();
+    navigationLogicalIndex = -1;
+    navigationQuietPeriodMs = 0;
 }
 
 bool ChatLogWidget::editLastOwnPost()
@@ -214,14 +256,17 @@ void ChatLogWidget::reconnectSource()
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::itemCountChanged,
                                         this, [this](int count) {
         setItemCount(count);
+        restoreNavigationTarget();
     }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::rangeAvailable,
                                         this, [this](int first, int last) {
         setRangeAvailable(first, last, true);
+        restoreNavigationTarget();
     }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::itemsChanged,
                                         this, [this](int first, int last) {
         rematerializeRange(first, last);
+        restoreNavigationTarget();
     }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::rangeRequestFinished,
                                         this, [this](int first, int last) {
@@ -241,14 +286,50 @@ void ChatLogWidget::rematerializeRange(int first, int last)
     }
 
     for (int index = first; index <= last; ++index) {
-        if (!itemWidget(index)) {
+        const bool sourceAvailable = postSource->isAvailable(index);
+        if (itemWidget(index)) {
+            // Force replacement so PostWidget gets the source's new identity or
+            // content rather than retaining an object for a provisional slot.
+            setRangeAvailable(index, index, false);
+            if (sourceAvailable) {
+                setRangeAvailable(index, index, true);
+            }
             continue;
         }
-        setRangeAvailable(index, index, false);
-        if (postSource->isAvailable(index)) {
-            setRangeAvailable(index, index, true);
-        }
+
+        // Availability itself can change before a QWidget was ever materialized
+        // (notably when an estimated semantic target moves to an authoritative
+        // page). Keep LongListWidget's bitset synchronized with the source too.
+        setRangeAvailable(index, index, sourceAvailable);
     }
+}
+
+bool ChatLogWidget::restoreNavigationTarget(bool force)
+{
+    if (!postSource || navigationPostId.isEmpty()) {
+        return false;
+    }
+
+    const int index = postSource->indexOfPost(navigationPostId);
+    if (index < 0) {
+        return false;
+    }
+    if (!force && index == navigationLogicalIndex) {
+        return true;
+    }
+
+    navigationLogicalIndex = index;
+    scrollToIndex(index, navigationAlignment);
+    touchNavigationLock();
+    return true;
+}
+
+void ChatLogWidget::touchNavigationLock()
+{
+    if (navigationPostId.isEmpty() || navigationQuietPeriodMs <= 0) {
+        return;
+    }
+    navigationLockTimer.start(navigationQuietPeriodMs);
 }
 
 } // namespace Mattermost
