@@ -250,19 +250,17 @@ void ThreadPostSource::requestRange(int first,
         return;
     }
 
-    if (requestedFirst == 0 && !postIds.isEmpty()) {
+    if (requestedFirst == 0) {
         postIds[0] = rootId;
         rebuildIndex();
         emit rangeAvailable(0, 0);
     }
 
-    // Real boundaries and already-known adjacent identities are authoritative.
-    // Prefer them over timestamp estimates: a scroll request for a hole next to
-    // a known row can be filled exactly with a fromPost cursor. Timestamp seek
-    // remains only for genuinely disconnected/random middle windows.
     QPointer<ThreadPostSource> guard(this);
     BackendPost* root = rootPost();
 
+    // The oldest edge is authoritative. Fetch it directly even if the same
+    // logical block also overlaps the tail of a short thread.
     if (requestedFirst <= 1) {
         qCDebug(lcThreadTimelineTrace).nospace()
             << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
@@ -289,22 +287,31 @@ void ThreadPostSource::requestRange(int first,
     }
 
     int firstMissing = -1;
+    int lastMissing = -1;
     for (int index = requestedFirst; index <= requestedLast; ++index) {
-        if (postIds.at(index).isEmpty()) {
-            firstMissing = index;
-            break;
+        if (!postIds.at(index).isEmpty()) {
+            continue;
         }
+        if (firstMissing < 0) {
+            firstMissing = index;
+        }
+        lastMissing = index;
     }
+
+    // Once either side of a gap is known, that identity is a stronger anchor
+    // than a timestamp estimate. Fill sequentially from the adjacent cursor.
     if (firstMissing > 0 && !postIds.at(firstMissing - 1).isEmpty()) {
         const int anchorIndex = firstMissing - 1;
         const QString anchorId = postIds.at(anchorIndex);
+        BackendPost* anchorPost = channel.postIdToPost.value(anchorId, nullptr);
+        const uint64_t anchorCreateAt = anchorPost ? anchorPost->create_at : 0;
         qCDebug(lcThreadTimelineTrace).nospace()
             << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
             << " branch=cursor-forward anchorIndex=" << anchorIndex
             << " anchor=" << shortId(anchorId)
             << " firstMissing=" << firstMissing;
-        PostTimelineService::instance(backend).loadThreadPage(
-            channel, rootId, ServerBlockSize, anchorId, 0,
+        PostTimelineService::instance(backend).loadThreadAfter(
+            channel, rootId, anchorId, anchorCreateAt, ServerBlockSize,
             [guard, anchorIndex, anchorId, first, last](const PostTimelineService::Page& result) {
                 if (!guard) {
                     return;
@@ -319,17 +326,54 @@ void ThreadPostSource::requestRange(int first,
                     << " next=" << shortId(result.nextPostId)
                     << " hasNext=" << result.hasNext;
                 if (result.success && !result.postIds.isEmpty()) {
-                    // loadThreadPage(fromPost) removes the cursor itself, so the
-                    // first returned reply belongs exactly at anchorIndex + 1.
-                    // placeApproximate also verifies any overlap with already
-                    // mapped identities and keeps those rows stationary.
-                    guard->placeApproximate(anchorIndex + 1, result.postIds);
+                    guard->placeExactWindow(anchorIndex + 1, result.postIds);
                 }
                 emit guard->rangeRequestFinished(first, last);
             });
         return;
     }
 
+    if (lastMissing >= 1
+        && lastMissing + 1 < postIds.size()
+        && !postIds.at(lastMissing + 1).isEmpty()) {
+        const int anchorIndex = lastMissing + 1;
+        const QString anchorId = postIds.at(anchorIndex);
+        BackendPost* anchorPost = channel.postIdToPost.value(anchorId, nullptr);
+        const uint64_t anchorCreateAt = anchorPost ? anchorPost->create_at : 0;
+        qCDebug(lcThreadTimelineTrace).nospace()
+            << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
+            << " branch=cursor-backward anchorIndex=" << anchorIndex
+            << " anchor=" << shortId(anchorId)
+            << " lastMissing=" << lastMissing;
+        PostTimelineService::instance(backend).loadThreadBefore(
+            channel, rootId, anchorId, anchorCreateAt, ServerBlockSize,
+            [guard, anchorIndex, anchorId, first, last](const PostTimelineService::Page& result) {
+                if (!guard) {
+                    return;
+                }
+                qCDebug(lcThreadTimelineTrace).nospace()
+                    << "THREAD_RESPONSE source=" << static_cast<const void*>(guard.data())
+                    << " branch=cursor-backward anchorIndex=" << anchorIndex
+                    << " anchor=" << shortId(anchorId)
+                    << " success=" << result.success
+                    << " ids=" << idsSummary(result.postIds)
+                    << " prev=" << shortId(result.prevPostId)
+                    << " next=" << shortId(result.nextPostId)
+                    << " hasNext=" << result.hasNext;
+                if (result.success && !result.postIds.isEmpty()) {
+                    const int pageCount = std::min(static_cast<int>(result.postIds.size()),
+                                                   std::max(0, anchorIndex - 1));
+                    if (pageCount > 0) {
+                        const QStringList page = result.postIds.mid(result.postIds.size() - pageCount);
+                        guard->placeExactWindow(anchorIndex - pageCount, page);
+                    }
+                }
+                emit guard->rangeRequestFinished(first, last);
+            });
+        return;
+    }
+
+    // With no adjacent known identity, the newest boundary is still exact.
     if (requestedLast >= static_cast<int>(postIds.size()) - ServerBlockSize) {
         qCDebug(lcThreadTimelineTrace).nospace()
             << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
@@ -355,6 +399,7 @@ void ThreadPostSource::requestRange(int first,
         return;
     }
 
+    // Only a genuinely disconnected random middle window needs timestamp seek.
     const int target = (requestedFirst + requestedLast) / 2;
     const uint64_t estimatedTime = estimatedCreateAt(target);
     qCDebug(lcThreadTimelineTrace).nospace()
@@ -453,28 +498,15 @@ void ThreadPostSource::seedCachedPosts()
         return;
     }
 
-    const BackendPost* newest = replies.last();
-    if (root->last_reply_at != 0 && newest->create_at >= root->last_reply_at) {
-        const int first = std::max(1,
-            static_cast<int>(postIds.size()) - static_cast<int>(replies.size()));
-        const int count = std::min(static_cast<int>(replies.size()),
-                                   static_cast<int>(postIds.size()) - first);
-        for (int offset = 0; offset < count; ++offset) {
-            postIds[first + offset] = replies.at(replies.size() - count + offset)->id;
-        }
-        rebuildIndex();
-        qCDebug(lcThreadTimelineTrace).nospace()
-            << "THREAD_SEED_TAIL source=" << static_cast<const void*>(this)
-            << " first=" << first
-            << ' ' << slotSummary(postIds);
-        emit rangeAvailable(0, 0);
-        emit rangeAvailable(first, first + count - 1);
-        return;
-    }
-
+    // A partial BackendChannel cache has no contiguity/provenance metadata. It
+    // may contain a tail page, an older context page, or both. Packing all such
+    // replies into a suffix manufactures authoritative indices that we do not
+    // actually know and later forces destructive remaps. Until the cache can
+    // describe contiguous windows, only seed a partial thread at its real root.
     rebuildIndex();
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_SEED_ROOT_ONLY source=" << static_cast<const void*>(this)
+        << " partialCachedReplies=" << replies.size()
         << ' ' << slotSummary(postIds);
     emit rangeAvailable(0, 0);
 }
@@ -489,51 +521,76 @@ void ThreadPostSource::rebuildIndex()
     }
 }
 
+void ThreadPostSource::placeExactWindow(int first, const QStringList& ids)
+{
+    if (postIds.isEmpty() || ids.isEmpty()) {
+        return;
+    }
+
+    first = std::max(0, std::min(first, static_cast<int>(postIds.size()) - 1));
+    const int count = std::min(static_cast<int>(ids.size()),
+                               static_cast<int>(postIds.size()) - first);
+    if (count <= 0) {
+        return;
+    }
+    const int last = first + count - 1;
+    const QVector<QString> before = postIds;
+
+    // Apply identity changes atomically. Exact cursor windows have authoritative
+    // logical placement, so old provisional occurrences move to this window;
+    // they are not allowed to override the cursor origin.
+    for (int offset = 0; offset < count; ++offset) {
+        const QString& id = ids.at(offset);
+        const int target = first + offset;
+        const int existing = postIndexes.value(id, -1);
+        if (existing >= 0 && existing != target) {
+            postIds[existing].clear();
+        }
+    }
+    for (int offset = 0; offset < count; ++offset) {
+        postIds[first + offset] = ids.at(offset);
+    }
+    rebuildIndex();
+
+    // Newly filled empty slots need only availability. Existing concrete rows
+    // are rematerialized only when their identity really changed.
+    for (int index = 0; index < postIds.size(); ++index) {
+        if (before.at(index) != postIds.at(index) && !before.at(index).isEmpty()) {
+            emit itemsChanged(index, index);
+        }
+    }
+    emit rangeAvailable(first, last);
+}
+
 void ThreadPostSource::placeInitial(const QStringList& ids)
 {
     if (postIds.isEmpty() || ids.isEmpty()) {
         return;
     }
 
-    int first = ids.first() == rootId ? 0 : 1;
+    const int first = ids.first() == rootId ? 0 : 1;
     const int count = std::min(static_cast<int>(ids.size()),
                                static_cast<int>(postIds.size()) - first);
-    const int last = first + count - 1;
+    if (count <= 0) {
+        return;
+    }
+    const QStringList page = ids.mid(0, count);
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PLACE_INITIAL source=" << static_cast<const void*>(this)
-        << " ids=" << idsSummary(ids)
-        << " target=[" << first << ',' << last << ']'
+        << " ids=" << idsSummary(page)
+        << " target=[" << first << ',' << (first + count - 1) << ']'
         << " before=" << slotSummary(postIds);
 
-    bool targetChanged = false;
-    for (int offset = 0; offset < count; ++offset) {
-        const QString& id = ids.at(offset);
-        const int existing = postIndexes.value(id, -1);
-        if (existing >= 0 && (existing < first || existing > last)) {
-            postIds[existing].clear();
-            emit itemsChanged(existing, existing);
-        }
-        if (postIds.at(first + offset) != id) {
-            targetChanged = true;
-        }
-    }
-    for (int offset = 0; offset < count; ++offset) {
-        postIds[first + offset] = ids.at(offset);
-    }
-    if (first > 0) {
-        if (postIds[0] != rootId) {
-            targetChanged = true;
-        }
+    placeExactWindow(first, page);
+    if (first > 0 && !postIds.isEmpty()) {
         postIds[0] = rootId;
+        rebuildIndex();
+        emit rangeAvailable(0, 0);
     }
-    rebuildIndex();
+
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PLACE_INITIAL_DONE source=" << static_cast<const void*>(this)
         << ' ' << slotSummary(postIds);
-    if (targetChanged) {
-        emit itemsChanged(first, last);
-    }
-    emit rangeAvailable(0, std::max(0, last));
 }
 
 void ThreadPostSource::placeTail(const QStringList& ids)
@@ -541,37 +598,25 @@ void ThreadPostSource::placeTail(const QStringList& ids)
     if (postIds.size() <= 1 || ids.isEmpty()) {
         return;
     }
+
     const int count = std::min(static_cast<int>(ids.size()),
                                static_cast<int>(postIds.size()) - 1);
+    if (count <= 0) {
+        return;
+    }
     const int first = static_cast<int>(postIds.size()) - count;
-    const int last = first + count - 1;
+    const QStringList page = ids.mid(ids.size() - count);
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PLACE_TAIL source=" << static_cast<const void*>(this)
-        << " ids=" << idsSummary(ids)
-        << " target=[" << first << ',' << last << ']'
+        << " ids=" << idsSummary(page)
+        << " target=[" << first << ',' << (first + count - 1) << ']'
         << " before=" << slotSummary(postIds);
 
-    bool targetChanged = false;
-    for (int offset = 0; offset < count; ++offset) {
-        const QString& id = ids.at(ids.size() - count + offset);
-        const int existing = postIndexes.value(id, -1);
-        if (existing >= 0 && (existing < first || existing > last)) {
-            postIds[existing].clear();
-            emit itemsChanged(existing, existing);
-        }
-        if (postIds.at(first + offset) != id) {
-            targetChanged = true;
-        }
-        postIds[first + offset] = id;
-    }
-    rebuildIndex();
+    placeExactWindow(first, page);
+
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PLACE_TAIL_DONE source=" << static_cast<const void*>(this)
         << ' ' << slotSummary(postIds);
-    if (targetChanged) {
-        emit itemsChanged(first, last);
-    }
-    emit rangeAvailable(first, last);
 }
 
 void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
@@ -583,16 +628,12 @@ void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
                                static_cast<int>(postIds.size()) - 1);
     const int maxFirst = std::max(1, static_cast<int>(postIds.size()) - count);
 
-    // The supplied target is the expected start of this forward page. For
-    // timestamp seeks that is approximate; for fromPost cursor expansion it is
-    // exact. Existing overlap can refine/verify that origin in either case.
+    // A forward timestamp page starts near the estimated logical target. The
+    // estimate is only a fallback; overlap with already mapped identities gives
+    // an exact page origin and must keep those rows stationary.
     const int fallbackFirst = std::max(1, std::min(targetIndex, maxFirst));
     int first = fallbackFirst;
 
-    // A timestamp estimate can be far from the real logical rank. When the
-    // response overlaps identities that are already mapped, those identities
-    // provide an exact translation from page offset to logical index. Preserve
-    // that mapping instead of relocating the known rows to the estimate.
     int alignedFirst = -1;
     int overlapCount = 0;
     bool overlapConflict = false;
@@ -629,10 +670,6 @@ void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
         << " before=" << slotSummary(postIds);
 
     const QVector<QString> before = postIds;
-
-    // Mutate the identity map atomically first. Signals are emitted only after
-    // rebuildIndex(), so semantic navigation never observes an ID pointing to a
-    // slot that has already been cleared.
     for (int offset = 0; offset < count; ++offset) {
         const QString& id = ids.at(offset);
         const int target = first + offset;
@@ -650,10 +687,6 @@ void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
         << "THREAD_PLACE_APPROX_DONE source=" << static_cast<const void*>(this)
         << ' ' << slotSummary(postIds);
 
-    // Newly filled empty slots only need rangeAvailable(). itemsChanged() is
-    // reserved for indices that previously held a concrete identity and now
-    // need an existing PostWidget removed/replaced. This keeps an unchanged
-    // overlap (the common cursor-expansion case) completely stable on screen.
     for (int index = 0; index < postIds.size(); ++index) {
         if (before.at(index) != postIds.at(index) && !before.at(index).isEmpty()) {
             emit itemsChanged(index, index);
