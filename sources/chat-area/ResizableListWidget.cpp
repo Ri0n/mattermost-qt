@@ -54,10 +54,11 @@ void ResizableListWidget::setItemWidget(QListWidgetItem* item, QWidget* widget)
     });
     item->setSizeHint(QSize(std::max(1, viewport()->width()), initialHeight));
 
-    // Initial row setup happens while a chat is being populated. Do not anchor
-    // the viewport here: the caller may still need to scroll to unread posts or
-    // restore a previously saved chat position after all rows are present.
-    scheduleItemResize(item, widget, false);
+    // Ordinary lists do not need to anchor their first population. Sparse lists
+    // are different: the controller may already have committed Bottom/Post while
+    // these zero-timeout row measurements are still pending. Let their external
+    // semantic owner restore once the real row geometry has been committed.
+    scheduleItemResize(item, widget, !usesInternalViewportAnchoring());
 }
 
 bool ResizableListWidget::usesInternalViewportAnchoring() const
@@ -71,6 +72,24 @@ bool ResizableListWidget::usesInternalViewportAnchoring() const
     // thumb seek or a navigation lock. This base class only knows physical rows
     // and therefore must never schedule a second delayed restore for that view.
     return !inherits("Mattermost::PostsListWidget");
+}
+
+void ResizableListWidget::scheduleExternalViewportGeometryCommit()
+{
+    if (externalViewportGeometryCommitScheduled) {
+        return;
+    }
+
+    externalViewportGeometryCommitScheduled = true;
+    QTimer::singleShot(0, this, [this] {
+        externalViewportGeometryCommitScheduled = false;
+
+        // QListView normally consumes sizeHint changes lazily. Commit all row
+        // changes accumulated in this event-loop turn in one pass, then notify
+        // the semantic owner against the updated scrollbar range.
+        QListWidget::doItemsLayout();
+        externalViewportGeometryChanged();
+    });
 }
 
 ResizableListWidget::ViewportAnchor ResizableListWidget::captureViewportAnchor() const
@@ -178,6 +197,13 @@ void ResizableListWidget::scheduleItemResize(QListWidgetItem* item, QWidget* wid
 
         currentItem->setSizeHint(QSize(rowWidth, targetHeight));
         guardedWidget->setProperty(RowResizePendingProperty, false);
+
+        if (preserveViewport && !preserveHere) {
+            // The external owner must see a committed QListView range, not merely
+            // a changed sizeHint. Coalesce a whole batch of row measurements into
+            // one geometry commit and one semantic-anchor notification.
+            scheduleExternalViewportGeometryCommit();
+        }
 
         if (preserveHere) {
             // QListView may defer applying the new size hint until the current
