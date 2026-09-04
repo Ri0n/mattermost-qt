@@ -224,7 +224,7 @@
      <property name="childrenCollapsible">
       <bool>false</bool>
      </property>
-     <widget class="Mattermost::PostsListWidget" name="listWidget">
+     <widget class="Mattermost::ChatLogWidget" name="listWidget">
       <property name="sizePolicy">
        <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
         <horstretch>0</horstretch>
@@ -233,21 +233,6 @@
       </property>
       <property name="focusPolicy">
        <enum>Qt::ClickFocus</enum>
-      </property>
-      <property name="contextMenuPolicy">
-       <enum>Qt::CustomContextMenu</enum>
-      </property>
-      <property name="sizeAdjustPolicy">
-       <enum>QAbstractScrollArea::AdjustToContents</enum>
-      </property>
-      <property name="selectionMode">
-       <enum>QAbstractItemView::ContiguousSelection</enum>
-      </property>
-      <property name="verticalScrollMode">
-       <enum>QAbstractItemView::ScrollPerPixel</enum>
-      </property>
-      <property name="resizeMode">
-       <enum>QListView::Adjust</enum>
       </property>
      </widget>
      <widget class="Mattermost::OutgoingPostCreator" name="outgoingPostCreator" native="true"/>
@@ -272,9 +257,9 @@
    <header>chat-area/ChannelHeaderTextLabel.h</header>
   </customwidget>
   <customwidget>
-   <class>Mattermost::PostsListWidget</class>
-   <extends>QListWidget</extends>
-   <header>chat-area/PostsListWidget.h</header>
+   <class>Mattermost::ChatLogWidget</class>
+   <extends>QAbstractScrollArea</extends>
+   <header>chat-area/ChatLogWidget.h</header>
   </customwidget>
   <customwidget>
    <class>Mattermost::OutgoingPostCreator</class>
