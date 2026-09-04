@@ -229,6 +229,94 @@ private slots:
                  "Discovering older items must not detach a sticky viewport from the same newest item");
     }
 
+    void viewportLockKeepsSameYAcrossReflow()
+    {
+        TestLongListWidget list;
+        list.resize(480, 400);
+        list.setDefaultItemHeight(60);
+        list.setItemCount(300);
+        list.setRangeAvailable(0, 299);
+        list.show();
+        settleEvents();
+
+        QVERIFY(list.lockViewportToItem(150,
+                                        Mattermost::LongListWidget::Alignment::Center,
+                                        0));
+        settleEvents(12);
+        QWidget* locked = list.itemWidget(150);
+        QVERIFY(locked != nullptr);
+        const int yBefore = locked->y();
+
+        QVERIFY2(list.materializedRange().contains(149),
+                 "The row immediately above a centered lock should be materialized for this test");
+        list.setSyntheticHeight(149, 260);
+        settleEvents(16);
+
+        locked = list.itemWidget(150);
+        QVERIFY(locked != nullptr);
+        QVERIFY2(qAbs(locked->y() - yBefore) <= 2,
+                 "Reflow above a locked item must keep its viewport Y stable");
+    }
+
+    void viewportLockScalesRelativeYAcrossResize()
+    {
+        TestLongListWidget list;
+        list.resize(480, 500);
+        list.setDefaultItemHeight(60);
+        list.setItemCount(300);
+        list.setRangeAvailable(0, 299);
+        list.show();
+        settleEvents();
+
+        QVERIFY(list.lockViewportToItem(150,
+                                        Mattermost::LongListWidget::Alignment::Center,
+                                        0));
+        settleEvents(12);
+        QWidget* locked = list.itemWidget(150);
+        QVERIFY(locked != nullptr);
+        const int yBefore = locked->y();
+        const int viewportBefore = list.viewport()->height();
+        QVERIFY(viewportBefore > 0);
+
+        list.resize(480, 260);
+        settleEvents(16);
+
+        locked = list.itemWidget(150);
+        QVERIFY(locked != nullptr);
+        const int viewportAfter = list.viewport()->height();
+        const int expectedY = qRound(static_cast<qreal>(yBefore)
+            * static_cast<qreal>(viewportAfter) / static_cast<qreal>(viewportBefore));
+        QVERIFY2(qAbs(locked->y() - expectedY) <= 2,
+                 "A locked item's Y must scale with viewport height across resize");
+    }
+
+    void viewportLockRemapKeepsScreenPosition()
+    {
+        TestLongListWidget list;
+        list.resize(480, 400);
+        list.setDefaultItemHeight(60);
+        list.setItemCount(300);
+        list.setRangeAvailable(0, 299);
+        list.show();
+        settleEvents();
+
+        QVERIFY(list.lockViewportToItem(120,
+                                        Mattermost::LongListWidget::Alignment::Center,
+                                        0));
+        settleEvents(12);
+        QWidget* oldTarget = list.itemWidget(120);
+        QVERIFY(oldTarget != nullptr);
+        const int yBefore = oldTarget->y();
+
+        QVERIFY(list.remapViewportLockedItem(170));
+        settleEvents(16);
+
+        QWidget* newTarget = list.itemWidget(170);
+        QVERIFY(newTarget != nullptr);
+        QVERIFY2(qAbs(newTarget->y() - yBefore) <= 2,
+                 "Authoritative logical remap must not recenter or otherwise move the locked target");
+    }
+
     void lateGeometryCannotLeaveViewportWithoutMaterializedItems()
     {
         TestLongListWidget list;
