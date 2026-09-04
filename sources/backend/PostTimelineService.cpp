@@ -13,6 +13,7 @@
 #include "Backend.h"
 #include "NetworkRequest.h"
 #include "types/BackendChannel.h"
+#include "types/BackendPost.h"
 
 namespace Mattermost {
 namespace {
@@ -284,6 +285,23 @@ void PostTimelineService::loadThread(BackendChannel& channel,
         return;
     }
 
+    // Mattermost's thread endpoint uses (fromCreateAt, fromPost) as a compound
+    // cursor. Supplying fromPost alone is rejected by the server. Callers always
+    // reference posts already present in BackendChannel, so recover the required
+    // timestamp here rather than ever issuing an invalid request.
+    uint64_t effectiveFromCreateAt = fromCreateAt;
+    if (!fromPost.isEmpty() && effectiveFromCreateAt == 0) {
+        BackendPost* cursor = channel.postIdToPost.value(fromPost, nullptr);
+        if (!cursor) {
+            Page result;
+            if (callback) {
+                callback(result);
+            }
+            return;
+        }
+        effectiveFromCreateAt = cursor->create_at;
+    }
+
     const int safePerPage = std::max(1, perPage);
     const QString safeDirection = direction == QLatin1String("up")
         ? QStringLiteral("up") : QStringLiteral("down");
@@ -294,12 +312,12 @@ void PostTimelineService::loadThread(BackendChannel& channel,
     if (!fromPost.isEmpty()) {
         path += QStringLiteral("&fromPost=") + fromPost;
     }
-    if (fromCreateAt != 0) {
-        path += QStringLiteral("&fromCreateAt=") + QString::number(fromCreateAt);
+    if (effectiveFromCreateAt != 0) {
+        path += QStringLiteral("&fromCreateAt=") + QString::number(effectiveFromCreateAt);
     }
 
     const bool initialPage = safeDirection == QLatin1String("down")
-        && fromPost.isEmpty() && fromCreateAt == 0;
+        && fromPost.isEmpty() && effectiveFromCreateAt == 0;
     QPointer<BackendChannel> channelGuard(&channel);
     coalescedGet(path,
         [channelGuard, rootId, fromPost, initialPage, callback = std::move(callback)](
