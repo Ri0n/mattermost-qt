@@ -7,6 +7,7 @@
 
 #include <QPointer>
 #include <QSet>
+#include <QTimer>
 
 #include "backend/Backend.h"
 #include "backend/PostTimelineService.h"
@@ -47,9 +48,21 @@ ChannelPostSource::ChannelPostSource(Backend& backendInstance,
     : AbstractPostSource(parent)
     , backend(backendInstance)
     , channel(channelInstance)
+    , exactRootCount(channelInstance.has_total_msg_count_root)
 {
-    postIds.resize(currentLogicalCount());
-    seedCachedPosts();
+    if (exactRootCount) {
+        postIds.resize(currentLogicalCount());
+        seedCachedPosts();
+    } else {
+        // Without total_msg_count_root there is no honest absolute oldest->newest
+        // coordinate system yet. Start with at most a provably newest cached root
+        // and discover older real rows with cursor requests + logical prepends.
+        moreBeforeFirst = true;
+        seedUnknownNewestPost();
+        QTimer::singleShot(0, this, [this] {
+            requestBeforeFirst(RequestReason::Initial, 0);
+        });
+    }
 
     connect(&channel, &BackendChannel::onNewPost, this,
             [this](BackendPost& post) { appendLivePost(post); });
@@ -76,6 +89,9 @@ ChannelPostSource::ChannelPostSource(Backend& backendInstance,
     });
     connect(&channel, &BackendChannel::onNewPosts, this,
             [this](const ChannelNewPosts&) {
+        if (!exactRootCount) {
+            return;
+        }
         const int count = currentLogicalCount();
         if (count != static_cast<int>(postIds.size())) {
             postIds.resize(count);
@@ -112,7 +128,15 @@ int ChannelPostSource::ensurePostIndex(const QString& postId)
     }
 
     BackendPost* post = channel.postIdToPost.value(postId, nullptr);
-    if (!post || post->hidden || !post->root_id.isEmpty() || postIds.isEmpty()) {
+    if (!post || post->hidden || !post->root_id.isEmpty()) {
+        return -1;
+    }
+
+    // Estimated absolute placement is meaningful only when the root-post count
+    // supplies a stable coordinate system. Unknown-count compatibility mode is
+    // a contiguous discovered sequence and must not manufacture adjacency for an
+    // arbitrary cached permalink target.
+    if (!exactRootCount || postIds.isEmpty()) {
         return -1;
     }
 
@@ -135,7 +159,7 @@ void ChannelPostSource::requestRange(int first,
     Q_UNUSED(reason)
     Q_UNUSED(generation)
 
-    if (postIds.isEmpty()) {
+    if (!exactRootCount || postIds.isEmpty()) {
         emit rangeRequestFinished(first, last);
         return;
     }
@@ -171,17 +195,65 @@ void ChannelPostSource::requestRange(int first,
     }
 }
 
-int ChannelPostSource::currentLogicalCount() const
+bool ChannelPostSource::canRequestBeforeFirst() const
 {
-    if (channel.has_total_msg_count_root) {
-        return std::max(0, channel.total_msg_count_root);
+    return !exactRootCount && moreBeforeFirst;
+}
+
+void ChannelPostSource::requestBeforeFirst(RequestReason reason, quint64 generation)
+{
+    Q_UNUSED(reason)
+    Q_UNUSED(generation)
+
+    if (exactRootCount || !moreBeforeFirst || beforeRequestInFlight) {
+        return;
     }
 
-    const QVector<BackendPost*> cached = cachedRootPosts(channel);
-    if (!cached.isEmpty()) {
-        return static_cast<int>(cached.size());
+    beforeRequestInFlight = true;
+    QPointer<ChannelPostSource> guard(this);
+    auto completed = [guard](const PostTimelineService::Page& result) {
+        if (!guard) {
+            return;
+        }
+        guard->beforeRequestInFlight = false;
+        if (!result.success) {
+            return;
+        }
+
+        QStringList discovered;
+        discovered.reserve(result.postIds.size());
+        for (const QString& id : result.postIds) {
+            if (!id.isEmpty() && guard->indexOfPost(id) < 0) {
+                discovered.push_back(id);
+            }
+        }
+
+        if (!discovered.isEmpty()) {
+            guard->prependDiscovered(discovered);
+        }
+
+        // An empty cursor or an empty non-overlapping result is a real boundary
+        // for this compatibility walk. Keeping the flag set in that state would
+        // cause every top-edge gesture to repeat the same request forever.
+        guard->moreBeforeFirst = !result.prevPostId.isEmpty() && !discovered.isEmpty();
+    };
+
+    if (postIds.isEmpty()) {
+        PostTimelineService::instance(backend).loadChannelPage(
+            channel, 0, ServerPageSize, std::move(completed));
+        return;
     }
-    return std::max(0, channel.total_msg_count);
+
+    PostTimelineService::instance(backend).loadChannelBefore(
+        channel, postIds.first(), ServerPageSize, std::move(completed));
+}
+
+int ChannelPostSource::currentLogicalCount() const
+{
+    if (exactRootCount) {
+        return std::max(0, channel.total_msg_count_root);
+    }
+    return static_cast<int>(postIds.size());
 }
 
 int ChannelPostSource::pageForIndex(int index) const
@@ -270,6 +342,10 @@ int ChannelPostSource::nearestEmptyIndex(int preferred) const
 
 void ChannelPostSource::seedCachedPosts()
 {
+    if (!exactRootCount) {
+        return;
+    }
+
     const QVector<BackendPost*> cached = cachedRootPosts(channel);
     if (cached.isEmpty()) {
         return;
@@ -296,6 +372,26 @@ void ChannelPostSource::seedCachedPosts()
     emit rangeAvailable(first, static_cast<int>(postIds.size()) - 1);
 }
 
+void ChannelPostSource::seedUnknownNewestPost()
+{
+    if (exactRootCount || channel.last_post_at == 0) {
+        return;
+    }
+
+    const QVector<BackendPost*> cached = cachedRootPosts(channel);
+    if (cached.isEmpty()) {
+        return;
+    }
+
+    BackendPost* newest = cached.last();
+    if (!newest || newest->create_at < channel.last_post_at) {
+        return;
+    }
+
+    postIds.push_back(newest->id);
+    rebuildIndex();
+}
+
 void ChannelPostSource::rebuildIndex()
 {
     postIndexes.clear();
@@ -308,7 +404,7 @@ void ChannelPostSource::rebuildIndex()
 
 void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
 {
-    if (postIds.isEmpty() || chronologicalIds.isEmpty()) {
+    if (!exactRootCount || postIds.isEmpty() || chronologicalIds.isEmpty()) {
         return;
     }
 
@@ -337,6 +433,28 @@ void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
     emit rangeAvailable(first, last);
 }
 
+void ChannelPostSource::prependDiscovered(const QStringList& chronologicalIds)
+{
+    if (chronologicalIds.isEmpty()) {
+        return;
+    }
+
+    QVector<QString> combined;
+    combined.reserve(static_cast<int>(chronologicalIds.size()) + static_cast<int>(postIds.size()));
+    for (const QString& id : chronologicalIds) {
+        combined.push_back(id);
+    }
+    for (const QString& id : std::as_const(postIds)) {
+        combined.push_back(id);
+    }
+
+    const int inserted = static_cast<int>(chronologicalIds.size());
+    postIds = std::move(combined);
+    rebuildIndex();
+    emit itemsInserted(0, inserted);
+    emit rangeAvailable(0, inserted - 1);
+}
+
 void ChannelPostSource::appendLivePost(BackendPost& post)
 {
     if (post.hidden || !post.root_id.isEmpty()) {
@@ -349,7 +467,7 @@ void ChannelPostSource::appendLivePost(BackendPost& post)
         return;
     }
 
-    int count = currentLogicalCount();
+    int count = exactRootCount ? currentLogicalCount() : static_cast<int>(postIds.size()) + 1;
     if (count <= postIds.size()) {
         count = static_cast<int>(postIds.size()) + 1;
     }
