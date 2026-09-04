@@ -2,6 +2,10 @@
 
 #include <algorithm>
 
+#include <QScrollBar>
+#include <QTimer>
+#include <QWheelEvent>
+
 #include "ChatArea.h"
 #include "backend/Backend.h"
 #include "backend/types/BackendPost.h"
@@ -25,6 +29,19 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
             return;
         }
         postSource->requestRange(first, last, toSourceReason(reason), generation);
+    });
+
+    // QScrollBar::setValue() used by LongListWidget's geometry transactions does
+    // not emit actionTriggered/sliderReleased, so these are safe user-gesture
+    // notifications. Defer actionTriggered because Qt updates the value as part
+    // of the same slider action.
+    connect(verticalScrollBar(), &QScrollBar::actionTriggered, this, [this](int) {
+        QTimer::singleShot(0, this, [this] {
+            emit userViewportChanged(isAtEnd());
+        });
+    });
+    connect(verticalScrollBar(), &QScrollBar::sliderReleased, this, [this] {
+        emit userViewportChanged(isAtEnd());
     });
 }
 
@@ -165,6 +182,12 @@ void ChatLogWidget::destroyItemWidget(int index, QWidget* widget)
         editedPostWidget.clear();
     }
     LongListWidget::destroyItemWidget(index, widget);
+}
+
+void ChatLogWidget::wheelEvent(QWheelEvent* event)
+{
+    LongListWidget::wheelEvent(event);
+    emit userViewportChanged(isAtEnd());
 }
 
 AbstractPostSource::RequestReason ChatLogWidget::toSourceReason(RequestReason reason)
