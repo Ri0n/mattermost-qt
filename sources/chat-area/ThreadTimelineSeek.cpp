@@ -53,6 +53,24 @@ QString ThreadTimelineController::seekFocusPostId(
     return timeline.postIdAt(nearest);
 }
 
+void ThreadTimelineController::renderSeekWindow(
+    const TimelineSeekState::Ticket& ticket)
+{
+    if (!seekState.isCurrent(ticket)) {
+        return;
+    }
+
+    // One seek generation owns one viewport anchor. Seed and edge responses may
+    // change sparse geometry several times; none of those intermediate renders
+    // is allowed to re-centre a different PostWidget and make the visible rows
+    // jump/disappear between network responses.
+    if (seekPreserveViewport && seekViewportAnchor.isValid()) {
+        renderTimeline(QString(), false, seekViewportAnchor);
+        return;
+    }
+    renderTimeline(seekFocusPostId(ticket), false, ViewportAnchor());
+}
+
 void ThreadTimelineController::requestSeekSeed(const TimelineSeekState::Ticket& ticket)
 {
     if (!seekState.isCurrent(ticket) || requestInFlight
@@ -62,9 +80,11 @@ void ThreadTimelineController::requestSeekSeed(const TimelineSeekState::Ticket& 
 
     seekState.begin(ticket);
     pendingSeekIndex = ticket.targetIndex;
+    seekViewportAnchor = captureViewportAnchor();
+    seekPreserveViewport = seekViewportAnchor.isValid();
 
     if (!timeline.postIdAt(ticket.targetIndex).isEmpty()) {
-        renderTimeline(timeline.postIdAt(ticket.targetIndex), false, ViewportAnchor());
+        renderSeekWindow(ticket);
         requestSeekExpansion(ticket);
         return;
     }
@@ -122,8 +142,7 @@ void ThreadTimelineController::requestSeekSeed(const TimelineSeekState::Ticket& 
             }
             guard->timeline.placeWindow(window.firstIndex, ids);
 
-            guard->renderTimeline(guard->seekFocusPostId(ticket), false,
-                                  ViewportAnchor());
+            guard->renderSeekWindow(ticket);
             guard->persistState();
             guard->requestSeekExpansion(ticket);
         });
@@ -270,8 +289,7 @@ void ThreadTimelineController::requestSeekEdge(
             guard->seekState.markBoundary(ticket, edge);
         }
 
-        guard->renderTimeline(guard->seekFocusPostId(ticket), false,
-                              ViewportAnchor());
+        guard->renderSeekWindow(ticket);
         guard->persistState();
         guard->requestSeekExpansion(ticket);
     };
@@ -295,8 +313,11 @@ void ThreadTimelineController::finishSeek(const TimelineSeekState::Ticket& ticke
     }
     seekState.complete(ticket);
     pendingSeekIndex = -1;
+    seekPreserveViewport = false;
+    seekViewportAnchor = ViewportAnchor();
     persistState();
     schedulePrune();
+    scheduleViewportCheck();
 }
 
 } // namespace Mattermost
