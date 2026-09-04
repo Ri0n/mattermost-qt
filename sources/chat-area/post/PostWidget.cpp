@@ -38,7 +38,6 @@
 #include "backend/emoji/EmojiInfo.h"
 #include "backend/types/BackendPost.h"
 #include "chat-area/ChatArea.h"
-#include "chat-area/PostsListWidget.h"
 #include "navigation/AppNavigationService.h"
 #include "reactions/PostReactionList.h"
 #include "ui/AvatarUtils.h"
@@ -59,14 +58,6 @@ PostWidget::PostWidget(Backend& backend,
     , messageContent(nullptr)
     , parentChatArea(chatArea)
 {
-	if (auto* list = qobject_cast<PostsListWidget*>(parent);
-	    list && list->canReuseTimelinePost(post.id)) {
-		// Sparse reconciliation keeps the existing row and immediately discards
-		// this duplicate object. Avoid repeating all expensive constructor work:
-		// Markdown/layout, attachments, reactions, avatars and profile requests.
-		return;
-	}
-
 	ui->setupUi(this);
 	ui->authorAvatar->setFrameShape(QFrame::NoFrame);
 	ui->authorName->setText(post.getDisplayAuthorName());

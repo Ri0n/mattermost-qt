@@ -94,6 +94,10 @@ else()
   # files. CI always configures from scratch, but local incremental builds must
   # also rerun CMake when the recursive source set changes.
   file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS sources/*.cpp)
+  # deprecated/ is intentionally a compile-time quarantine. There are no
+  # forwarding headers: any remaining dependency on the old chat timeline must
+  # fail at its real active call site and become part of the migration checklist.
+  list(FILTER SOURCES EXCLUDE REGEX "(^|/)deprecated/")
   add_executable(${APPID}
     ${SOURCES}
     resource.qrc
