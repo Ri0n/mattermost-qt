@@ -375,6 +375,14 @@ void LongListWidget::setRangeAvailable(int first, int last, bool isAvailable)
         return;
     }
 
+    // A measured height belongs to the concrete logical identity that produced
+    // it. If a provisional identity leaves a slot, that measurement must not be
+    // reused as if it described the unknown item that will eventually occupy the
+    // slot. Capture viewport intent before resetting any such height.
+    const ViewAnchor anchor = !isAvailable ? captureAnchor() : ViewAnchor();
+    const qint64 oldOffset = contentOffset();
+    bool geometryChanged = false;
+
     for (int index = first; index <= last; ++index) {
         available.setBit(index, isAvailable);
         pendingRequest.clearBit(index);
@@ -385,7 +393,32 @@ void LongListWidget::setRangeAvailable(int first, int last, bool isAvailable)
                 widget->removeEventFilter(this);
                 destroyItemWidget(index, widget);
             }
+            dirtyGeometry.remove(index);
+            if (measured.testBit(index)) {
+                measured.clearBit(index);
+                heights.setValue(index, estimatedItemHeight(index));
+                geometryChanged = true;
+            }
         }
+    }
+
+    if (geometryChanged) {
+        QSignalBlocker blocker(verticalScrollBar());
+        viewport()->setUpdatesEnabled(false);
+        committingGeometry = true;
+        updateScrollBarRange(oldOffset);
+        if (seekActive && seekTarget >= 0 && materialized.contains(seekTarget)) {
+            restoreSeekTarget();
+        } else if (hasViewportLock()) {
+            restoreViewportLock();
+        } else {
+            restoreAnchor(anchor);
+        }
+        layoutMaterialized();
+        committingGeometry = false;
+        viewport()->setUpdatesEnabled(true);
+        viewport()->update();
+        emitRangeChanges();
     }
 
     scheduleSync(seekActive ? RequestReason::Seek : RequestReason::Scroll);
