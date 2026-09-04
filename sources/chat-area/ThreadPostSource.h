@@ -20,10 +20,11 @@ public:
                               QString rootId,
                               QObject* parent = nullptr);
 
-    int itemCount() const override { return postIds.size(); }
+    int itemCount() const override { return static_cast<int>(postIds.size()); }
     bool isAvailable(int index) const override;
     BackendPost* postAt(int index) const override;
     int indexOfPost(const QString& postId) const override;
+    int ensurePostIndex(const QString& postId) override;
 
     void requestRange(int first,
                       int last,
@@ -37,12 +38,14 @@ private:
 
     BackendPost* rootPost() const;
     int currentLogicalCount() const;
+    int nearestEmptyIndex(int preferred) const;
     void seedCachedPosts();
     void rebuildIndex();
     void placeInitial(const QStringList& ids);
     void placeTail(const QStringList& ids);
     void placeApproximate(int targetIndex, const QStringList& ids);
     uint64_t estimatedCreateAt(int logicalIndex) const;
+    int estimatedIndexForPost(const BackendPost& post) const;
     void appendLiveReply(BackendPost& post);
 
     Backend& backend;
