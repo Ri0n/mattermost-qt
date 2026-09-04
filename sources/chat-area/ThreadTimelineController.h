@@ -34,6 +34,7 @@ public:
     bool ensurePostVisible(const QString& postId);
     void installIncrementalLiveUpdates();
     void materializeLivePost(BackendPost& post);
+    void openNewestOnInitialOpen();
 
 private:
     struct ViewportAnchor {
@@ -98,6 +99,8 @@ private:
     bool hasNext = true;
     bool viewportCheckScheduled = false;
     bool rebuilding = false;
+    bool initialNewestRequestInFlight = false;
+    bool initialNewestOpenDone = false;
 };
 
 } // namespace Mattermost
