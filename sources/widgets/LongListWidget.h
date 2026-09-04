@@ -76,6 +76,13 @@ public:
     void setRangeAvailable(int first, int last, bool available = true);
     bool isItemAvailable(int index) const;
 
+    /**
+     * A data source must finish every range request even when it failed or
+     * returned a differently aligned server page. This releases request
+     * suppression so a later viewport visit may retry the missing indices.
+     */
+    void finishRangeRequest(int first, int last);
+
     /** Notify the view that data for already available items changed. */
     void itemsChanged(int first, int last);
 
@@ -88,6 +95,7 @@ public:
 
     qint64 contentHeight() const;
     int indexAtViewportPosition(int viewportY) const;
+    bool isAtEnd() const;
 
     void scrollToIndex(int index, Alignment alignment = Alignment::EnsureVisible);
     void scrollToEnd();
@@ -103,6 +111,9 @@ signals:
                         quint64 generation);
     void visibleRangeChanged(int first, int last);
     void materializedRangeChanged(int first, int last);
+
+    /** Emitted only for direct user scrollbar/wheel movement. */
+    void userViewportChanged(bool atEnd);
 
 protected:
     /** Return a new widget for an available logical item. Ownership is transferred. */
@@ -124,11 +135,11 @@ private:
     public:
         void reset(int count, int height);
         void resize(int count, int height);
-        int size() const { return values.size(); }
+        int size() const { return static_cast<int>(values.size()); }
         int value(int index) const;
         void setValue(int index, int value);
         qint64 prefixHeight(int count) const;
-        qint64 totalHeight() const { return prefixHeight(values.size()); }
+        qint64 totalHeight() const { return prefixHeight(static_cast<int>(values.size())); }
         int indexAtPixel(qint64 pixel) const;
 
     private:
@@ -214,7 +225,6 @@ private:
     bool synchronizing = false;
     bool committingGeometry = false;
     bool internalScrollChange = false;
-    bool wheelInProgress = false;
 
     quint64 seekGeneration = 0;
     int seekTarget = -1;
