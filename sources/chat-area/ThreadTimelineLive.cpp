@@ -28,7 +28,6 @@
 #include <QDateTime>
 #include <QListWidgetItem>
 #include <QPointer>
-#include <QScrollBar>
 #include <QTimer>
 
 #include "ChatArea.h"
@@ -128,21 +127,9 @@ void ThreadTimelineController::installIncrementalLiveUpdates()
             this, &ThreadTimelineController::materializeLivePost,
             Qt::UniqueConnection);
 
-    // Raw scrollbar valueChanged also fires for item insertion, gap resizing,
-    // Markdown/image reflow and anchor restoration. Those are layout changes,
-    // not navigation, and must never trigger a REST seek/page request. Wheel and
-    // keyboard movement already arrive through userViewportChanged; thumb drags
-    // are handled here only while the slider is physically down.
-    if (area.ui && area.ui->listWidget) {
-        QScrollBar* scrollBar = area.ui->listWidget->verticalScrollBar();
-        QObject::disconnect(scrollBar, &QScrollBar::valueChanged, this, nullptr);
-        connect(scrollBar, &QScrollBar::valueChanged, this,
-                [this, scrollBar](int) {
-            if (scrollBar->isSliderDown()) {
-                scheduleViewportCheck();
-            }
-        });
-    }
+    // Scroll/seek wiring is owned by ThreadTimelineController::start() and is
+    // shared with the channel controller's seek semantics. Do not disconnect or
+    // replace it here: this helper is only responsible for the live-post path.
 }
 
 void ThreadTimelineController::openNewestOnInitialOpen()
@@ -330,8 +317,7 @@ void ThreadTimelineController::materializeLivePost(BackendPost& post)
 
     // One websocket reply is deliberately a one-row transaction. No
     // renderTimeline(), no scrollToBottom(), and no viewport check is scheduled
-    // here. User scrolling will request neighbouring gaps when needed; layout
-    // driven scrollbar changes are ignored by installIncrementalLiveUpdates().
+    // here. The common seek wiring ignores layout-driven scrollbar changes.
     scheduleMeasurementPass();
     schedulePrune();
     persistState();
