@@ -161,6 +161,13 @@ void LongListWidget::setItemCount(int count)
         return;
     }
 
+    // Growing the logical tail changes maximumContentOffset immediately, before
+    // commitGeometry() can capture its anchor. Remember an existing sticky-end
+    // state while the old geometry is still authoritative and restore it after
+    // resizing the height index. A previously empty list has no user viewport
+    // intent, so initial population remains controlled by the caller.
+    const bool preserveBottom = logicalCount > 0 && isAtEnd();
+
     const int oldCount = logicalCount;
     logicalCount = count;
     heights.resize(count, defaultHeight);
@@ -189,7 +196,11 @@ void LongListWidget::setItemCount(int count)
     }
 
     commitGeometry();
-    scheduleSync(RequestReason::Initial);
+    if (preserveBottom && logicalCount > 0) {
+        scrollToEnd();
+    } else {
+        scheduleSync(RequestReason::Initial);
+    }
 }
 
 void LongListWidget::setDefaultItemHeight(int height)
