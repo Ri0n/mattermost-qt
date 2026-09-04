@@ -101,12 +101,16 @@ private slots:
         const auto ticket = state.currentTicket();
         state.begin(ticket);
 
-        // Seed covers 50..59: no older buffer, so grow the older side first.
+        // An absolute 10-row server page may put TARGET at an edge rather than
+        // at the centre. The state machine must compensate with edge loads.
         QCOMPARE(state.nextEdge(ticket, 50, 59, 30), TimelineSeekState::OlderEdge);
-        // After ten older rows the newer side is now slightly smaller.
         QCOMPARE(state.nextEdge(ticket, 40, 59, 30), TimelineSeekState::NewerEdge);
-        // Once 30 contiguous rows exist the fixed first stage is complete.
-        QCOMPARE(state.nextEdge(ticket, 40, 69, 30), TimelineSeekState::NoEdge);
+
+        // Thirty rows in total are not sufficient if TARGET still has only ten
+        // older rows. Keep growing the deficient side rather than exposing a gap
+        // almost immediately above the intended centre.
+        QCOMPARE(state.nextEdge(ticket, 40, 69, 30), TimelineSeekState::OlderEdge);
+        QCOMPARE(state.nextEdge(ticket, 36, 69, 30), TimelineSeekState::NoEdge);
     }
 
     void provenBoundaryRedirectsExpansionToOtherSide()
