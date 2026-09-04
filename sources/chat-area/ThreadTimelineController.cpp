@@ -25,7 +25,6 @@ namespace Mattermost {
 namespace {
 
 constexpr int ThreadPageSize = 30;
-constexpr int SeekSeedSize = 10;
 constexpr int SeekDebounceMs = 100;
 constexpr int MeasurementDebounceMs = 180;
 constexpr int GapPrefetchScreens = 1;
@@ -91,8 +90,6 @@ void ThreadTimelineController::start()
 
     seekState.reset();
 
-    // The sparse controller owns all thread row materialization. Keep the
-    // surrounding ChatArea wiring for edit/reaction/input/follow state only.
     QObject::disconnect(&area.channel, &BackendChannel::onNewPosts,
                         &area, &ChatArea::fillChannelPosts);
     QObject::disconnect(&area.channel, &BackendChannel::onNewPost,
@@ -110,9 +107,6 @@ void ThreadTimelineController::start()
             && currentExpectedCount > restoredTimelineCount;
 
         expectedPostCount = std::max(expectedPostCount, currentExpectedCount);
-        // When a thread was closed while stuck to bottom, do not immediately
-        // enlarge its saved geometry with an empty trailing gap. Reopen at the
-        // last real row and let cursor paging append missed replies atomically.
         if (!restoredBottomNeedsCatchup
             && timeline.totalCount() != expectedPostCount) {
             timeline.setTotalCount(expectedPostCount);
@@ -139,9 +133,6 @@ void ThreadTimelineController::start()
     QScrollBar* scrollBar = area.ui->listWidget->verticalScrollBar();
     connect(scrollBar, &QScrollBar::valueChanged, this,
             [this, scrollBar](int) {
-        // Only a physical thumb drag defines a random-seek target here.
-        // Programmatic value changes caused by insertion, gap resizing or
-        // anchor restoration must never feed back into another network seek.
         if (scrollBar->isSliderDown()) {
             updateSeekTargetFromScrollbar(false);
         }
@@ -208,7 +199,6 @@ void ThreadTimelineController::start()
         return;
     }
 
-    // Show a known root immediately while the first compact page is in flight.
     renderTimeline(root ? rootId : QString(), true);
     requestNextPage();
 }
@@ -286,9 +276,6 @@ void ThreadTimelineController::requestNextPage()
             const int responseSize = static_cast<int>(page.postIds.size());
             if (threadPageConfirmsNewestBoundary(page.hasNext, page.nextPostId,
                                                  responseSize, ThreadPageSize)) {
-                // Server pagination is authoritative here. reply_count can race
-                // a websocket update by one event, so a confirmed newest edge
-                // must collapse any speculative trailing logical slots.
                 guard->expectedPostCount = std::max(1, guard->nextLogicalIndex);
                 guard->timeline.setTotalCount(guard->expectedPostCount);
                 guard->hasNext = false;
@@ -349,94 +336,7 @@ void ThreadTimelineController::resumeSeekIfReady()
 
 void ThreadTimelineController::requestSeek(const TimelineSeekState::Ticket& ticket)
 {
-    if (!seekState.isCurrent(ticket) || requestInFlight
-        || ticket.targetIndex <= 0 || ticket.targetIndex >= timeline.totalCount()) {
-        return;
-    }
-
-    pendingSeekIndex = ticket.targetIndex;
-    if (!timeline.postIdAt(ticket.targetIndex).isEmpty()) {
-        const QString targetId = timeline.postIdAt(ticket.targetIndex);
-        seekState.complete(ticket);
-        pendingSeekIndex = -1;
-        renderTimeline(targetId, false, ViewportAnchor());
-        return;
-    }
-
-    BackendPost* root = area.channel.postIdToPost.value(rootId, nullptr);
-    if (!root || root->last_reply_at <= root->create_at || expectedPostCount <= 1) {
-        seekState.complete(ticket);
-        pendingSeekIndex = -1;
-        requestNextPage();
-        return;
-    }
-
-    const long double fraction = static_cast<long double>(ticket.targetIndex)
-        / static_cast<long double>(std::max(1, expectedPostCount - 1));
-    const long double span = static_cast<long double>(root->last_reply_at - root->create_at);
-    const uint64_t estimatedCreateAt = root->create_at
-        + static_cast<uint64_t>(span * fraction);
-
-    requestInFlight = true;
-    QPointer<ThreadTimelineController> guard(this);
-    PostTimelineService::instance(area.backend).loadThreadFromTime(
-        area.channel, rootId, SeekSeedSize, estimatedCreateAt,
-        [guard, ticket](const PostTimelineService::Page& page) {
-            if (!guard) {
-                return;
-            }
-            guard->requestInFlight = false;
-
-            // PostTimelineService has already ingested the response into the
-            // BackendChannel memory cache. If the user moved the thumb meanwhile,
-            // keep that data cached but never mutate the visible sparse topology.
-            if (!guard->seekState.isCurrent(ticket)) {
-                guard->resumeSeekIfReady();
-                return;
-            }
-            if (!page.success || page.postIds.isEmpty()) {
-                guard->seekState.complete(ticket);
-                guard->pendingSeekIndex = -1;
-                return;
-            }
-
-            QStringList ids = page.postIds;
-            ids.removeAll(guard->rootId);
-            if (ids.isEmpty()) {
-                guard->seekState.complete(ticket);
-                guard->pendingSeekIndex = -1;
-                return;
-            }
-
-            // Timestamp seek is approximate. Never overwrite an existing loaded
-            // span just because the time-to-index estimate was imperfect: fit the
-            // seed into the nearest sparse gap and merge later cursor blocks into
-            // that local window.
-            PostTimeline::LogicalWindow window = guard->timeline.gapWindowNear(
-                ticket.targetIndex, static_cast<int>(ids.size()), 1);
-            if (!window.isValid()) {
-                guard->seekState.complete(ticket);
-                guard->pendingSeekIndex = -1;
-                return;
-            }
-            if (static_cast<int>(ids.size()) > window.count) {
-                ids = ids.mid(0, window.count);
-            }
-            guard->timeline.placeWindow(window.firstIndex, ids);
-
-            int focusIndex = std::max(window.firstIndex,
-                std::min(window.lastIndex(), ticket.targetIndex));
-            QString focusId = guard->timeline.postIdAt(focusIndex);
-            if (focusId.isEmpty() && !ids.isEmpty()) {
-                focusId = ids.at(ids.size() / 2);
-            }
-
-            guard->seekState.complete(ticket);
-            guard->pendingSeekIndex = -1;
-            guard->renderTimeline(focusId, false, ViewportAnchor());
-            guard->schedulePrune();
-            guard->persistState();
-        });
+    requestSeekSeed(ticket);
 }
 
 ThreadTimelineController::ViewportAnchor ThreadTimelineController::captureViewportAnchor() const
@@ -638,9 +538,6 @@ void ThreadTimelineController::checkViewport()
         return;
     }
 
-    // Only an unloaded row *after* the sequential cursor belongs to the next
-    // cursor page. Gaps before nextLogicalIndex can be created by the 200-row
-    // materialization budget and must be reloaded by random seek instead.
     if (targetIndex >= nextLogicalIndex
         && targetIndex - nextLogicalIndex < ThreadPageSize) {
         if (hasNext) {
@@ -714,9 +611,6 @@ void ThreadTimelineController::renderTimeline(const QString& focusPostId,
     schedulePrune();
     QTimer::singleShot(0, this, [this] {
         persistState();
-        // Network prefetch is intentionally driven only by user viewport input
-        // or an explicit page callback. Reconciliation/layout must not start a
-        // new seek by itself; that feedback loop caused unbounded fetch/render.
     });
 }
 
