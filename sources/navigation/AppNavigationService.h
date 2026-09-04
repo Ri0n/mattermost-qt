@@ -19,6 +19,7 @@ public:
 
     void openUrl(const QUrl& url);
     void openChannel(const QString& channelId);
+    void openPost(const QString& postId);
 
 signals:
     void channelRequested(const QString& channelId,
@@ -35,7 +36,6 @@ private:
     BackendChannel* findChannel(const QString& teamName,
                                 const QString& channelName) const;
     BackendChannel* findPostChannel(const QString& postId) const;
-    void openPost(const QString& postId);
     void openPostInChannel(BackendChannel& channel, const QString& postId);
 
     Backend& backend;
