@@ -19,6 +19,11 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
+#include <utility>
+#include <vector>
+
 #include <QPointer>
 #include <QSet>
 #include <QStringList>
