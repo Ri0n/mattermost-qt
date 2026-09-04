@@ -46,6 +46,14 @@ void ChannelTimelineController::updateSeekTargetFromScrollbar(bool readyImmediat
         return;
     }
 
+    // A physical thumb drag is a logical random seek: after materialization the
+    // requested logical row belongs near the viewport centre. Do not preserve a
+    // pre-seek geometry-only gap anchor. Slow wheel prefetch takes the other path
+    // through userViewportChanged/checkViewport and retains its concrete anchor.
+    seekPreserveViewport = false;
+    seekViewportAnchor = ViewportAnchor();
+    lastUserViewportAnchor = ViewportAnchor();
+
     if (seekState.setTarget(target)) {
         pendingSeekIndex = target;
     }
@@ -94,9 +102,11 @@ void ChannelTimelineController::renderSeekWindow(
     }
 
     // userViewportChanged is emitted only for real input. If it changed after
-    // this generation captured its anchor, supersede the generation instead of
-    // allowing a late HTTP response to pull the viewport back to the old target.
-    if (seekViewportAnchor.isValid() && lastUserViewportAnchor.isValid()) {
+    // this generation captured its wheel anchor, supersede the generation rather
+    // than allowing a late HTTP response to pull the viewport back. Thumb seek
+    // deliberately has no preserved anchor and therefore centres its target.
+    if (seekPreserveViewport
+        && seekViewportAnchor.isValid() && lastUserViewportAnchor.isValid()) {
         const int originalIndex = logicalIndexForAnchor(seekViewportAnchor);
         const int currentUserIndex = logicalIndexForAnchor(lastUserViewportAnchor);
         if (originalIndex >= 0 && currentUserIndex >= 0
@@ -128,15 +138,16 @@ void ChannelTimelineController::requestSeek(const TimelineSeekState::Ticket& tic
     seekState.begin(ticket);
     pendingSeekIndex = ticket.targetIndex;
 
-    // The physical viewport at the moment a seek starts is the user's intent.
-    // Keep this one anchor for the entire seed/edge/measurement transaction.
-    // This works for both thumb release (the gap coordinate is preserved) and
-    // slow wheel scrolling (new rows fill around the current viewport instead of
-    // being repeatedly centred after every network response).
-    seekViewportAnchor = captureViewportAnchor();
-    seekPreserveViewport = seekViewportAnchor.isValid();
-    if (seekPreserveViewport) {
-        lastUserViewportAnchor = seekViewportAnchor;
+    // Slow wheel/local prefetch reaches us after userViewportChanged committed a
+    // concrete post/gap anchor. Preserve that one anchor for the whole staged
+    // transaction. Thumb seek cleared lastUserViewportAnchor above, so it instead
+    // centres the target after the seed arrives.
+    if (lastUserViewportAnchor.isValid()) {
+        seekViewportAnchor = lastUserViewportAnchor;
+        seekPreserveViewport = true;
+    } else {
+        seekViewportAnchor = ViewportAnchor();
+        seekPreserveViewport = false;
     }
 
     if (!timeline.postIdAt(ticket.targetIndex).isEmpty()) {
