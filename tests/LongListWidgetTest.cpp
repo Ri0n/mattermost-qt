@@ -52,6 +52,10 @@ public:
         syntheticHeights[index] = height;
         if (auto* row = static_cast<VariableRow*>(itemWidget(index))) {
             row->setHintHeight(height);
+            // A real PostWidget emits dimensionsChanged after asynchronous
+            // content reflow. Drive the same public invalidation path explicitly
+            // rather than depending on platform-specific updateGeometry events.
+            itemsChanged(index, index);
         }
     }
 
