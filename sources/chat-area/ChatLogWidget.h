@@ -3,11 +3,11 @@
 #include <QPointer>
 #include <QString>
 
+#include "AbstractPostSource.h"
 #include "widgets/LongListWidget.h"
 
 namespace Mattermost {
 
-class AbstractPostSource;
 class Backend;
 class BackendPost;
 class ChatArea;
