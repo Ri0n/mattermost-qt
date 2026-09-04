@@ -82,6 +82,16 @@ public:
                         PageCallback callback);
 
     /**
+     * Fetch the newest replies in a thread without walking every older page.
+     * The result excludes the root and is normalized to oldest -> newest.
+     */
+    void loadThreadTail(BackendChannel& channel,
+                        const QString& rootId,
+                        int perPage,
+                        uint64_t lastReplyAt,
+                        PageCallback callback);
+
+    /**
      * Approximate random seek into a large thread by creation timestamp. This
      * is used when the user drags the scrollbar into an unloaded gap.
      */
@@ -105,6 +115,7 @@ private:
                     int perPage,
                     const QString& fromPost,
                     uint64_t fromCreateAt,
+                    const QString& direction,
                     PageCallback callback);
 
     static QStringList chronologicalOrder(const QJsonObject& postsObject,
