@@ -9,6 +9,7 @@
 #include <QListWidgetItem>
 #include <QPointer>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QTimer>
 
 #include "ChatArea.h"
@@ -24,7 +25,8 @@ namespace Mattermost {
 namespace {
 
 constexpr int ThreadPageSize = 30;
-constexpr int SeekDebounceMs = 120;
+constexpr int SeekSeedSize = 10;
+constexpr int SeekDebounceMs = 100;
 constexpr int MeasurementDebounceMs = 180;
 constexpr int GapPrefetchScreens = 1;
 
@@ -69,9 +71,8 @@ ThreadTimelineController::ThreadTimelineController(ChatArea& sourceArea)
     seekTimer.setSingleShot(true);
     seekTimer.setInterval(SeekDebounceMs);
     connect(&seekTimer, &QTimer::timeout, this, [this] {
-        if (pendingSeekIndex >= 0) {
-            requestSeek(pendingSeekIndex);
-        }
+        seekState.markReady();
+        resumeSeekIfReady();
     });
 
     measurementTimer.setSingleShot(true);
@@ -87,6 +88,8 @@ void ThreadTimelineController::start()
     if (rootId.isEmpty() || !area.ui || !area.ui->listWidget) {
         return;
     }
+
+    seekState.reset();
 
     // The sparse controller owns all thread row materialization. Keep the
     // surrounding ChatArea wiring for edit/reaction/input/follow state only.
@@ -135,9 +138,20 @@ void ThreadTimelineController::start()
 
     QScrollBar* scrollBar = area.ui->listWidget->verticalScrollBar();
     connect(scrollBar, &QScrollBar::valueChanged, this,
-            [this](int) { scheduleViewportCheck(); });
+            [this, scrollBar](int) {
+        // Only a physical thumb drag defines a random-seek target here.
+        // Programmatic value changes caused by insertion, gap resizing or
+        // anchor restoration must never feed back into another network seek.
+        if (scrollBar->isSliderDown()) {
+            updateSeekTargetFromScrollbar(false);
+        }
+    });
     connect(scrollBar, &QScrollBar::sliderReleased, this,
-            [this] { scheduleViewportCheck(); });
+            [this] {
+        updateSeekTargetFromScrollbar(true);
+        persistState();
+        schedulePrune();
+    });
     connect(area.ui->listWidget, &PostsListWidget::userViewportChanged, this,
             [this](bool) {
         persistState();
@@ -219,6 +233,7 @@ void ThreadTimelineController::requestNextPage()
 
             guard->requestInFlight = false;
             if (!page.success) {
+                guard->resumeSeekIfReady();
                 return;
             }
 
@@ -233,8 +248,10 @@ void ThreadTimelineController::requestNextPage()
                 guard->expectedPostCount = std::max(1, guard->nextLogicalIndex);
                 guard->timeline.setTotalCount(guard->expectedPostCount);
                 guard->initialPrefetchDone = true;
-                guard->renderTimeline(QString(), false, anchor);
-                guard->scheduleViewportCheck();
+                if (!guard->area.ui->listWidget->verticalScrollBar()->isSliderDown()) {
+                    guard->renderTimeline(QString(), false, anchor);
+                }
+                guard->resumeSeekIfReady();
                 return;
             }
 
@@ -244,8 +261,10 @@ void ThreadTimelineController::requestNextPage()
                 guard->expectedPostCount = std::max(1, guard->nextLogicalIndex);
                 guard->timeline.setTotalCount(guard->expectedPostCount);
                 guard->initialPrefetchDone = true;
-                guard->renderTimeline(QString(), false, anchor);
-                guard->scheduleViewportCheck();
+                if (!guard->area.ui->listWidget->verticalScrollBar()->isSliderDown()) {
+                    guard->renderTimeline(QString(), false, anchor);
+                }
+                guard->resumeSeekIfReady();
                 return;
             }
 
@@ -287,30 +306,72 @@ void ThreadTimelineController::requestNextPage()
             }
 
             guard->initialPrefetchDone = true;
-            guard->renderTimeline(QString(), false, anchor);
-            guard->scheduleViewportCheck();
+            if (!guard->area.ui->listWidget->verticalScrollBar()->isSliderDown()) {
+                guard->renderTimeline(QString(), false, anchor);
+                guard->scheduleViewportCheck();
+            }
             guard->schedulePrune();
+            guard->resumeSeekIfReady();
         });
 }
 
-void ThreadTimelineController::requestSeek(int logicalIndex)
+void ThreadTimelineController::updateSeekTargetFromScrollbar(bool readyImmediately)
 {
-    pendingSeekIndex = -1;
-    if (requestInFlight || logicalIndex <= 0 || logicalIndex >= timeline.totalCount()) {
+    if (!area.ui || !area.ui->listWidget || timeline.totalCount() <= 1) {
         return;
     }
-    if (!timeline.postIdAt(logicalIndex).isEmpty()) {
+
+    QScrollBar* bar = area.ui->listWidget->verticalScrollBar();
+    int target = timeline.logicalIndexForScrollPosition(
+        bar->value(), bar->minimum(), bar->maximum());
+    target = std::max(1, std::min(timeline.totalCount() - 1, target));
+
+    if (seekState.setTarget(target)) {
+        pendingSeekIndex = target;
+    }
+
+    if (readyImmediately) {
+        seekTimer.stop();
+        seekState.markReady();
+        resumeSeekIfReady();
+    } else {
+        seekTimer.start();
+    }
+}
+
+void ThreadTimelineController::resumeSeekIfReady()
+{
+    if (!seekState.isReady() || requestInFlight) {
+        return;
+    }
+    requestSeek(seekState.currentTicket());
+}
+
+void ThreadTimelineController::requestSeek(const TimelineSeekState::Ticket& ticket)
+{
+    if (!seekState.isCurrent(ticket) || requestInFlight
+        || ticket.targetIndex <= 0 || ticket.targetIndex >= timeline.totalCount()) {
+        return;
+    }
+
+    pendingSeekIndex = ticket.targetIndex;
+    if (!timeline.postIdAt(ticket.targetIndex).isEmpty()) {
+        const QString targetId = timeline.postIdAt(ticket.targetIndex);
+        seekState.complete(ticket);
+        pendingSeekIndex = -1;
+        renderTimeline(targetId, false, ViewportAnchor());
         return;
     }
 
     BackendPost* root = area.channel.postIdToPost.value(rootId, nullptr);
     if (!root || root->last_reply_at <= root->create_at || expectedPostCount <= 1) {
+        seekState.complete(ticket);
+        pendingSeekIndex = -1;
         requestNextPage();
         return;
     }
 
-    const ViewportAnchor anchor = captureViewportAnchor();
-    const long double fraction = static_cast<long double>(logicalIndex)
+    const long double fraction = static_cast<long double>(ticket.targetIndex)
         / static_cast<long double>(std::max(1, expectedPostCount - 1));
     const long double span = static_cast<long double>(root->last_reply_at - root->create_at);
     const uint64_t estimatedCreateAt = root->create_at
@@ -319,30 +380,62 @@ void ThreadTimelineController::requestSeek(int logicalIndex)
     requestInFlight = true;
     QPointer<ThreadTimelineController> guard(this);
     PostTimelineService::instance(area.backend).loadThreadFromTime(
-        area.channel, rootId, ThreadPageSize, estimatedCreateAt,
-        [guard, logicalIndex, anchor](const PostTimelineService::Page& page) {
+        area.channel, rootId, SeekSeedSize, estimatedCreateAt,
+        [guard, ticket](const PostTimelineService::Page& page) {
             if (!guard) {
                 return;
             }
             guard->requestInFlight = false;
+
+            // PostTimelineService has already ingested the response into the
+            // BackendChannel memory cache. If the user moved the thumb meanwhile,
+            // keep that data cached but never mutate the visible sparse topology.
+            if (!guard->seekState.isCurrent(ticket)) {
+                guard->resumeSeekIfReady();
+                return;
+            }
             if (!page.success || page.postIds.isEmpty()) {
+                guard->seekState.complete(ticket);
+                guard->pendingSeekIndex = -1;
                 return;
             }
 
             QStringList ids = page.postIds;
             ids.removeAll(guard->rootId);
             if (ids.isEmpty()) {
+                guard->seekState.complete(ticket);
+                guard->pendingSeekIndex = -1;
                 return;
             }
 
-            const int pageSize = static_cast<int>(ids.size());
-            int firstIndex = logicalIndex - pageSize / 2;
-            firstIndex = std::max(1,
-                std::min(firstIndex, guard->timeline.totalCount() - pageSize));
-            guard->timeline.placeWindow(firstIndex, ids);
-            guard->renderTimeline(QString(), false, anchor);
-            guard->scheduleViewportCheck();
+            // Timestamp seek is approximate. Never overwrite an existing loaded
+            // span just because the time-to-index estimate was imperfect: fit the
+            // seed into the nearest sparse gap and merge later cursor blocks into
+            // that local window.
+            PostTimeline::LogicalWindow window = guard->timeline.gapWindowNear(
+                ticket.targetIndex, static_cast<int>(ids.size()), 1);
+            if (!window.isValid()) {
+                guard->seekState.complete(ticket);
+                guard->pendingSeekIndex = -1;
+                return;
+            }
+            if (static_cast<int>(ids.size()) > window.count) {
+                ids = ids.mid(0, window.count);
+            }
+            guard->timeline.placeWindow(window.firstIndex, ids);
+
+            int focusIndex = std::max(window.firstIndex,
+                std::min(window.lastIndex(), ticket.targetIndex));
+            QString focusId = guard->timeline.postIdAt(focusIndex);
+            if (focusId.isEmpty() && !ids.isEmpty()) {
+                focusId = ids.at(ids.size() / 2);
+            }
+
+            guard->seekState.complete(ticket);
+            guard->pendingSeekIndex = -1;
+            guard->renderTimeline(focusId, false, ViewportAnchor());
             guard->schedulePrune();
+            guard->persistState();
         });
 }
 
@@ -418,7 +511,7 @@ void ThreadTimelineController::restoreViewportAnchor(const ViewportAnchor& ancho
     if (!focusPostId.isEmpty()) {
         const int row = list->findPostByIndex(focusPostId, 0);
         if (row >= 0) {
-            const int topOffset = focusAtTop ? 0 : std::max(0, list->viewport()->height() / 3);
+            const int topOffset = focusAtTop ? 0 : std::max(0, list->viewport()->height() / 2);
             list->finishTimelineRebuildAtPost(focusPostId, topOffset);
             return;
         }
@@ -512,7 +605,7 @@ int ThreadTimelineController::logicalIndexNearViewport(int extraScreens,
 
 void ThreadTimelineController::checkViewport()
 {
-    if (requestInFlight || !area.ui || !area.ui->listWidget) {
+    if (!area.ui || !area.ui->listWidget) {
         return;
     }
 
@@ -520,7 +613,16 @@ void ThreadTimelineController::checkViewport()
     QScrollBar* scrollBar = list->verticalScrollBar();
     const int viewportHeight = list->viewport()->height();
 
-    if (!scrollBar->isSliderDown() && hasNext && nextLogicalIndex < timeline.totalCount()) {
+    if (scrollBar->isSliderDown()) {
+        updateSeekTargetFromScrollbar(false);
+        return;
+    }
+
+    if (requestInFlight) {
+        return;
+    }
+
+    if (hasNext && nextLogicalIndex < timeline.totalCount()) {
         const qint64 prefixBoundary = timeline.estimatedPixelForIndex(nextLogicalIndex);
         const qint64 viewportBottom = static_cast<qint64>(scrollBar->value()) + viewportHeight;
         if (viewportBottom + static_cast<qint64>(viewportHeight) * GapPrefetchScreens
@@ -533,8 +635,6 @@ void ThreadTimelineController::checkViewport()
     bool centerInsideGap = false;
     const int targetIndex = logicalIndexNearViewport(GapPrefetchScreens, &centerInsideGap);
     if (targetIndex < 0) {
-        pendingSeekIndex = -1;
-        seekTimer.stop();
         return;
     }
 
@@ -543,23 +643,16 @@ void ThreadTimelineController::checkViewport()
     // materialization budget and must be reloaded by random seek instead.
     if (targetIndex >= nextLogicalIndex
         && targetIndex - nextLogicalIndex < ThreadPageSize) {
-        pendingSeekIndex = -1;
-        seekTimer.stop();
         if (hasNext) {
             requestNextPage();
         }
         return;
     }
 
-    if (scrollBar->isSliderDown() && centerInsideGap) {
-        pendingSeekIndex = targetIndex;
-        seekTimer.start();
-        return;
-    }
-
-    pendingSeekIndex = -1;
-    seekTimer.stop();
-    requestSeek(targetIndex);
+    seekState.setTarget(targetIndex);
+    pendingSeekIndex = targetIndex;
+    seekState.markReady();
+    resumeSeekIfReady();
 }
 
 void ThreadTimelineController::renderTimeline(const QString& focusPostId,
@@ -579,6 +672,7 @@ void ThreadTimelineController::renderTimeline(const QString& focusPostId,
     const quint64 renderId = ++renderGeneration;
     PostsListWidget* list = area.ui->listWidget;
     list->setUpdatesEnabled(false);
+    const QSignalBlocker scrollSignals(list->verticalScrollBar());
     list->beginTimelineRebuild();
 
     BackendPost* lastRootPost = nullptr;
@@ -620,7 +714,9 @@ void ThreadTimelineController::renderTimeline(const QString& focusPostId,
     schedulePrune();
     QTimer::singleShot(0, this, [this] {
         persistState();
-        scheduleViewportCheck();
+        // Network prefetch is intentionally driven only by user viewport input
+        // or an explicit page callback. Reconciliation/layout must not start a
+        // new seek by itself; that feedback loop caused unbounded fetch/render.
     });
 }
 
@@ -654,6 +750,7 @@ void ThreadTimelineController::updateGapHeights()
     bool changed = false;
     const quint64 renderId = ++renderGeneration;
     list->setUpdatesEnabled(false);
+    const QSignalBlocker scrollSignals(list->verticalScrollBar());
     for (int row = 0; row < list->count(); ++row) {
         QListWidgetItem* item = list->item(row);
         if (!PostsListWidget::isGapItem(item)) {
