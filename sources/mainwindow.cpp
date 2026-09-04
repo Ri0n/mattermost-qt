@@ -732,6 +732,7 @@ void MainWindow::messageNotify(BackendChannel& channel, const BackendPost& post)
 					&& threadArea->isActiveWindow()) {
 					return;
 				}
+			}
 		}
 	}
 
