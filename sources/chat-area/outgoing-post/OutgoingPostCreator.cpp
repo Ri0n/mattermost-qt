@@ -39,7 +39,7 @@
 #include "OutgoingAttachmentList.h"
 #include "OutgoingPostPanel.h"
 #include "backend/Backend.h"
-#include "chat-area/PostsListWidget.h"
+#include "chat-area/ChatLogWidget.h"
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
 #include "ui_OutgoingPostCreator.h"
 
@@ -66,7 +66,7 @@ OutgoingPostCreator::OutgoingPostCreator(QWidget* parent)
 void OutgoingPostCreator::init(Backend& backendInstance,
                                BackendChannel& channelInstance,
                                OutgoingPostPanel& panelInstance,
-                               PostsListWidget& postsListWidget,
+                               ChatLogWidget& chatLogWidget,
                                QBoxLayout* attachmentParentLayout)
 {
 	backend = &backendInstance;
@@ -82,12 +82,7 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 	});
 
 	connect(ui->textEdit, &MessageTextEditWidget::upArrowPressed,
-	        [this, &postsListWidget] {
-		QListWidgetItem* post = postsListWidget.getLastOwnPost();
-		if (post) {
-			postsListWidget.initiatePostEdit(*post);
-		}
-	});
+	        &chatLogWidget, &ChatLogWidget::editLastOwnPost);
 
 	connect(ui->textEdit, &MessageTextEditWidget::textChanged, [this] {
 		updateSendButtonState();
