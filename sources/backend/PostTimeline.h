@@ -1,5 +1,9 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+
 #include <QHash>
 #include <QMap>
 #include <QStringList>
@@ -58,17 +62,94 @@ public:
     // seek intentionally uses normalized thumb position rather than estimated
     // pixel heights: gap-height refinement must not move the logical target
     // while the user is holding the scrollbar thumb.
-    int logicalIndexForScrollPosition(int value, int minimum, int maximum) const;
+    int logicalIndexForScrollPosition(int value, int minimum, int maximum) const
+    {
+        if (logicalCount <= 0) {
+            return -1;
+        }
+        if (logicalCount == 1 || maximum <= minimum) {
+            return 0;
+        }
+
+        const int clamped = std::max(minimum, std::min(maximum, value));
+        const long double fraction = static_cast<long double>(clamped - minimum)
+            / static_cast<long double>(maximum - minimum);
+        const long double logical = fraction * static_cast<long double>(logicalCount - 1);
+        return std::max(0, std::min(logicalCount - 1,
+            static_cast<int>(std::llround(logical))));
+    }
 
     // Return a bounded logical window centred on targetIndex whenever possible.
-    LogicalWindow centeredWindow(int targetIndex, int count) const;
+    LogicalWindow centeredWindow(int targetIndex, int count) const
+    {
+        LogicalWindow result;
+        if (logicalCount <= 0 || count <= 0 || targetIndex < 0
+            || targetIndex >= logicalCount) {
+            return result;
+        }
+
+        result.targetIndex = targetIndex;
+        result.count = std::min(count, logicalCount);
+        const int preferredBefore = (result.count - 1) / 2;
+        result.firstIndex = std::max(0, targetIndex - preferredBefore);
+        result.firstIndex = std::min(result.firstIndex, logicalCount - result.count);
+        return result;
+    }
 
     // Fit a window into one existing sparse gap nearest to targetIndex without
     // displacing already materialized posts. Useful for approximate timestamp
     // seeks where the server cannot provide an authoritative logical offset.
-    LogicalWindow gapWindowNear(int targetIndex, int count, int minimumIndex = 0) const;
+    LogicalWindow gapWindowNear(int targetIndex, int count, int minimumIndex = 0) const
+    {
+        LogicalWindow result;
+        if (logicalCount <= 0 || count <= 0 || targetIndex < 0
+            || targetIndex >= logicalCount) {
+            return result;
+        }
 
-    bool rangeLoaded(int firstIndex, int count) const;
+        const int minimum = std::max(0, minimumIndex);
+        qint64 bestDistance = -1;
+        for (const Span& span : spans()) {
+            if (span.kind != GapSpan) {
+                continue;
+            }
+            const int gapFirst = std::max(span.firstIndex, minimum);
+            const int gapLastExclusive = span.firstIndex + span.count;
+            const int gapCount = gapLastExclusive - gapFirst;
+            if (gapCount <= 0) {
+                continue;
+            }
+
+            const int useCount = std::min(count, gapCount);
+            const int maxFirst = gapLastExclusive - useCount;
+            const int preferredFirst = targetIndex - (useCount - 1) / 2;
+            const int first = std::max(gapFirst, std::min(maxFirst, preferredFirst));
+            const int nearest = std::max(first,
+                std::min(first + useCount - 1, targetIndex));
+            const qint64 distance = std::llabs(static_cast<long long>(nearest)
+                                               - static_cast<long long>(targetIndex));
+            if (bestDistance < 0 || distance < bestDistance) {
+                bestDistance = distance;
+                result.firstIndex = first;
+                result.count = useCount;
+                result.targetIndex = targetIndex;
+            }
+        }
+        return result;
+    }
+
+    bool rangeLoaded(int firstIndex, int count) const
+    {
+        if (count <= 0 || firstIndex < 0 || firstIndex + count > logicalCount) {
+            return false;
+        }
+        for (int index = firstIndex; index < firstIndex + count; ++index) {
+            if (postIdAt(index).isEmpty()) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     // A cursor response can prove that a loaded span touches the real oldest or
     // newest edge even when that span was originally placed approximately in a
