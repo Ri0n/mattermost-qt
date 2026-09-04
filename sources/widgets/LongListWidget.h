@@ -79,9 +79,13 @@ public:
     /**
      * A data source must finish every range request even when it failed or
      * returned a differently aligned server page. This releases request
-     * suppression so a later viewport visit may retry the missing indices.
+     * suppression; it intentionally does not reschedule immediately, so a
+     * network failure cannot turn into a tight retry loop.
      */
-    void finishRangeRequest(int first, int last);
+    void finishRangeRequest(int first, int last)
+    {
+        clearPendingRequest(first, last);
+    }
 
     /** Notify the view that data for already available items changed. */
     void itemsChanged(int first, int last);
@@ -95,7 +99,10 @@ public:
 
     qint64 contentHeight() const;
     int indexAtViewportPosition(int viewportY) const;
-    bool isAtEnd() const;
+    bool isAtEnd() const
+    {
+        return maximumContentOffset() - contentOffset() <= 2;
+    }
 
     void scrollToIndex(int index, Alignment alignment = Alignment::EnsureVisible);
     void scrollToEnd();
