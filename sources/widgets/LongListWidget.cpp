@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <utility>
 
 #include <QEvent>
 #include <QLayout>
@@ -43,7 +44,7 @@ void LongListWidget::HeightIndex::resize(int count, int height)
     count = std::max(0, count);
     const QVector<int> previous = values;
     reset(count, height);
-    const int preserved = std::min(previous.size(), count);
+    const int preserved = std::min(static_cast<int>(previous.size()), count);
     for (int index = 0; index < preserved; ++index) {
         setValue(index, previous.at(index));
     }
@@ -77,7 +78,7 @@ void LongListWidget::HeightIndex::add(int index, qint64 delta)
 
 qint64 LongListWidget::HeightIndex::prefixHeight(int count) const
 {
-    count = std::max(0, std::min(count, values.size()));
+    count = std::max(0, std::min(count, static_cast<int>(values.size())));
     qint64 result = 0;
     for (int pos = count; pos > 0; pos -= pos & -pos) {
         result += fenwick.at(pos);
@@ -112,7 +113,7 @@ int LongListWidget::HeightIndex::indexAtPixel(qint64 pixel) const
         }
     }
 
-    return std::min(index, values.size() - 1);
+    return std::min(index, static_cast<int>(values.size()) - 1);
 }
 
 LongListWidget::LongListWidget(QWidget* parent)
