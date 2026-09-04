@@ -15,6 +15,7 @@
 #include <QTimer>
 
 #include "backend/PostTimeline.h"
+#include "backend/TimelineSeekState.h"
 
 class QEvent;
 
@@ -87,7 +88,9 @@ private:
 
     void scheduleViewportCheck();
     void checkViewport();
-    void requestSeek(int logicalIndex);
+    void updateSeekTargetFromScrollbar(bool readyImmediately);
+    void resumeSeekIfReady();
+    void requestSeek(const TimelineSeekState::Ticket& ticket);
     int logicalIndexNearViewport(int extraScreens, bool* centerInsideGap) const;
 
     void renderTimeline();
@@ -107,6 +110,7 @@ private:
 
     ChatArea& area;
     PostTimeline timeline;
+    TimelineSeekState seekState;
     QTimer seekTimer;
     QTimer measurementTimer;
     QSet<int> loadedPages;
