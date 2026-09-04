@@ -19,7 +19,10 @@ QVector<BackendPost*> cachedThreadReplies(const BackendChannel& channel, const Q
 {
     QVector<BackendPost*> result;
     for (const BackendPost& post : channel.posts) {
-        if (!post.hidden && post.root_id == rootId) {
+        // BackendChannel marks replies hidden so the main channel renders only
+        // root posts. That flag is expected on thread replies and must not hide
+        // them from the thread's own logical sequence.
+        if (post.root_id == rootId) {
             BackendPost* cached = channel.postIdToPost.value(post.id, nullptr);
             if (cached) {
                 result.push_back(cached);
@@ -115,7 +118,7 @@ int ThreadPostSource::ensurePostIndex(const QString& postId)
     }
 
     BackendPost* post = channel.postIdToPost.value(postId, nullptr);
-    if (!post || post->hidden || postIds.isEmpty()
+    if (!post || postIds.isEmpty()
         || (post->id != rootId && post->root_id != rootId)) {
         return -1;
     }
@@ -433,7 +436,7 @@ int ThreadPostSource::estimatedIndexForPost(const BackendPost& post) const
 
 void ThreadPostSource::appendLiveReply(BackendPost& post)
 {
-    if (post.root_id != rootId || post.hidden) {
+    if (post.root_id != rootId) {
         return;
     }
 
