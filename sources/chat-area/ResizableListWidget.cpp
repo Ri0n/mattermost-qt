@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -35,6 +35,7 @@
 
 namespace {
 constexpr const char* RowResizePendingProperty = "_mattermostRowResizePending";
+constexpr const char* ExternalViewportAnchorProperty = "_mattermostExternalViewportAnchor";
 }
 
 void ResizableListWidget::setItemWidget(QListWidgetItem* item, QWidget* widget)
@@ -57,6 +58,19 @@ void ResizableListWidget::setItemWidget(QListWidgetItem* item, QWidget* widget)
     // the viewport here: the caller may still need to scroll to unread posts or
     // restore a previously saved chat position after all rows are present.
     scheduleItemResize(item, widget, false);
+}
+
+bool ResizableListWidget::usesInternalViewportAnchoring() const
+{
+    if (property(ExternalViewportAnchorProperty).toBool()) {
+        return false;
+    }
+
+    // PostsListWidget owns a semantic sparse-timeline anchor. Its anchor knows
+    // whether the viewport represents a post, a gap, sticky bottom, an active
+    // thumb seek or a navigation lock. This base class only knows physical rows
+    // and therefore must never schedule a second delayed restore for that view.
+    return !inherits("Mattermost::PostsListWidget");
 }
 
 ResizableListWidget::ViewportAnchor ResizableListWidget::captureViewportAnchor() const
@@ -141,7 +155,8 @@ void ResizableListWidget::scheduleItemResize(QListWidgetItem* item, QWidget* wid
             return;
         }
 
-        const ViewportAnchor anchor = preserveViewport ? captureViewportAnchor() : ViewportAnchor{};
+        const bool preserveHere = preserveViewport && usesInternalViewportAnchoring();
+        const ViewportAnchor anchor = preserveHere ? captureViewportAnchor() : ViewportAnchor{};
 
         const int rowWidth = std::max(1, viewport()->width());
         if (guardedWidget->width() != rowWidth) {
@@ -164,10 +179,11 @@ void ResizableListWidget::scheduleItemResize(QListWidgetItem* item, QWidget* wid
         currentItem->setSizeHint(QSize(rowWidth, targetHeight));
         guardedWidget->setProperty(RowResizePendingProperty, false);
 
-        if (preserveViewport) {
+        if (preserveHere) {
             // QListView may defer applying the new size hint until the current
             // event has returned. Restore the same bottom-most visible row once
-            // that layout pass has completed.
+            // that layout pass has completed. Sparse PostsListWidget deliberately
+            // skips this callback and lets its semantic anchor own the viewport.
             QTimer::singleShot(0, this, [this, anchor] {
                 restoreViewportAnchor(anchor);
             });
@@ -206,15 +222,20 @@ bool ResizableListWidget::eventFilter(QObject* watched, QEvent* event)
 
 void ResizableListWidget::resizeEvent(QResizeEvent* event)
 {
+    const bool preserveHere = usesInternalViewportAnchoring();
+
     // Capture before QAbstractItemView recomputes row geometry. At this point
     // the viewport still represents the old layout, so the bottom-most visible
-    // row is the right visual anchor for a window/splitter resize.
-    const ViewportAnchor anchor = captureViewportAnchor();
+    // row is the right visual anchor for an ordinary ResizableListWidget. Sparse
+    // PostsListWidget owns this transaction itself and deliberately skips it.
+    const ViewportAnchor anchor = preserveHere ? captureViewportAnchor() : ViewportAnchor{};
 
     QListWidget::resizeEvent(event);
     scheduleAllItemResizes(false);
 
-    QTimer::singleShot(0, this, [this, anchor] {
-        restoreViewportAnchor(anchor);
-    });
+    if (preserveHere) {
+        QTimer::singleShot(0, this, [this, anchor] {
+            restoreViewportAnchor(anchor);
+        });
+    }
 }
