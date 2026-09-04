@@ -243,6 +243,28 @@ void PostTimelineService::loadThreadPage(BackendChannel& channel,
                QStringLiteral("down"), std::move(callback));
 }
 
+void PostTimelineService::loadThreadBefore(BackendChannel& channel,
+                                           const QString& rootId,
+                                           const QString& fromPost,
+                                           uint64_t fromCreateAt,
+                                           int perPage,
+                                           PageCallback callback)
+{
+    loadThread(channel, rootId, perPage, fromPost, fromCreateAt,
+               QStringLiteral("up"), std::move(callback));
+}
+
+void PostTimelineService::loadThreadAfter(BackendChannel& channel,
+                                          const QString& rootId,
+                                          const QString& fromPost,
+                                          uint64_t fromCreateAt,
+                                          int perPage,
+                                          PageCallback callback)
+{
+    loadThread(channel, rootId, perPage, fromPost, fromCreateAt,
+               QStringLiteral("down"), std::move(callback));
+}
+
 void PostTimelineService::loadThreadTail(BackendChannel& channel,
                                          const QString& rootId,
                                          int perPage,
@@ -340,8 +362,8 @@ void PostTimelineService::loadThread(BackendChannel& channel,
             }
             // Mattermost may include the `fromPost` cursor itself in the next
             // page. It is an overlap marker, not a new logical row; passing it
-            // to PostTimeline::placeWindow() would relocate the existing post
-            // one index forward and manufacture an artificial gap.
+            // to the source as data would relocate the existing post and
+            // manufacture an artificial gap.
             if (!fromPost.isEmpty()) {
                 result.postIds.removeAll(fromPost);
             }
