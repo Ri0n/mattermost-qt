@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 
+#include <QLoggingCategory>
 #include <QPointer>
 
 #include "backend/Backend.h"
@@ -14,6 +15,65 @@
 namespace Mattermost {
 
 namespace {
+
+Q_LOGGING_CATEGORY(lcThreadTimelineTrace, "mattermost.timeline.thread", QtWarningMsg)
+
+QString shortId(const QString& id)
+{
+    return id.isEmpty() ? QStringLiteral("-") : id.left(8);
+}
+
+QString slotSummary(const QVector<QString>& postIds)
+{
+    int available = 0;
+    for (const QString& id : postIds) {
+        available += !id.isEmpty();
+    }
+
+    QString result = QStringLiteral("count=%1 known=%2 missing=%3")
+        .arg(postIds.size())
+        .arg(available)
+        .arg(postIds.size() - available);
+    if (postIds.size() > 30) {
+        return result;
+    }
+
+    result += QStringLiteral(" slots=");
+    for (int index = 0; index < postIds.size(); ++index) {
+        if (index != 0) {
+            result += QLatin1Char(' ');
+        }
+        result += QString::number(index);
+        result += QLatin1Char(':');
+        result += shortId(postIds.at(index));
+    }
+    return result;
+}
+
+QString idsSummary(const QStringList& ids)
+{
+    QStringList result;
+    result.reserve(ids.size());
+    for (const QString& id : ids) {
+        result.push_back(shortId(id));
+    }
+    return result.join(QLatin1Char(','));
+}
+
+const char* requestReasonName(AbstractPostSource::RequestReason reason)
+{
+    switch (reason) {
+    case AbstractPostSource::RequestReason::Initial:
+        return "initial";
+    case AbstractPostSource::RequestReason::Scroll:
+        return "scroll";
+    case AbstractPostSource::RequestReason::Seek:
+        return "seek";
+    case AbstractPostSource::RequestReason::EnsureVisible:
+        return "ensure-visible";
+    }
+    return "unknown";
+}
 
 QVector<BackendPost*> cachedThreadReplies(const BackendChannel& channel, const QString& rootId)
 {
@@ -55,22 +115,42 @@ ThreadPostSource::ThreadPostSource(Backend& backendInstance,
     }
     seedCachedPosts();
 
+    BackendPost* root = rootPost();
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_INIT source=" << static_cast<const void*>(this)
+        << " root=" << shortId(rootId)
+        << " replyCount=" << (root ? root->reply_count : -1)
+        << " lastReplyAt=" << (root ? root->last_reply_at : 0)
+        << ' ' << slotSummary(postIds);
+
     connect(&channel, &BackendChannel::onNewPost, this,
             [this](BackendPost& post) { appendLiveReply(post); });
     connect(&channel, &BackendChannel::onPostEdited, this,
             [this](BackendPost& post) {
         const int index = indexOfPost(post.id);
         if (index >= 0) {
+            qCDebug(lcThreadTimelineTrace).nospace()
+                << "THREAD_POST_EDIT source=" << static_cast<const void*>(this)
+                << " post=" << shortId(post.id)
+                << " index=" << index;
             emit itemsChanged(index, index);
         }
         if (post.id == rootId) {
             const int count = currentLogicalCount();
             if (count != static_cast<int>(postIds.size())) {
+                qCDebug(lcThreadTimelineTrace).nospace()
+                    << "THREAD_COUNT_CHANGE source=" << static_cast<const void*>(this)
+                    << " old=" << postIds.size()
+                    << " new=" << count
+                    << " replyCount=" << post.reply_count;
                 postIds.resize(count);
                 if (!postIds.isEmpty()) {
                     postIds[0] = rootId;
                 }
                 rebuildIndex();
+                qCDebug(lcThreadTimelineTrace).nospace()
+                    << "THREAD_SLOTS source=" << static_cast<const void*>(this)
+                    << ' ' << slotSummary(postIds);
                 emit itemCountChanged(count);
             }
         }
@@ -135,6 +215,11 @@ int ThreadPostSource::ensurePostIndex(const QString& postId)
     }
     postIds[index] = postId;
     rebuildIndex();
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_PROVISIONAL source=" << static_cast<const void*>(this)
+        << " post=" << shortId(postId)
+        << " index=" << index
+        << ' ' << slotSummary(postIds);
     emit rangeAvailable(index, index);
     return index;
 }
@@ -144,10 +229,16 @@ void ThreadPostSource::requestRange(int first,
                                     RequestReason reason,
                                     quint64 generation)
 {
-    Q_UNUSED(reason)
-    Q_UNUSED(generation)
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_REQUEST source=" << static_cast<const void*>(this)
+        << " root=" << shortId(rootId)
+        << " requested=[" << first << ',' << last << ']'
+        << " reason=" << requestReasonName(reason)
+        << " generation=" << generation
+        << ' ' << slotSummary(postIds);
 
     if (postIds.isEmpty() || !rootPost()) {
+        qCDebug(lcThreadTimelineTrace) << "THREAD_REQUEST_EMPTY";
         emit rangeRequestFinished(first, last);
         return;
     }
@@ -171,12 +262,22 @@ void ThreadPostSource::requestRange(int first,
     QPointer<ThreadPostSource> guard(this);
     BackendPost* root = rootPost();
     if (requestedLast >= static_cast<int>(postIds.size()) - ServerBlockSize) {
+        qCDebug(lcThreadTimelineTrace).nospace()
+            << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
+            << " branch=tail lastReplyAt=" << root->last_reply_at;
         PostTimelineService::instance(backend).loadThreadTail(
             channel, rootId, ServerBlockSize, root->last_reply_at,
             [guard, first, last](const PostTimelineService::Page& result) {
                 if (!guard) {
                     return;
                 }
+                qCDebug(lcThreadTimelineTrace).nospace()
+                    << "THREAD_RESPONSE source=" << static_cast<const void*>(guard.data())
+                    << " branch=tail success=" << result.success
+                    << " ids=" << idsSummary(result.postIds)
+                    << " prev=" << shortId(result.prevPostId)
+                    << " next=" << shortId(result.nextPostId)
+                    << " hasNext=" << result.hasNext;
                 if (result.success && !result.postIds.isEmpty()) {
                     guard->placeTail(result.postIds);
                 }
@@ -186,12 +287,22 @@ void ThreadPostSource::requestRange(int first,
     }
 
     if (requestedFirst <= 1) {
+        qCDebug(lcThreadTimelineTrace).nospace()
+            << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
+            << " branch=initial";
         PostTimelineService::instance(backend).loadThreadPage(
             channel, rootId, ServerBlockSize, QString(), 0,
             [guard, first, last](const PostTimelineService::Page& result) {
                 if (!guard) {
                     return;
                 }
+                qCDebug(lcThreadTimelineTrace).nospace()
+                    << "THREAD_RESPONSE source=" << static_cast<const void*>(guard.data())
+                    << " branch=initial success=" << result.success
+                    << " ids=" << idsSummary(result.postIds)
+                    << " prev=" << shortId(result.prevPostId)
+                    << " next=" << shortId(result.nextPostId)
+                    << " hasNext=" << result.hasNext;
                 if (result.success && !result.postIds.isEmpty()) {
                     guard->placeInitial(result.postIds);
                 }
@@ -201,12 +312,25 @@ void ThreadPostSource::requestRange(int first,
     }
 
     const int target = (requestedFirst + requestedLast) / 2;
+    const uint64_t estimatedTime = estimatedCreateAt(target);
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
+        << " branch=approx target=" << target
+        << " fromCreateAt=" << estimatedTime;
     PostTimelineService::instance(backend).loadThreadFromTime(
-        channel, rootId, ServerBlockSize, estimatedCreateAt(target),
+        channel, rootId, ServerBlockSize, estimatedTime,
         [guard, target, first, last](const PostTimelineService::Page& result) {
             if (!guard) {
                 return;
             }
+            qCDebug(lcThreadTimelineTrace).nospace()
+                << "THREAD_RESPONSE source=" << static_cast<const void*>(guard.data())
+                << " branch=approx target=" << target
+                << " success=" << result.success
+                << " ids=" << idsSummary(result.postIds)
+                << " prev=" << shortId(result.prevPostId)
+                << " next=" << shortId(result.nextPostId)
+                << " hasNext=" << result.hasNext;
             if (result.success && !result.postIds.isEmpty()) {
                 guard->placeApproximate(target, result.postIds);
             }
@@ -262,6 +386,11 @@ void ThreadPostSource::seedCachedPosts()
 
     postIds[0] = rootId;
     const QVector<BackendPost*> replies = cachedThreadReplies(channel, rootId);
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_SEED source=" << static_cast<const void*>(this)
+        << " root=" << shortId(rootId)
+        << " replyCount=" << root->reply_count
+        << " cachedReplies=" << replies.size();
     if (replies.isEmpty()) {
         rebuildIndex();
         emit rangeAvailable(0, 0);
@@ -273,6 +402,9 @@ void ThreadPostSource::seedCachedPosts()
             postIds[i + 1] = replies.at(i)->id;
         }
         rebuildIndex();
+        qCDebug(lcThreadTimelineTrace).nospace()
+            << "THREAD_SEED_ALL source=" << static_cast<const void*>(this)
+            << ' ' << slotSummary(postIds);
         emit rangeAvailable(0, static_cast<int>(postIds.size()) - 1);
         return;
     }
@@ -287,12 +419,19 @@ void ThreadPostSource::seedCachedPosts()
             postIds[first + offset] = replies.at(replies.size() - count + offset)->id;
         }
         rebuildIndex();
+        qCDebug(lcThreadTimelineTrace).nospace()
+            << "THREAD_SEED_TAIL source=" << static_cast<const void*>(this)
+            << " first=" << first
+            << ' ' << slotSummary(postIds);
         emit rangeAvailable(0, 0);
         emit rangeAvailable(first, first + count - 1);
         return;
     }
 
     rebuildIndex();
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_SEED_ROOT_ONLY source=" << static_cast<const void*>(this)
+        << ' ' << slotSummary(postIds);
     emit rangeAvailable(0, 0);
 }
 
@@ -316,6 +455,11 @@ void ThreadPostSource::placeInitial(const QStringList& ids)
     const int count = std::min(static_cast<int>(ids.size()),
                                static_cast<int>(postIds.size()) - first);
     const int last = first + count - 1;
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_PLACE_INITIAL source=" << static_cast<const void*>(this)
+        << " ids=" << idsSummary(ids)
+        << " target=[" << first << ',' << last << ']'
+        << " before=" << slotSummary(postIds);
 
     for (int offset = 0; offset < count; ++offset) {
         const QString& id = ids.at(offset);
@@ -332,6 +476,9 @@ void ThreadPostSource::placeInitial(const QStringList& ids)
         postIds[0] = rootId;
     }
     rebuildIndex();
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_PLACE_INITIAL_DONE source=" << static_cast<const void*>(this)
+        << ' ' << slotSummary(postIds);
     emit itemsChanged(first, last);
     emit rangeAvailable(0, std::max(0, last));
 }
@@ -345,6 +492,11 @@ void ThreadPostSource::placeTail(const QStringList& ids)
                                static_cast<int>(postIds.size()) - 1);
     const int first = static_cast<int>(postIds.size()) - count;
     const int last = first + count - 1;
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_PLACE_TAIL source=" << static_cast<const void*>(this)
+        << " ids=" << idsSummary(ids)
+        << " target=[" << first << ',' << last << ']'
+        << " before=" << slotSummary(postIds);
 
     for (int offset = 0; offset < count; ++offset) {
         const QString& id = ids.at(ids.size() - count + offset);
@@ -356,6 +508,9 @@ void ThreadPostSource::placeTail(const QStringList& ids)
         postIds[first + offset] = id;
     }
     rebuildIndex();
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_PLACE_TAIL_DONE source=" << static_cast<const void*>(this)
+        << ' ' << slotSummary(postIds);
     emit itemsChanged(first, last);
     emit rangeAvailable(first, last);
 }
@@ -370,6 +525,12 @@ void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
     int first = targetIndex - (count - 1) / 2;
     first = std::max(1, std::min(first, static_cast<int>(postIds.size()) - count));
     const int last = first + count - 1;
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_PLACE_APPROX source=" << static_cast<const void*>(this)
+        << " target=" << targetIndex
+        << " ids=" << idsSummary(ids)
+        << " targetRange=[" << first << ',' << last << ']'
+        << " before=" << slotSummary(postIds);
 
     for (int offset = 0; offset < count; ++offset) {
         const QString& id = ids.at(offset);
@@ -381,6 +542,9 @@ void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
         postIds[first + offset] = id;
     }
     rebuildIndex();
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_PLACE_APPROX_DONE source=" << static_cast<const void*>(this)
+        << ' ' << slotSummary(postIds);
     emit itemsChanged(first, last);
     emit rangeAvailable(first, last);
 }
@@ -442,6 +606,10 @@ void ThreadPostSource::appendLiveReply(BackendPost& post)
 
     const int existing = indexOfPost(post.id);
     if (existing >= 0) {
+        qCDebug(lcThreadTimelineTrace).nospace()
+            << "THREAD_LIVE_EXISTING source=" << static_cast<const void*>(this)
+            << " post=" << shortId(post.id)
+            << " index=" << existing;
         emit itemsChanged(existing, existing);
         return;
     }
@@ -457,6 +625,11 @@ void ThreadPostSource::appendLiveReply(BackendPost& post)
     const int index = count - 1;
     postIds[index] = post.id;
     rebuildIndex();
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_LIVE_APPEND source=" << static_cast<const void*>(this)
+        << " post=" << shortId(post.id)
+        << " index=" << index
+        << ' ' << slotSummary(postIds);
     emit itemCountChanged(count);
     emit rangeAvailable(index, index);
 }
