@@ -81,6 +81,22 @@ public:
                         uint64_t fromCreateAt,
                         PageCallback callback);
 
+    /** Fetch up to perPage replies immediately older than a known thread post. */
+    void loadThreadBefore(BackendChannel& channel,
+                          const QString& rootId,
+                          const QString& fromPost,
+                          uint64_t fromCreateAt,
+                          int perPage,
+                          PageCallback callback);
+
+    /** Fetch up to perPage replies immediately newer than a known thread post. */
+    void loadThreadAfter(BackendChannel& channel,
+                         const QString& rootId,
+                         const QString& fromPost,
+                         uint64_t fromCreateAt,
+                         int perPage,
+                         PageCallback callback);
+
     /**
      * Fetch the newest replies in a thread without walking every older page.
      * The result excludes the root and is normalized to oldest -> newest.
