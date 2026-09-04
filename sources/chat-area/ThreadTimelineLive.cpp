@@ -27,6 +27,7 @@
 
 #include <QDateTime>
 #include <QListWidgetItem>
+#include <QScrollBar>
 #include <QTimer>
 
 #include "ChatArea.h"
@@ -101,13 +102,12 @@ ThreadTimelineController* createConfiguredThreadTimelineController(ChatArea& are
         return nullptr;
     }
 
-    // ThreadTimelineController::start() is queued by its constructor. Install
-    // the optimized live path after that startup callback has connected the
-    // legacy full-render handler, so it can be replaced deterministically.
+    // start() was queued by the controller constructor before this callback is
+    // queued. Replace its legacy live handler in the same event-loop turn,
+    // rather than leaving a second-turn window in which a reply can still take
+    // the full-render path.
     QTimer::singleShot(0, controller, [controller] {
-        QTimer::singleShot(0, controller, [controller] {
-            controller->installIncrementalLiveUpdates();
-        });
+        controller->installIncrementalLiveUpdates();
     });
     return controller;
 }
@@ -118,6 +118,22 @@ void ThreadTimelineController::installIncrementalLiveUpdates()
     connect(&area.channel, &BackendChannel::onNewPost,
             this, &ThreadTimelineController::materializeLivePost,
             Qt::UniqueConnection);
+
+    // Raw scrollbar valueChanged also fires for item insertion, gap resizing,
+    // Markdown/image reflow and anchor restoration. Those are layout changes,
+    // not navigation, and must never trigger a REST seek/page request. Wheel and
+    // keyboard movement already arrive through userViewportChanged; thumb drags
+    // are handled here only while the slider is physically down.
+    if (area.ui && area.ui->listWidget) {
+        QScrollBar* scrollBar = area.ui->listWidget->verticalScrollBar();
+        QObject::disconnect(scrollBar, &QScrollBar::valueChanged, this, nullptr);
+        connect(scrollBar, &QScrollBar::valueChanged, this,
+                [this, scrollBar](int) {
+            if (scrollBar->isSliderDown()) {
+                scheduleViewportCheck();
+            }
+        });
+    }
 }
 
 void ThreadTimelineController::materializeLivePost(BackendPost& post)
@@ -191,12 +207,13 @@ void ThreadTimelineController::materializeLivePost(BackendPost& post)
     connect(postWidget, &PostWidget::dimensionsChanged,
             this, &ThreadTimelineController::scheduleMeasurementPass);
 
-    // PostsListWidget owns sticky-bottom and concrete viewport-anchor recovery,
-    // so a one-row live mutation needs no renderTimeline()/scrollToBottom().
+    // One websocket reply is deliberately a one-row transaction. No
+    // renderTimeline(), no scrollToBottom(), and no viewport check is scheduled
+    // here. User scrolling will request neighbouring gaps when needed; layout
+    // driven scrollbar changes are ignored by installIncrementalLiveUpdates().
     scheduleMeasurementPass();
     schedulePrune();
     persistState();
-    scheduleViewportCheck();
 }
 
 } // namespace Mattermost
