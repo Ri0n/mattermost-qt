@@ -88,6 +88,7 @@ public:
     }
 
     bool isReady() const { return ready && targetIndex >= 0; }
+    bool hasActiveTransaction() const { return active && targetIndex >= 0; }
     bool isActive(const Ticket& ticket) const
     {
         return active && isCurrent(ticket);
