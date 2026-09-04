@@ -2,12 +2,9 @@
 
 #include <QPointer>
 #include <QString>
-#include <QTimer>
 
 #include "AbstractPostSource.h"
 #include "widgets/LongListWidget.h"
-
-class QWheelEvent;
 
 namespace Mattermost {
 
@@ -36,8 +33,8 @@ public:
 
     /**
      * Keep a semantic post target anchored while its provisional logical index
-     * is replaced by authoritative source data. A zero quiet period keeps the
-     * lock until a real user viewport gesture cancels it.
+     * is replaced by authoritative source data. ChatLogWidget owns only post
+     * identity; LongListWidget owns the actual viewport lock and all scroll math.
      */
     bool lockNavigationToPost(const QString& postId,
                               Alignment alignment = Alignment::Center,
@@ -54,14 +51,12 @@ signals:
 protected:
     QWidget* createItemWidget(int index) override;
     void destroyItemWidget(int index, QWidget* widget) override;
-    void wheelEvent(QWheelEvent* event) override;
 
 private:
     static AbstractPostSource::RequestReason toSourceReason(RequestReason reason);
     void reconnectSource();
     void rematerializeRange(int first, int last);
-    bool restoreNavigationTarget(bool force = false);
-    void touchNavigationLock();
+    bool restoreNavigationTarget();
 
     Backend* backend = nullptr;
     ChatArea* chatArea = nullptr;
@@ -70,10 +65,7 @@ private:
     QVector<QMetaObject::Connection> sourceConnections;
 
     QString navigationPostId;
-    Alignment navigationAlignment = Alignment::Center;
     int navigationLogicalIndex = -1;
-    int navigationQuietPeriodMs = 0;
-    QTimer navigationLockTimer;
 };
 
 } // namespace Mattermost
