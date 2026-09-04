@@ -97,6 +97,7 @@ private:
                          TimelineSeekState::Edge edge);
     void finishSeek(const TimelineSeekState::Ticket& ticket);
     QString seekFocusPostId(const TimelineSeekState::Ticket& ticket) const;
+    void renderSeekWindow(const TimelineSeekState::Ticket& ticket);
     int logicalIndexNearViewport(int extraScreens, bool* centerInsideGap) const;
 
     void renderTimeline();
@@ -123,6 +124,7 @@ private:
     QStringList deferredExternalPostIds;
 
     ViewportAnchor lastUserViewportAnchor;
+    ViewportAnchor seekViewportAnchor;
     QString contextNavigationPostId;
     QString contextOldestPostId;
     QString contextNewestPostId;
@@ -147,6 +149,7 @@ private:
     bool contextNavigationActive = false;
     bool contextReachedOldest = false;
     bool contextReachedNewest = false;
+    bool seekPreserveViewport = false;
 };
 
 } // namespace Mattermost
