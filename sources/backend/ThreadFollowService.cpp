@@ -51,26 +51,47 @@ QString ThreadFollowService::threadPath(const QString& teamId, const QString& th
         + QStringLiteral("/threads/") + threadId;
 }
 
-void ThreadFollowService::queryFollowing(const QString& teamId,
-                                         const QString& threadId,
-                                         std::function<void(bool)> callback)
+void ThreadFollowService::queryThread(const QString& teamId,
+                                      const QString& threadId,
+                                      ThreadStateCallback callback)
 {
     if (teamId.isEmpty() || threadId.isEmpty() || backend.getLoginUser().id.isEmpty()) {
         if (callback) {
-            callback(false);
+            callback(ThreadState {});
         }
         return;
     }
 
     NetworkRequest request(threadPath(teamId, threadId));
     httpConnector.get(request, HttpResponseCallback(
-        [callback = std::move(callback)](QVariant status, const QJsonDocument&) mutable {
+        [callback = std::move(callback)](QVariant status, const QJsonDocument& doc) mutable {
+            ThreadState state;
+            state.available = status.toInt() == QNetworkReply::NoError && doc.isObject();
+            if (state.available) {
+                const QJsonObject object = doc.object();
+                state.lastViewedAt = object.value(QStringLiteral("last_viewed_at"))
+                    .toVariant().toULongLong();
+                state.lastReplyAt = object.value(QStringLiteral("last_reply_at"))
+                    .toVariant().toULongLong();
+                state.unreadReplies = object.value(QStringLiteral("unread_replies")).toInt();
+                state.unreadMentions = object.value(QStringLiteral("unread_mentions")).toInt();
+            }
             if (callback) {
-                // Mattermost returns this user-thread only for a following
-                // membership. Therefore success itself is the state probe.
-                callback(status.toInt() == QNetworkReply::NoError);
+                callback(state);
             }
         }));
+}
+
+void ThreadFollowService::queryFollowing(const QString& teamId,
+                                         const QString& threadId,
+                                         std::function<void(bool)> callback)
+{
+    queryThread(teamId, threadId,
+                [callback = std::move(callback)](const ThreadState& state) mutable {
+        if (callback) {
+            callback(state.available);
+        }
+    });
 }
 
 void ThreadFollowService::setFollowing(const QString& teamId,
