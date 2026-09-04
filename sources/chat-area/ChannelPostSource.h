@@ -20,10 +20,11 @@ public:
                                BackendChannel& channel,
                                QObject* parent = nullptr);
 
-    int itemCount() const override { return postIds.size(); }
+    int itemCount() const override { return static_cast<int>(postIds.size()); }
     bool isAvailable(int index) const override;
     BackendPost* postAt(int index) const override;
     int indexOfPost(const QString& postId) const override;
+    int ensurePostIndex(const QString& postId) override;
 
     void requestRange(int first,
                       int last,
@@ -35,6 +36,8 @@ private:
 
     int currentLogicalCount() const;
     int pageForIndex(int index) const;
+    int estimateIndexForPost(const BackendPost& post) const;
+    int nearestEmptyIndex(int preferred) const;
     void seedCachedPosts();
     void rebuildIndex();
     void placePage(int page, const QStringList& chronologicalIds);
