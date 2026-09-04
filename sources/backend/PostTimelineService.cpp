@@ -1,6 +1,7 @@
 #include "PostTimelineService.h"
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 #include <QHash>
@@ -249,7 +250,24 @@ void PostTimelineService::loadThreadPage(BackendChannel& channel,
                                          uint64_t fromCreateAt,
                                          PageCallback callback)
 {
-    loadThread(channel, rootId, perPage, fromPost, fromCreateAt, std::move(callback));
+    loadThread(channel, rootId, perPage, fromPost, fromCreateAt,
+               QStringLiteral("down"), std::move(callback));
+}
+
+void PostTimelineService::loadThreadTail(BackendChannel& channel,
+                                         const QString& rootId,
+                                         int perPage,
+                                         uint64_t lastReplyAt,
+                                         PageCallback callback)
+{
+    // Server-side `direction=up` sorts newest-first and applies CreateAt <
+    // fromCreateAt. Advance the known newest timestamp by one millisecond so
+    // replies exactly at last_reply_at are included, then normalize the result
+    // back to the client's chronological order.
+    const uint64_t afterNewest = lastReplyAt == std::numeric_limits<uint64_t>::max()
+        ? lastReplyAt : lastReplyAt + 1;
+    loadThread(channel, rootId, perPage, QString(), afterNewest,
+               QStringLiteral("up"), std::move(callback));
 }
 
 void PostTimelineService::loadThreadFromTime(BackendChannel& channel,
@@ -258,7 +276,8 @@ void PostTimelineService::loadThreadFromTime(BackendChannel& channel,
                                              uint64_t fromCreateAt,
                                              PageCallback callback)
 {
-    loadThread(channel, rootId, perPage, QString(), fromCreateAt, std::move(callback));
+    loadThread(channel, rootId, perPage, QString(), fromCreateAt,
+               QStringLiteral("down"), std::move(callback));
 }
 
 void PostTimelineService::loadThread(BackendChannel& channel,
@@ -266,6 +285,7 @@ void PostTimelineService::loadThread(BackendChannel& channel,
                                      int perPage,
                                      const QString& fromPost,
                                      uint64_t fromCreateAt,
+                                     const QString& direction,
                                      PageCallback callback)
 {
     if (rootId.isEmpty()) {
@@ -277,9 +297,12 @@ void PostTimelineService::loadThread(BackendChannel& channel,
     }
 
     const int safePerPage = std::max(1, perPage);
+    const QString safeDirection = direction == QLatin1String("up")
+        ? QStringLiteral("up") : QStringLiteral("down");
     QString path = QStringLiteral("posts/") + rootId
         + QStringLiteral("/thread?perPage=") + QString::number(safePerPage)
-        + QStringLiteral("&direction=down&skipFetchThreads=true&collapsedThreads=true");
+        + QStringLiteral("&direction=") + safeDirection
+        + QStringLiteral("&skipFetchThreads=true&collapsedThreads=true");
     if (!fromPost.isEmpty()) {
         path += QStringLiteral("&fromPost=") + fromPost;
     }
@@ -287,7 +310,8 @@ void PostTimelineService::loadThread(BackendChannel& channel,
         path += QStringLiteral("&fromCreateAt=") + QString::number(fromCreateAt);
     }
 
-    const bool initialPage = fromPost.isEmpty() && fromCreateAt == 0;
+    const bool initialPage = safeDirection == QLatin1String("down")
+        && fromPost.isEmpty() && fromCreateAt == 0;
     QPointer<BackendChannel> channelGuard(&channel);
     NetworkRequest request(path);
     httpConnector.get(request, HttpResponseCallback(
