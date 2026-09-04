@@ -256,40 +256,12 @@ void ThreadPostSource::requestRange(int first,
         emit rangeAvailable(0, 0);
     }
 
-    // The two real boundaries are authoritative. A request touching the oldest
-    // edge must prefer the initial page even when a short thread makes the same
-    // block overlap the tail window. Otherwise the last page can be fetched
-    // forever while real holes at indices 1..N remain unresolved.
-    // Middle seeks intentionally use only an approximate timestamp mapping;
-    // LongListWidget owns the actual visual target/geometry and never sees this
-    // server-specific approximation.
+    // Real boundaries and already-known adjacent identities are authoritative.
+    // Prefer them over timestamp estimates: a scroll request for a hole next to
+    // a known row can be filled exactly with a fromPost cursor. Timestamp seek
+    // remains only for genuinely disconnected/random middle windows.
     QPointer<ThreadPostSource> guard(this);
     BackendPost* root = rootPost();
-    if (requestedFirst > 1
-        && requestedLast >= static_cast<int>(postIds.size()) - ServerBlockSize) {
-        qCDebug(lcThreadTimelineTrace).nospace()
-            << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
-            << " branch=tail lastReplyAt=" << root->last_reply_at;
-        PostTimelineService::instance(backend).loadThreadTail(
-            channel, rootId, ServerBlockSize, root->last_reply_at,
-            [guard, first, last](const PostTimelineService::Page& result) {
-                if (!guard) {
-                    return;
-                }
-                qCDebug(lcThreadTimelineTrace).nospace()
-                    << "THREAD_RESPONSE source=" << static_cast<const void*>(guard.data())
-                    << " branch=tail success=" << result.success
-                    << " ids=" << idsSummary(result.postIds)
-                    << " prev=" << shortId(result.prevPostId)
-                    << " next=" << shortId(result.nextPostId)
-                    << " hasNext=" << result.hasNext;
-                if (result.success && !result.postIds.isEmpty()) {
-                    guard->placeTail(result.postIds);
-                }
-                emit guard->rangeRequestFinished(first, last);
-            });
-        return;
-    }
 
     if (requestedFirst <= 1) {
         qCDebug(lcThreadTimelineTrace).nospace()
@@ -310,6 +282,73 @@ void ThreadPostSource::requestRange(int first,
                     << " hasNext=" << result.hasNext;
                 if (result.success && !result.postIds.isEmpty()) {
                     guard->placeInitial(result.postIds);
+                }
+                emit guard->rangeRequestFinished(first, last);
+            });
+        return;
+    }
+
+    int firstMissing = -1;
+    for (int index = requestedFirst; index <= requestedLast; ++index) {
+        if (postIds.at(index).isEmpty()) {
+            firstMissing = index;
+            break;
+        }
+    }
+    if (firstMissing > 0 && !postIds.at(firstMissing - 1).isEmpty()) {
+        const int anchorIndex = firstMissing - 1;
+        const QString anchorId = postIds.at(anchorIndex);
+        qCDebug(lcThreadTimelineTrace).nospace()
+            << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
+            << " branch=cursor-forward anchorIndex=" << anchorIndex
+            << " anchor=" << shortId(anchorId)
+            << " firstMissing=" << firstMissing;
+        PostTimelineService::instance(backend).loadThreadPage(
+            channel, rootId, ServerBlockSize, anchorId, 0,
+            [guard, anchorIndex, anchorId, first, last](const PostTimelineService::Page& result) {
+                if (!guard) {
+                    return;
+                }
+                qCDebug(lcThreadTimelineTrace).nospace()
+                    << "THREAD_RESPONSE source=" << static_cast<const void*>(guard.data())
+                    << " branch=cursor-forward anchorIndex=" << anchorIndex
+                    << " anchor=" << shortId(anchorId)
+                    << " success=" << result.success
+                    << " ids=" << idsSummary(result.postIds)
+                    << " prev=" << shortId(result.prevPostId)
+                    << " next=" << shortId(result.nextPostId)
+                    << " hasNext=" << result.hasNext;
+                if (result.success && !result.postIds.isEmpty()) {
+                    // loadThreadPage(fromPost) removes the cursor itself, so the
+                    // first returned reply belongs exactly at anchorIndex + 1.
+                    // placeApproximate also verifies any overlap with already
+                    // mapped identities and keeps those rows stationary.
+                    guard->placeApproximate(anchorIndex + 1, result.postIds);
+                }
+                emit guard->rangeRequestFinished(first, last);
+            });
+        return;
+    }
+
+    if (requestedLast >= static_cast<int>(postIds.size()) - ServerBlockSize) {
+        qCDebug(lcThreadTimelineTrace).nospace()
+            << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
+            << " branch=tail lastReplyAt=" << root->last_reply_at;
+        PostTimelineService::instance(backend).loadThreadTail(
+            channel, rootId, ServerBlockSize, root->last_reply_at,
+            [guard, first, last](const PostTimelineService::Page& result) {
+                if (!guard) {
+                    return;
+                }
+                qCDebug(lcThreadTimelineTrace).nospace()
+                    << "THREAD_RESPONSE source=" << static_cast<const void*>(guard.data())
+                    << " branch=tail success=" << result.success
+                    << " ids=" << idsSummary(result.postIds)
+                    << " prev=" << shortId(result.prevPostId)
+                    << " next=" << shortId(result.nextPostId)
+                    << " hasNext=" << result.hasNext;
+                if (result.success && !result.postIds.isEmpty()) {
+                    guard->placeTail(result.postIds);
                 }
                 emit guard->rangeRequestFinished(first, last);
             });
