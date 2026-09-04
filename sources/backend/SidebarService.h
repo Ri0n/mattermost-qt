@@ -67,6 +67,10 @@ public:
     bool isChannelUnread(const BackendChannel& channel) const;
     uint64_t channelActivityTime(const BackendChannel& channel) const;
     uint64_t channelRecentTime(const BackendChannel& channel) const;
+    uint64_t channelLastViewedTime(const QString& channelId) const
+    {
+        return activityTracker.lastViewedTime(channelId);
+    }
     QStringList visibleChannelIds(const SidebarCategory& category) const;
     void markChannelViewedLocally(const BackendChannel& channel);
     void synchronizeChannelActivity();
