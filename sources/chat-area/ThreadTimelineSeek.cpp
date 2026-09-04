@@ -60,10 +60,10 @@ void ThreadTimelineController::renderSeekWindow(
         return;
     }
 
-    // One seek generation owns one viewport anchor. Seed and edge responses may
-    // change sparse geometry several times; none of those intermediate renders
-    // is allowed to re-centre a different PostWidget and make the visible rows
-    // jump/disappear between network responses.
+    // Wheel/local prefetch owns one concrete viewport anchor for the whole
+    // generation. A thumb random seek deliberately leaves this empty so the
+    // logical target is centred after materialization instead of preserving an
+    // estimated gap pixel that may no longer map to the same content.
     if (seekPreserveViewport && seekViewportAnchor.isValid()) {
         renderTimeline(QString(), false, seekViewportAnchor);
         return;
@@ -80,8 +80,9 @@ void ThreadTimelineController::requestSeekSeed(const TimelineSeekState::Ticket& 
 
     seekState.begin(ticket);
     pendingSeekIndex = ticket.targetIndex;
-    seekViewportAnchor = captureViewportAnchor();
-    seekPreserveViewport = seekViewportAnchor.isValid();
+    // Do not recapture here. updateSeekTargetFromScrollbar() has already chosen
+    // centre-target semantics for a thumb drag, while checkViewport() has already
+    // stored a concrete anchor for slow wheel/local prefetch.
 
     if (!timeline.postIdAt(ticket.targetIndex).isEmpty()) {
         renderSeekWindow(ticket);
