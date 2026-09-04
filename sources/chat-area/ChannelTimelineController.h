@@ -91,6 +91,12 @@ private:
     void updateSeekTargetFromScrollbar(bool readyImmediately);
     void resumeSeekIfReady();
     void requestSeek(const TimelineSeekState::Ticket& ticket);
+    void requestSeekExpansion(const TimelineSeekState::Ticket& ticket,
+                              bool afterMeasurement = false);
+    void requestSeekEdge(const TimelineSeekState::Ticket& ticket,
+                         TimelineSeekState::Edge edge);
+    void finishSeek(const TimelineSeekState::Ticket& ticket);
+    QString seekFocusPostId(const TimelineSeekState::Ticket& ticket) const;
     int logicalIndexNearViewport(int extraScreens, bool* centerInsideGap) const;
 
     void renderTimeline();
