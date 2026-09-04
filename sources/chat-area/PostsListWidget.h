@@ -26,6 +26,7 @@
 
 #include <QElapsedTimer>
 #include <QPersistentModelIndex>
+#include <QStringList>
 #include <QTimer>
 #include <QVariantAnimation>
 
@@ -147,6 +148,38 @@ public:
 		}
 		const QVariant itemType = item->data(Qt::UserRole);
 		return itemType.isValid() && itemType.toInt() == ItemType::gap;
+	}
+
+	// Return concrete post identities that intersect the actual viewport. Sparse
+	// pruning uses this instead of a stale single anchor so the visible logical
+	// range can be protected explicitly before any row is evicted.
+	QStringList visibleTimelinePostIds() const
+	{
+		QStringList result;
+		const QRect viewportRect = viewport()->rect();
+		for (int row = 0; row < count(); ++row) {
+			const QListWidgetItem* listItem = item(row);
+			if (!isPostItem(listItem)) {
+				continue;
+			}
+			const QRect rect = visualItemRect(listItem);
+			if (!rect.isValid() || !rect.intersects(viewportRect)) {
+				continue;
+			}
+			const QString id = listItem->data(ItemRole::postId).toString();
+			if (!id.isEmpty()) {
+				result.push_back(id);
+			}
+		}
+		return result;
+	}
+
+	// QListView applies sizeHint changes lazily. Sparse timeline code must commit
+	// the new row/gap geometry before restoring a semantic viewport anchor;
+	// otherwise the later Qt layout pass can move the scrollbar into a gap.
+	void applyTimelineGeometryNow()
+	{
+		QListWidget::doItemsLayout();
 	}
 
 	void scrollToUnreadPostsOrBottom ();
