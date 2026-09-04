@@ -110,6 +110,45 @@ private slots:
         }
     }
 
+    void pruningKeepsMeasuredGeometryStable()
+    {
+        PostTimeline timeline(96);
+        timeline.reset(260);
+
+        QStringList ids;
+        for (int i = 0; i < 260; ++i) {
+            const QString id = QStringLiteral("p%1").arg(i);
+            ids.push_back(id);
+        }
+        timeline.placeWindow(0, ids);
+
+        // Give the remote rows deliberately different heights. A centre-biased
+        // 200-row prune removes most/all of these tall edge rows. If measured
+        // height lifetime incorrectly follows QWidget lifetime, the global gap
+        // estimate changes dramatically just because pruning ran.
+        for (int i = 0; i < 260; ++i) {
+            const int height = (i < 30 || i >= 230) ? 300 : 100;
+            timeline.recordMeasuredHeight(QStringLiteral("p%1").arg(i), height);
+        }
+
+        const int estimatedBefore = timeline.estimatedRowHeight();
+        QCOMPARE(estimatedBefore, 146);
+
+        const QVector<int> removed = timeline.pruneLoadedToNearest(130, 200);
+        QCOMPARE(removed.size(), 60);
+        QCOMPARE(timeline.loadedCount(), 200);
+        QCOMPARE(timeline.estimatedRowHeight(), estimatedBefore);
+
+        // Re-materializing an evicted identity should immediately recover its
+        // already measured row height without another widget/layout round-trip.
+        QVERIFY(!timeline.contains(QStringLiteral("p0")));
+        timeline.placeWindow(0, {QStringLiteral("p0")});
+        const auto spans = timeline.spans();
+        QVERIFY(!spans.isEmpty());
+        QCOMPARE(spans.first().kind, PostTimeline::LoadedSpan);
+        QCOMPARE(spans.first().estimatedHeight, qint64(300));
+    }
+
     void backendReplyCountDoesNotCreateSecondLiveSlot()
     {
         // BackendChannel updates root.reply_count before emitting onNewPost.
