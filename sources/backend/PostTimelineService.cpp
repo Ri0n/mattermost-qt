@@ -83,6 +83,50 @@ PostTimelineService::PostTimelineService(Backend& sourceBackend)
             &backend, &Backend::onHttpError);
 }
 
+void PostTimelineService::coalescedGet(const QString& path, JsonCallback callback)
+{
+    if (path.isEmpty()) {
+        if (callback) {
+            callback(QVariant::fromValue(static_cast<int>(QNetworkReply::ProtocolInvalidOperationError)),
+                     QJsonDocument());
+        }
+        return;
+    }
+
+    auto existing = inFlightGets.find(path);
+    if (existing != inFlightGets.end()) {
+        if (callback) {
+            existing->push_back(std::move(callback));
+        }
+        return;
+    }
+
+    QList<JsonCallback> callbacks;
+    if (callback) {
+        callbacks.push_back(std::move(callback));
+    }
+    inFlightGets.insert(path, std::move(callbacks));
+
+    QPointer<PostTimelineService> guard(this);
+    NetworkRequest request(path);
+    httpConnector.get(request, HttpResponseCallback(
+        [guard, path](QVariant status, const QJsonDocument& doc) mutable {
+            if (!guard) {
+                return;
+            }
+
+            // Remove before fan-out: a callback may synchronously request the
+            // same URL again and that must start a fresh request rather than join
+            // an already completed transaction.
+            QList<JsonCallback> waiting = guard->inFlightGets.take(path);
+            for (JsonCallback& cb : waiting) {
+                if (cb) {
+                    cb(status, doc);
+                }
+            }
+        }));
+}
+
 void PostTimelineService::loadChannelPage(BackendChannel& channel,
                                           int page,
                                           int perPage,
@@ -96,9 +140,9 @@ void PostTimelineService::loadChannelPage(BackendChannel& channel,
         + QStringLiteral("&skipFetchThreads=true&collapsedThreads=true");
 
     QPointer<BackendChannel> channelGuard(&channel);
-    NetworkRequest request(path);
-    httpConnector.get(request, HttpResponseCallback(
-        [channelGuard, callback = std::move(callback)](QVariant status, const QJsonDocument& doc) mutable {
+    coalescedGet(path,
+        [channelGuard, callback = std::move(callback)](QVariant status,
+                                                       const QJsonDocument& doc) mutable {
             Page result;
             result.success = status.toInt() == QNetworkReply::NoError && doc.isObject();
             if (!result.success || !channelGuard) {
@@ -117,7 +161,7 @@ void PostTimelineService::loadChannelPage(BackendChannel& channel,
             if (callback) {
                 callback(result);
             }
-        }));
+        });
 }
 
 void PostTimelineService::loadChannelUnread(BackendChannel& channel,
@@ -137,8 +181,7 @@ void PostTimelineService::loadChannelUnread(BackendChannel& channel,
         + QStringLiteral("&collapsedThreads=true");
 
     QPointer<BackendChannel> channelGuard(&channel);
-    NetworkRequest request(path);
-    httpConnector.get(request, HttpResponseCallback(
+    coalescedGet(path,
         [channelGuard, lastViewedAt, callback = std::move(callback)](
             QVariant status, const QJsonDocument& doc) mutable {
             Page result;
@@ -172,7 +215,7 @@ void PostTimelineService::loadChannelUnread(BackendChannel& channel,
             if (callback) {
                 callback(result);
             }
-        }));
+        });
 }
 
 void PostTimelineService::loadChannelBefore(BackendChannel& channel,
@@ -215,8 +258,7 @@ void PostTimelineService::loadChannelCursor(BackendChannel& channel,
         + QStringLiteral("&skipFetchThreads=true&collapsedThreads=true");
 
     QPointer<BackendChannel> channelGuard(&channel);
-    NetworkRequest request(path);
-    httpConnector.get(request, HttpResponseCallback(
+    coalescedGet(path,
         [channelGuard, cursorPostId, callback = std::move(callback)](
             QVariant status, const QJsonDocument& doc) mutable {
             Page result;
@@ -240,7 +282,7 @@ void PostTimelineService::loadChannelCursor(BackendChannel& channel,
             if (callback) {
                 callback(result);
             }
-        }));
+        });
 }
 
 void PostTimelineService::loadThreadPage(BackendChannel& channel,
@@ -313,8 +355,7 @@ void PostTimelineService::loadThread(BackendChannel& channel,
     const bool initialPage = safeDirection == QLatin1String("down")
         && fromPost.isEmpty() && fromCreateAt == 0;
     QPointer<BackendChannel> channelGuard(&channel);
-    NetworkRequest request(path);
-    httpConnector.get(request, HttpResponseCallback(
+    coalescedGet(path,
         [channelGuard, rootId, fromPost, initialPage, callback = std::move(callback)](
             QVariant status, const QJsonDocument& doc) mutable {
             Page result;
@@ -346,7 +387,7 @@ void PostTimelineService::loadThread(BackendChannel& channel,
             if (callback) {
                 callback(result);
             }
-        }));
+        });
 }
 
 QStringList PostTimelineService::chronologicalOrder(const QJsonObject& postsObject,
