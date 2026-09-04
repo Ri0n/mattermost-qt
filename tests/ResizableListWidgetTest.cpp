@@ -66,6 +66,20 @@ public:
     {
         scheduleItemResize(item, widget, true);
     }
+
+    int committedExternalGeometryChanges() const
+    {
+        return externalGeometryChanges;
+    }
+
+protected:
+    void externalViewportGeometryChanged() override
+    {
+        ++externalGeometryChanges;
+    }
+
+private:
+    int externalGeometryChanges = 0;
 };
 
 } // namespace
@@ -206,6 +220,43 @@ private slots:
         settleEvents();
         QVERIFY(userSelectedValue >= 0);
         QCOMPARE(list.verticalScrollBar()->value(), userSelectedValue);
+    }
+
+    void externalViewportOwnerSeesCommittedDelayedRowGeometry()
+    {
+        ExternalAnchorResizableList list;
+        list.setProperty("_mattermostExternalViewportAnchor", true);
+        list.resize(360, 180);
+
+        QList<VariableHeightRow*> rows;
+        QList<QListWidgetItem*> items;
+        for (int i = 0; i < 12; ++i) {
+            auto* row = new VariableHeightRow(48);
+            auto* item = new QListWidgetItem;
+            list.addItem(item);
+            list.setItemWidget(item, row);
+            rows.push_back(row);
+            items.push_back(item);
+        }
+
+        list.show();
+        settleEvents();
+
+        QVERIFY2(list.committedExternalGeometryChanges() > 0,
+                 "Initial delayed row sizing must notify the external viewport owner");
+        const int initialMaximum = list.verticalScrollBar()->maximum();
+        const int notificationsBeforeGrowth = list.committedExternalGeometryChanges();
+
+        rows.last()->setHintHeight(260);
+        list.schedulePreservingResize(items.last(), rows.last());
+        settleEvents();
+
+        QVERIFY2(list.committedExternalGeometryChanges() > notificationsBeforeGrowth,
+                 "Late row growth must produce a committed external geometry notification");
+        QVERIFY2(list.visualItemRect(items.last()).height() >= 260,
+                 "The external owner must be notified only after QListView sees the new row height");
+        QVERIFY2(list.verticalScrollBar()->maximum() > initialMaximum,
+                 "The committed geometry notification must observe the updated scrollbar range");
     }
 
     void removedRowInvalidatesPendingResize()
