@@ -113,10 +113,31 @@ public:
 		animation->start(QAbstractAnimation::DeleteWhenStopped);
 	}
 
-	// Sparse controller calls retained for source compatibility. Long-lived
-	// paint freezes caused stale backing-store artefacts; the incremental timeline
-	// transaction now performs its own strictly synchronous QWidget freeze.
-	void setUpdatesEnabled(bool) {}
+	// Sparse controllers still call this QWidget API around synchronous timeline
+	// geometry mutations. Route those calls through the same ownership flag used
+	// by beginTimelineRebuild()/finishTimelineRebuild*(): render reconciliation and
+	// gap-height recalibration therefore cannot create two independent paint
+	// lifetimes. The queued guard is only a fail-safe; every normal transaction
+	// resumes synchronously before returning to the event loop.
+	void setUpdatesEnabled(bool enabled)
+	{
+		if (enabled) {
+			resumeTimelinePainting();
+			return;
+		}
+
+		if (!QWidget::updatesEnabled()) {
+			return;
+		}
+
+		QWidget::setUpdatesEnabled(false);
+		timelinePaintingSuspended = true;
+		QTimer::singleShot(0, this, [this] {
+			if (timelinePaintingSuspended) {
+				resumeTimelinePainting();
+			}
+		});
+	}
 
 	using QListWidget::addItem;
 	// During beginTimelineRebuild() this pointer overload reconciles a desired gap
