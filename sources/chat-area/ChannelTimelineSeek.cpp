@@ -10,6 +10,7 @@
 #include "ChannelTimelineController.h"
 
 #include <algorithm>
+#include <utility>
 
 #include <QPointer>
 #include <QScrollBar>
@@ -115,9 +116,6 @@ void ChannelTimelineController::requestSeek(const TimelineSeekState::Ticket& tic
             }
             guard->requestInFlight = false;
 
-            // Every successful service response is ingested before this callback.
-            // Stale drag requests therefore remain useful in the memory model but
-            // are forbidden from changing the visible sparse topology.
             if (!guard->seekState.isCurrent(ticket)) {
                 guard->resumeSeekIfReady();
                 return;
@@ -133,8 +131,7 @@ void ChannelTimelineController::requestSeek(const TimelineSeekState::Ticket& tic
                 guard->timeline.totalCount() - page * SeekSeedSize - responseSize);
             guard->timeline.placeWindow(firstIndex, ids);
 
-            const QString focusId = guard->seekFocusPostId(ticket);
-            guard->renderTimeline(focusId, ViewportAnchor());
+            guard->renderTimeline(guard->seekFocusPostId(ticket), ViewportAnchor());
             guard->requestSeekExpansion(ticket);
         });
 }
@@ -155,6 +152,13 @@ void ChannelTimelineController::requestSeekExpansion(
         return;
     }
 
+    if (loaded.firstIndex <= 0) {
+        seekState.markBoundary(ticket, TimelineSeekState::OlderEdge);
+    }
+    if (loaded.lastIndex() >= timeline.totalCount() - 1) {
+        seekState.markBoundary(ticket, TimelineSeekState::NewerEdge);
+    }
+
     const int requiredRows = afterMeasurement
         ? timeline.rowsForViewportCoverage(
               area.ui->listWidget->viewport()->height(), 1,
@@ -173,9 +177,6 @@ void ChannelTimelineController::requestSeekExpansion(
     }
 
     if (!afterMeasurement) {
-        // The first 10+10+10 transaction is intentionally fast. Let actual row
-        // geometry settle once, then decide whether tiny posts require another
-        // bounded 10-row edge extension to cover viewport + one screen each side.
         QPointer<ChannelTimelineController> guard(this);
         QTimer::singleShot(SeekMeasurementDelayMs, this, [guard, ticket] {
             if (guard && guard->seekState.isActive(ticket)) {
