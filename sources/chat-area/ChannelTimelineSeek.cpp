@@ -86,6 +86,38 @@ QString ChannelTimelineController::seekFocusPostId(
     return timeline.postIdAt(nearest);
 }
 
+void ChannelTimelineController::renderSeekWindow(
+    const TimelineSeekState::Ticket& ticket)
+{
+    if (!active || !seekState.isCurrent(ticket)) {
+        return;
+    }
+
+    // userViewportChanged is emitted only for real input. If it changed after
+    // this generation captured its anchor, supersede the generation instead of
+    // allowing a late HTTP response to pull the viewport back to the old target.
+    if (seekViewportAnchor.isValid() && lastUserViewportAnchor.isValid()) {
+        const int originalIndex = logicalIndexForAnchor(seekViewportAnchor);
+        const int currentUserIndex = logicalIndexForAnchor(lastUserViewportAnchor);
+        if (originalIndex >= 0 && currentUserIndex >= 0
+            && currentUserIndex != originalIndex) {
+            seekState.setTarget(currentUserIndex);
+            pendingSeekIndex = currentUserIndex;
+            seekViewportAnchor = lastUserViewportAnchor;
+            seekPreserveViewport = true;
+            seekState.markReady();
+            resumeSeekIfReady();
+            return;
+        }
+    }
+
+    if (seekPreserveViewport && seekViewportAnchor.isValid()) {
+        renderTimeline(QString(), seekViewportAnchor);
+        return;
+    }
+    renderTimeline(seekFocusPostId(ticket), ViewportAnchor());
+}
+
 void ChannelTimelineController::requestSeek(const TimelineSeekState::Ticket& ticket)
 {
     if (!active || !seekState.isCurrent(ticket) || requestInFlight
@@ -96,8 +128,19 @@ void ChannelTimelineController::requestSeek(const TimelineSeekState::Ticket& tic
     seekState.begin(ticket);
     pendingSeekIndex = ticket.targetIndex;
 
+    // The physical viewport at the moment a seek starts is the user's intent.
+    // Keep this one anchor for the entire seed/edge/measurement transaction.
+    // This works for both thumb release (the gap coordinate is preserved) and
+    // slow wheel scrolling (new rows fill around the current viewport instead of
+    // being repeatedly centred after every network response).
+    seekViewportAnchor = captureViewportAnchor();
+    seekPreserveViewport = seekViewportAnchor.isValid();
+    if (seekPreserveViewport) {
+        lastUserViewportAnchor = seekViewportAnchor;
+    }
+
     if (!timeline.postIdAt(ticket.targetIndex).isEmpty()) {
-        renderTimeline(timeline.postIdAt(ticket.targetIndex), ViewportAnchor());
+        renderSeekWindow(ticket);
         requestSeekExpansion(ticket);
         return;
     }
@@ -131,7 +174,7 @@ void ChannelTimelineController::requestSeek(const TimelineSeekState::Ticket& tic
                 guard->timeline.totalCount() - page * SeekSeedSize - responseSize);
             guard->timeline.placeWindow(firstIndex, ids);
 
-            guard->renderTimeline(guard->seekFocusPostId(ticket), ViewportAnchor());
+            guard->renderSeekWindow(ticket);
             guard->requestSeekExpansion(ticket);
         });
 }
@@ -273,7 +316,7 @@ void ChannelTimelineController::requestSeekEdge(
             guard->seekState.markBoundary(ticket, edge);
         }
 
-        guard->renderTimeline(guard->seekFocusPostId(ticket), ViewportAnchor());
+        guard->renderSeekWindow(ticket);
         guard->requestSeekExpansion(ticket);
     };
 
@@ -292,7 +335,14 @@ void ChannelTimelineController::finishSeek(const TimelineSeekState::Ticket& tick
     }
     seekState.complete(ticket);
     pendingSeekIndex = -1;
+    seekPreserveViewport = false;
+    seekViewportAnchor = ViewportAnchor();
     schedulePrune();
+
+    // A user wheel/drag may have moved again while the final expansion request
+    // was in flight. Re-evaluate the actual viewport once the old generation no
+    // longer owns networking; if it is already covered this is a cheap no-op.
+    scheduleViewportCheck();
 }
 
 } // namespace Mattermost
