@@ -19,7 +19,6 @@
 
 #pragma once
 
-#include <QDate>
 #include <QPointer>
 #include <QSet>
 #include <QStringList>
@@ -33,6 +32,10 @@ class ChatArea;
 }
 
 class QDockWidget;
+class QDragEnterEvent;
+class QDragMoveEvent;
+class QDropEvent;
+class QResizeEvent;
 
 namespace Mattermost {
 
@@ -91,6 +94,8 @@ private:
 	void markChannelViewedIfAtBottom ();
 	void tryExplicitReadAcknowledgement ();
 	void setupPostSource();
+	void scheduleNewestPosition();
+	void finishPendingNavigation();
 
 	ChatArea* parentArea;
 	QString parentPostId;
