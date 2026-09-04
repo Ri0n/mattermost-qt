@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <memory>
 
 #include <QPointer>
@@ -312,7 +313,8 @@ void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
     }
 
     const int first = std::max(0,
-        static_cast<int>(postIds.size()) - page * ServerPageSize - chronologicalIds.size());
+        static_cast<int>(postIds.size()) - page * ServerPageSize
+            - static_cast<int>(chronologicalIds.size()));
     const int count = std::min(static_cast<int>(chronologicalIds.size()),
                                static_cast<int>(postIds.size()) - first);
     const int last = first + count - 1;
