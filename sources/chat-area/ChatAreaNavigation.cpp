@@ -1,6 +1,5 @@
 #include "ChatArea.h"
 
-#include "AbstractPostSource.h"
 #include "ChatLogWidget.h"
 #include "ui_ChatArea.h"
 
@@ -31,15 +30,17 @@ bool ChatArea::ensurePinnedPostVisible(const QString& postId,
 
 void ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
 {
-    Q_UNUSED(quietPeriodMs)
-
-    if (postId.isEmpty() || !ui || !ui->listWidget || !ui->listWidget->source()) {
+    if (postId.isEmpty() || !ui || !ui->listWidget) {
         return;
     }
 
-    // LongListWidget owns a durable item anchor across later geometry changes.
-    // Ensure the source has a logical slot before the following goToPost() call.
-    ui->listWidget->source()->ensurePostIndex(postId);
+    // The Mattermost-specific view owns semantic post identity. LongListWidget
+    // still owns every pixel/scrollbar operation; if an authoritative page moves
+    // this post from an estimated slot, ChatLogWidget recenters the new logical
+    // index until a real user gesture (or the quiet-period timeout) releases it.
+    ui->listWidget->lockNavigationToPost(postId,
+                                         LongListWidget::Alignment::Center,
+                                         quietPeriodMs);
 }
 
 } // namespace Mattermost
