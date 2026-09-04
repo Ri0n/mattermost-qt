@@ -34,7 +34,7 @@ void MainWindow::openChannelPost(const QString& channelId,
 
     // A permalink can point directly at a thread reply. Replies deliberately do
     // not have rows in the main channel timeline, so route those links to the
-    // thread window instead of repeatedly searching the channel QListWidget.
+    // thread window instead of searching the channel root timeline.
     if (!rootId.isEmpty()) {
         ChatArea* threadArea = nullptr;
         for (ChatArea* existing : area->threadsAreas) {
@@ -53,12 +53,12 @@ void MainWindow::openChannelPost(const QString& channelId,
         threadArea->raise();
         threadArea->activateWindow();
 
-        // ThreadTimelineController starts on the next event-loop turn. Queue the
-        // semantic target behind that start so even a reply outside the initial
-        // 30-row thread page can be materialized immediately from the cached post.
-        // Keep the same semantic lock used by channel permalink navigation: an
-        // overlapping async thread page or attachment reflow must not move the
-        // unread/permalink target before the user scrolls.
+        // A newly created thread ChatArea installs its ThreadPostSource on the
+        // next event-loop turn. Queue the semantic target behind that setup so
+        // even a reply outside the initial thread page can be materialized from
+        // the cached post. Keep the semantic viewport lock used by channel
+        // permalink navigation so an overlapping async page or attachment reflow
+        // cannot move the target before the user scrolls.
         QPointer<ChatArea> threadGuard(threadArea);
         QTimer::singleShot(0, threadArea, [threadGuard, postId] {
             if (!threadGuard) {
@@ -71,9 +71,9 @@ void MainWindow::openChannelPost(const QString& channelId,
         return;
     }
 
-    // A freshly opened lazy ChatArea also starts its sparse controller on the
-    // next event-loop turn. Apply the already-fetched permalink context after
-    // that start so the target cannot be replaced by initial timeline setup.
+    // A freshly opened lazy ChatArea installs its ChannelPostSource on the next
+    // event-loop turn. Apply the already-fetched permalink context after that
+    // setup so the target cannot be replaced by initial source initialization.
     QPointer<ChatArea> areaGuard(area);
     QTimer::singleShot(0, area,
         [areaGuard, postId, contextPostIds, reachedOldest, reachedNewest] {
