@@ -34,7 +34,7 @@ QString slotSummary(const QVector<QString>& postIds)
         .arg(postIds.size())
         .arg(available)
         .arg(postIds.size() - available);
-    if (postIds.size() > 30) {
+    if (postIds.size() > 50) {
         return result;
     }
 
@@ -542,35 +542,83 @@ void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
     }
     const int count = std::min(static_cast<int>(ids.size()),
                                static_cast<int>(postIds.size()) - 1);
-    int first = targetIndex - (count - 1) / 2;
-    first = std::max(1, std::min(first, static_cast<int>(postIds.size()) - count));
+    const int maxFirst = std::max(1, static_cast<int>(postIds.size()) - count);
+
+    // loadThreadFromTime() uses direction=down: the server result starts at the
+    // estimated timestamp, it is not centered around it. The estimated logical
+    // target is therefore the correct fallback *start* of this page.
+    const int fallbackFirst = std::max(1, std::min(targetIndex, maxFirst));
+    int first = fallbackFirst;
+
+    // A timestamp estimate can be far from the real logical rank. When the
+    // response overlaps identities that are already mapped, those identities
+    // provide an exact translation from page offset to logical index. Preserve
+    // that mapping instead of relocating the known rows to the estimate.
+    int alignedFirst = -1;
+    int overlapCount = 0;
+    bool overlapConflict = false;
+    for (int offset = 0; offset < count; ++offset) {
+        const int existing = postIndexes.value(ids.at(offset), -1);
+        if (existing < 1) {
+            continue;
+        }
+        const int candidateFirst = existing - offset;
+        if (candidateFirst < 1 || candidateFirst > maxFirst) {
+            continue;
+        }
+        ++overlapCount;
+        if (alignedFirst < 0) {
+            alignedFirst = candidateFirst;
+        } else if (alignedFirst != candidateFirst) {
+            overlapConflict = true;
+        }
+    }
+    if (alignedFirst >= 0 && !overlapConflict) {
+        first = alignedFirst;
+    }
+
     const int last = first + count - 1;
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PLACE_APPROX source=" << static_cast<const void*>(this)
         << " target=" << targetIndex
         << " ids=" << idsSummary(ids)
+        << " fallbackFirst=" << fallbackFirst
+        << " alignedFirst=" << alignedFirst
+        << " overlaps=" << overlapCount
+        << " conflict=" << overlapConflict
         << " targetRange=[" << first << ',' << last << ']'
         << " before=" << slotSummary(postIds);
 
-    bool targetChanged = false;
+    const QVector<QString> before = postIds;
+
+    // Mutate the identity map atomically first. Signals are emitted only after
+    // rebuildIndex(), so semantic navigation never observes an ID pointing to a
+    // slot that has already been cleared.
     for (int offset = 0; offset < count; ++offset) {
         const QString& id = ids.at(offset);
+        const int target = first + offset;
         const int existing = postIndexes.value(id, -1);
-        if (existing >= 0 && (existing < first || existing > last)) {
+        if (existing >= 0 && existing != target) {
             postIds[existing].clear();
-            emit itemsChanged(existing, existing);
         }
-        if (postIds.at(first + offset) != id) {
-            targetChanged = true;
-        }
-        postIds[first + offset] = id;
+    }
+    for (int offset = 0; offset < count; ++offset) {
+        postIds[first + offset] = ids.at(offset);
     }
     rebuildIndex();
+
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PLACE_APPROX_DONE source=" << static_cast<const void*>(this)
         << ' ' << slotSummary(postIds);
-    if (targetChanged) {
-        emit itemsChanged(first, last);
+
+    // Newly filled empty slots only need rangeAvailable(). itemsChanged() is
+    // reserved for indices that previously held a concrete identity and now
+    // need an existing PostWidget removed/replaced. This keeps an unchanged
+    // overlap (the common cursor-expansion case) completely stable on screen.
+    for (int index = 0; index < postIds.size(); ++index) {
+        if (before.at(index) != postIds.at(index) && !before.at(index).isEmpty()) {
+            emit itemsChanged(index, index);
+        }
     }
     emit rangeAvailable(first, last);
 }
