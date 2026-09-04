@@ -26,6 +26,22 @@ int boundedHeight(int height)
     return std::max(1, height);
 }
 
+QBitArray insertedBits(const QBitArray& source, int first, int count)
+{
+    const int oldSize = static_cast<int>(source.size());
+    first = std::max(0, std::min(first, oldSize));
+    count = std::max(0, count);
+
+    QBitArray result(oldSize + count, false);
+    for (int index = 0; index < first; ++index) {
+        result.setBit(index, source.testBit(index));
+    }
+    for (int index = first; index < oldSize; ++index) {
+        result.setBit(index + count, source.testBit(index));
+    }
+    return result;
+}
+
 } // namespace
 
 void LongListWidget::HeightIndex::reset(int count, int height)
@@ -33,10 +49,7 @@ void LongListWidget::HeightIndex::reset(int count, int height)
     count = std::max(0, count);
     height = boundedHeight(height);
     values.fill(height, count);
-    fenwick.fill(0, count + 1);
-    for (int index = 0; index < count; ++index) {
-        add(index, height);
-    }
+    rebuildFenwick();
 }
 
 void LongListWidget::HeightIndex::resize(int count, int height)
@@ -48,6 +61,17 @@ void LongListWidget::HeightIndex::resize(int count, int height)
     for (int index = 0; index < preserved; ++index) {
         setValue(index, previous.at(index));
     }
+}
+
+void LongListWidget::HeightIndex::insert(int first, int count, int height)
+{
+    first = std::max(0, std::min(first, static_cast<int>(values.size())));
+    count = std::max(0, count);
+    height = boundedHeight(height);
+    for (int offset = 0; offset < count; ++offset) {
+        values.insert(first + offset, height);
+    }
+    rebuildFenwick();
 }
 
 int LongListWidget::HeightIndex::value(int index) const
@@ -73,6 +97,14 @@ void LongListWidget::HeightIndex::add(int index, qint64 delta)
 {
     for (int pos = index + 1; pos < fenwick.size(); pos += pos & -pos) {
         fenwick[pos] += delta;
+    }
+}
+
+void LongListWidget::HeightIndex::rebuildFenwick()
+{
+    fenwick.fill(0, values.size() + 1);
+    for (int index = 0; index < values.size(); ++index) {
+        add(index, values.at(index));
     }
 }
 
@@ -201,6 +233,73 @@ void LongListWidget::setItemCount(int count)
     } else {
         scheduleSync(RequestReason::Initial);
     }
+}
+
+void LongListWidget::insertItems(int first, int count)
+{
+    first = std::max(0, std::min(first, logicalCount));
+    count = std::max(0, count);
+    if (count == 0) {
+        return;
+    }
+
+    ViewAnchor anchor = captureAnchor();
+    if (anchor.kind == ViewAnchor::Item && anchor.index >= first) {
+        anchor.index += count;
+    }
+    const qint64 oldOffset = contentOffset();
+
+    logicalCount += count;
+    heights.insert(first, count, defaultHeight);
+    measured = insertedBits(measured, first, count);
+    available = insertedBits(available, first, count);
+
+    // A structural shift changes the coordinate system of any outstanding
+    // logical-range request. Drop view-side suppression; the service layer still
+    // coalesces equivalent HTTP requests, and late results remain valid cache/data
+    // input without leaving permanently shifted pending bits behind.
+    pendingRequest = QBitArray(logicalCount, false);
+
+    for (int index = 0; index < logicalCount; ++index) {
+        if (!measured.testBit(index)) {
+            heights.setValue(index, estimatedItemHeight(index));
+        }
+    }
+
+    QHash<int, QWidget*> shiftedMaterialized;
+    shiftedMaterialized.reserve(materialized.size());
+    for (auto it = materialized.cbegin(); it != materialized.cend(); ++it) {
+        const int shiftedIndex = it.key() >= first ? it.key() + count : it.key();
+        shiftedMaterialized.insert(shiftedIndex, it.value());
+        widgetIndexes[it.value()] = shiftedIndex;
+    }
+    materialized = std::move(shiftedMaterialized);
+
+    QSet<int> shiftedDirty;
+    for (int index : std::as_const(dirtyGeometry)) {
+        shiftedDirty.insert(index >= first ? index + count : index);
+    }
+    dirtyGeometry = std::move(shiftedDirty);
+
+    if (seekTarget >= first) {
+        seekTarget += count;
+        ++seekGeneration;
+    }
+
+    QSignalBlocker blocker(verticalScrollBar());
+    viewport()->setUpdatesEnabled(false);
+    committingGeometry = true;
+    updateScrollBarRange(oldOffset);
+    restoreAnchor(anchor);
+    layoutMaterialized();
+    committingGeometry = false;
+    viewport()->setUpdatesEnabled(true);
+    viewport()->update();
+
+    lastVisibleRange = {};
+    lastMaterializedRange = {};
+    scheduleSync(seekActive ? RequestReason::Seek : RequestReason::Scroll);
+    emitRangeChanges();
 }
 
 void LongListWidget::setDefaultItemHeight(int height)
