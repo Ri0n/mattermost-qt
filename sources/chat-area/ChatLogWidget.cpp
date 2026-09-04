@@ -2,10 +2,6 @@
 
 #include <algorithm>
 
-#include <QScrollBar>
-#include <QTimer>
-#include <QWheelEvent>
-
 #include "ChatArea.h"
 #include "backend/Backend.h"
 #include "backend/types/BackendPost.h"
@@ -21,10 +17,6 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
     setRequestBlockSize(10);
     setPrefetchScreens(1);
     setSeekDebounceMs(100);
-
-    navigationLockTimer.setSingleShot(true);
-    connect(&navigationLockTimer, &QTimer::timeout,
-            this, &ChatLogWidget::clearNavigationLock);
 
     connect(this, &LongListWidget::rangeRequested, this,
             [this](int first, int last, RequestReason reason, quint64 generation) {
@@ -43,24 +35,12 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
         postSource->requestBeforeFirst(AbstractPostSource::RequestReason::Scroll, 0);
     });
 
-    // QScrollBar::setValue() used by LongListWidget's geometry transactions does
-    // not emit actionTriggered/sliderReleased, so these are safe user-gesture
-    // notifications. Defer actionTriggered because Qt updates the value as part
-    // of the same slider action.
-    connect(verticalScrollBar(), &QScrollBar::actionTriggered, this, [this](int) {
-        QTimer::singleShot(0, this, [this] {
-            emit userViewportChanged(isAtEnd());
-        });
+    // LongListWidget owns the lock lifetime and recognizes all real user scroll
+    // gestures. ChatLogWidget only drops the corresponding semantic post ID.
+    connect(this, &LongListWidget::viewportLockReleased, this, [this] {
+        navigationPostId.clear();
+        navigationLogicalIndex = -1;
     });
-    connect(verticalScrollBar(), &QScrollBar::sliderReleased, this, [this] {
-        emit userViewportChanged(isAtEnd());
-    });
-
-    // Semantic navigation is intentionally canceled only by real user scroll
-    // gestures. Geometry corrections and source-driven remapping never emit
-    // userViewportChanged(), so they keep the post-ID lock intact.
-    connect(this, &LongListWidget::userViewportChanged, this,
-            [this](bool) { clearNavigationLock(); });
 }
 
 ChatLogWidget::~ChatLogWidget()
@@ -120,6 +100,20 @@ bool ChatLogWidget::ensurePostVisible(const QString& postId, Alignment alignment
     if (index < 0) {
         return false;
     }
+
+    // Once semantic navigation established a viewport lock, repeated
+    // ensure/go-to calls must not re-apply Center/Top and move the post again.
+    // Only an authoritative identity remap updates the locked logical index.
+    if (navigationPostId == postId && hasViewportLock()) {
+        if (index != navigationLogicalIndex) {
+            if (!remapViewportLockedItem(index)) {
+                return false;
+            }
+            navigationLogicalIndex = index;
+        }
+        return true;
+    }
+
     scrollToIndex(index, alignment);
     return true;
 }
@@ -159,19 +153,20 @@ bool ChatLogWidget::lockNavigationToPost(const QString& postId,
     }
 
     navigationPostId = postId;
-    navigationAlignment = alignment;
-    navigationLogicalIndex = -1;
-    navigationQuietPeriodMs = std::max(0, quietPeriodMs);
-    restoreNavigationTarget(true);
+    navigationLogicalIndex = index;
+    if (!lockViewportToItem(index, alignment, quietPeriodMs)) {
+        navigationPostId.clear();
+        navigationLogicalIndex = -1;
+        return false;
+    }
     return true;
 }
 
 void ChatLogWidget::clearNavigationLock()
 {
-    navigationLockTimer.stop();
     navigationPostId.clear();
     navigationLogicalIndex = -1;
-    navigationQuietPeriodMs = 0;
+    clearViewportLock();
 }
 
 bool ChatLogWidget::editLastOwnPost()
@@ -239,12 +234,6 @@ void ChatLogWidget::destroyItemWidget(int index, QWidget* widget)
         editedPostWidget.clear();
     }
     LongListWidget::destroyItemWidget(index, widget);
-}
-
-void ChatLogWidget::wheelEvent(QWheelEvent* event)
-{
-    LongListWidget::wheelEvent(event);
-    emit userViewportChanged(isAtEnd());
 }
 
 AbstractPostSource::RequestReason ChatLogWidget::toSourceReason(RequestReason reason)
@@ -324,9 +313,9 @@ void ChatLogWidget::rematerializeRange(int first, int last)
     }
 }
 
-bool ChatLogWidget::restoreNavigationTarget(bool force)
+bool ChatLogWidget::restoreNavigationTarget()
 {
-    if (!postSource || navigationPostId.isEmpty()) {
+    if (!postSource || navigationPostId.isEmpty() || !hasViewportLock()) {
         return false;
     }
 
@@ -334,22 +323,15 @@ bool ChatLogWidget::restoreNavigationTarget(bool force)
     if (index < 0) {
         return false;
     }
-    if (!force && index == navigationLogicalIndex) {
+    if (index == navigationLogicalIndex) {
         return true;
     }
 
-    navigationLogicalIndex = index;
-    scrollToIndex(index, navigationAlignment);
-    touchNavigationLock();
-    return true;
-}
-
-void ChatLogWidget::touchNavigationLock()
-{
-    if (navigationPostId.isEmpty() || navigationQuietPeriodMs <= 0) {
-        return;
+    if (!remapViewportLockedItem(index)) {
+        return false;
     }
-    navigationLockTimer.start(navigationQuietPeriodMs);
+    navigationLogicalIndex = index;
+    return true;
 }
 
 } // namespace Mattermost
