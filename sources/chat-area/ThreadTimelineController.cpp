@@ -89,6 +89,9 @@ void ThreadTimelineController::start()
     }
 
     seekState.reset();
+    pendingSeekIndex = -1;
+    seekPreserveViewport = false;
+    seekViewportAnchor = ViewportAnchor();
 
     QObject::disconnect(&area.channel, &BackendChannel::onNewPosts,
                         &area, &ChatArea::fillChannelPosts);
@@ -98,36 +101,36 @@ void ThreadTimelineController::start()
     BackendPost* root = area.channel.postIdToPost.value(rootId, nullptr);
     const int currentExpectedCount = expectedThreadPostCount(root, area.channel, rootId);
 
-    ViewportAnchor restoredAnchor;
-    const bool restoredState = restoreSavedState(restoredAnchor);
-    bool restoredBottomNeedsCatchup = false;
+    // Reuse saved sparse topology as a memory optimization, but never restore an
+    // old viewport merely because the thread window was opened before. Ordinary
+    // Mattermost thread opening means newest; explicit Attention/Recent/permalink
+    // navigation installs its own semantic target before the deferred tail open.
+    ViewportAnchor ignoredSavedAnchor;
+    const bool restoredState = restoreSavedState(ignoredSavedAnchor);
     if (restoredState) {
-        const int restoredTimelineCount = timeline.totalCount();
-        restoredBottomNeedsCatchup = restoredAnchor.kind == ViewportAnchor::Bottom
-            && currentExpectedCount > restoredTimelineCount;
-
         expectedPostCount = std::max(expectedPostCount, currentExpectedCount);
-        if (!restoredBottomNeedsCatchup
-            && timeline.totalCount() != expectedPostCount) {
+        if (timeline.totalCount() != expectedPostCount) {
             timeline.setTotalCount(expectedPostCount);
         }
         if (root && !timeline.contains(rootId)) {
             timeline.placeWindow(0, QStringList {rootId});
         }
-        if (nextLogicalIndex < expectedPostCount) {
-            hasNext = true;
-        }
-        initialPagesRemaining = 0;
-        initialPrefetchDone = true;
     } else {
         expectedPostCount = currentExpectedCount;
         timeline.reset(expectedPostCount);
         if (root) {
             timeline.placeWindow(0, QStringList {rootId});
-            nextLogicalIndex = 1;
         }
-        initialPagesRemaining = 1;
     }
+
+    // Sequential root->newest paging is retained only as a fallback for servers
+    // without useful thread timestamps. Normal opening and ordinary gap loading
+    // use newest-tail/random-seek windows instead, so an old prefix can never win
+    // a race and move a freshly opened thread back to its first replies.
+    nextLogicalIndex = std::max(1, nextLogicalIndex);
+    initialPagesRemaining = 0;
+    initialPrefetchDone = true;
+    hasNext = false;
     lastAppliedGapRowHeight = timeline.estimatedRowHeight();
 
     QScrollBar* scrollBar = area.ui->listWidget->verticalScrollBar();
@@ -141,12 +144,10 @@ void ThreadTimelineController::start()
             [this] {
         updateSeekTargetFromScrollbar(true);
         persistState();
-        schedulePrune();
     });
     connect(area.ui->listWidget, &PostsListWidget::userViewportChanged, this,
             [this](bool) {
         persistState();
-        schedulePrune();
         scheduleViewportCheck();
     });
 
@@ -191,16 +192,10 @@ void ThreadTimelineController::start()
         }
     });
 
-    if (restoredState) {
-        renderTimeline(QString(), false, restoredAnchor);
-        if (restoredBottomNeedsCatchup && hasNext) {
-            QTimer::singleShot(0, this, &ThreadTimelineController::requestNextPage);
-        }
-        return;
-    }
-
-    renderTimeline(root ? rootId : QString(), true);
-    requestNextPage();
+    // Queue the ordinary newest-edge policy behind this start. A semantic target
+    // queued by MainWindow for Attention/Recent/permalink navigation runs first
+    // and its navigation lock makes openNewestOnInitialOpen() a no-op.
+    QTimer::singleShot(0, this, &ThreadTimelineController::openNewestOnInitialOpen);
 }
 
 void ThreadTimelineController::requestNextPage()
@@ -235,12 +230,6 @@ void ThreadTimelineController::requestNextPage()
 
             if (pageIds.isEmpty()) {
                 guard->hasNext = false;
-                guard->expectedPostCount = std::max(1, guard->nextLogicalIndex);
-                guard->timeline.setTotalCount(guard->expectedPostCount);
-                guard->initialPrefetchDone = true;
-                if (!guard->area.ui->listWidget->verticalScrollBar()->isSliderDown()) {
-                    guard->renderTimeline(QString(), false, anchor);
-                }
                 guard->resumeSeekIfReady();
                 return;
             }
@@ -248,12 +237,6 @@ void ThreadTimelineController::requestNextPage()
             const QString newCursor = pageIds.back();
             if (!requestedCursor.isEmpty() && newCursor == requestedCursor) {
                 guard->hasNext = false;
-                guard->expectedPostCount = std::max(1, guard->nextLogicalIndex);
-                guard->timeline.setTotalCount(guard->expectedPostCount);
-                guard->initialPrefetchDone = true;
-                if (!guard->area.ui->listWidget->verticalScrollBar()->isSliderDown()) {
-                    guard->renderTimeline(QString(), false, anchor);
-                }
                 guard->resumeSeekIfReady();
                 return;
             }
@@ -274,28 +257,12 @@ void ThreadTimelineController::requestNextPage()
             }
 
             const int responseSize = static_cast<int>(page.postIds.size());
-            if (threadPageConfirmsNewestBoundary(page.hasNext, page.nextPostId,
-                                                 responseSize, ThreadPageSize)) {
-                guard->expectedPostCount = std::max(1, guard->nextLogicalIndex);
-                guard->timeline.setTotalCount(guard->expectedPostCount);
-                guard->hasNext = false;
-            } else {
-                guard->hasNext = guard->nextLogicalIndex < guard->expectedPostCount
-                    && (page.hasNext || responseSize >= ThreadPageSize);
-            }
+            guard->hasNext = !threadPageConfirmsNewestBoundary(
+                page.hasNext, page.nextPostId, responseSize, ThreadPageSize)
+                && guard->nextLogicalIndex < guard->expectedPostCount;
 
-            if (guard->initialPagesRemaining > 0) {
-                --guard->initialPagesRemaining;
-            }
-            if (guard->initialPagesRemaining > 0 && guard->hasNext) {
-                QTimer::singleShot(0, guard, &ThreadTimelineController::requestNextPage);
-                return;
-            }
-
-            guard->initialPrefetchDone = true;
             if (!guard->area.ui->listWidget->verticalScrollBar()->isSliderDown()) {
                 guard->renderTimeline(QString(), false, anchor);
-                guard->scheduleViewportCheck();
             }
             guard->schedulePrune();
             guard->resumeSeekIfReady();
@@ -313,6 +280,8 @@ void ThreadTimelineController::updateSeekTargetFromScrollbar(bool readyImmediate
         bar->value(), bar->minimum(), bar->maximum());
     target = std::max(1, std::min(timeline.totalCount() - 1, target));
 
+    seekPreserveViewport = false;
+    seekViewportAnchor = ViewportAnchor();
     if (seekState.setTarget(target)) {
         pendingSeekIndex = target;
     }
@@ -511,25 +480,10 @@ void ThreadTimelineController::checkViewport()
 
     PostsListWidget* list = area.ui->listWidget;
     QScrollBar* scrollBar = list->verticalScrollBar();
-    const int viewportHeight = list->viewport()->height();
 
     if (scrollBar->isSliderDown()) {
         updateSeekTargetFromScrollbar(false);
         return;
-    }
-
-    if (requestInFlight) {
-        return;
-    }
-
-    if (hasNext && nextLogicalIndex < timeline.totalCount()) {
-        const qint64 prefixBoundary = timeline.estimatedPixelForIndex(nextLogicalIndex);
-        const qint64 viewportBottom = static_cast<qint64>(scrollBar->value()) + viewportHeight;
-        if (viewportBottom + static_cast<qint64>(viewportHeight) * GapPrefetchScreens
-            >= prefixBoundary) {
-            requestNextPage();
-            return;
-        }
     }
 
     bool centerInsideGap = false;
@@ -538,16 +492,15 @@ void ThreadTimelineController::checkViewport()
         return;
     }
 
-    if (targetIndex >= nextLogicalIndex
-        && targetIndex - nextLogicalIndex < ThreadPageSize) {
-        if (hasNext) {
-            requestNextPage();
-        }
-        return;
+    // Wheel/local scrolling preserves the concrete viewport. This is distinct
+    // from a thumb random seek, which deliberately centres its logical target.
+    // Updating the generation even while an older request is in flight makes
+    // that response cache-only and lets the newer user intent win afterwards.
+    seekPreserveViewport = true;
+    seekViewportAnchor = captureViewportAnchor();
+    if (seekState.setTarget(targetIndex)) {
+        pendingSeekIndex = targetIndex;
     }
-
-    seekState.setTarget(targetIndex);
-    pendingSeekIndex = targetIndex;
     seekState.markReady();
     resumeSeekIfReady();
 }
@@ -635,7 +588,8 @@ void ThreadTimelineController::updateGapHeights()
     }
 
     PostsListWidget* list = area.ui->listWidget;
-    const ViewportAnchor anchor = captureViewportAnchor();
+    const ViewportAnchor anchor = seekState.hasActiveTransaction() && seekPreserveViewport
+        ? seekViewportAnchor : captureViewportAnchor();
     if (anchor.kind == ViewportAnchor::Gap) {
         return;
     }
