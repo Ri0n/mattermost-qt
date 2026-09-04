@@ -37,7 +37,7 @@ signals:
 private:
     struct RecentThreadTarget {
         QString rootPostId;
-        QString postId;
+        QString fallbackPostId;
         uint64_t interactionAt = 0;
     };
 
