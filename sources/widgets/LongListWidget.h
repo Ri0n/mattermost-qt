@@ -225,6 +225,7 @@ private:
     bool synchronizing = false;
     bool committingGeometry = false;
     bool internalScrollChange = false;
+    bool wheelInProgress = false;
 
     quint64 seekGeneration = 0;
     int seekTarget = -1;
