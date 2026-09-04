@@ -1,5 +1,7 @@
 #pragma once
 
+#include <limits>
+
 #include <QHash>
 #include <QStringList>
 #include <QVector>
