@@ -148,6 +148,7 @@ MainWindow::MainWindow(QWidget* parent, QSystemTrayIcon& trayIcon, Backend& _bac
 	sidebar.clear();
 	userProfiles.clear();
 	sidebar.retrieveChannelMemberships();
+
 	connect(&currentUser, &BackendUser::onStatusChanged, [this, &currentUser] {
 		ui->statusLabel->setText(currentUser.status);
 	});
@@ -581,6 +582,7 @@ void MainWindow::openAttentionThread(const QString& channelId, const QString& ro
 					threadArea = area;
 					break;
 				}
+			}
 
 			if (!threadArea) {
 				threadArea = new ChatArea(guard->backend, *currentChannel, rootPostId, parentArea);
@@ -730,7 +732,6 @@ void MainWindow::messageNotify(BackendChannel& channel, const BackendPost& post)
 					&& threadArea->isActiveWindow()) {
 					return;
 				}
-			}
 		}
 	}
 
