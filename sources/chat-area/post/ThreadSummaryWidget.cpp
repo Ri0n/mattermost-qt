@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -30,6 +30,7 @@
 #include <QPalette>
 #include <QPointer>
 #include <QSet>
+#include <QTimer>
 
 #include "ReactionChipStyle.h"
 #include "backend/Backend.h"
@@ -106,12 +107,18 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
 bool ThreadSummaryWidget::eventFilter(QObject* watched, QEvent* event)
 {
     if (watched == chip && event) {
-        // ThreadSummaryWidget receives its PaletteChange before the styled chip
-        // gets its own resolved palette. Rebuild the cached symbolic pixmap when
-        // the actual color-owning widget changes instead of relying on a later
-        // scroll/rematerialization to recreate the summary.
-        if (event->type() == QEvent::PaletteChange) {
-            refreshTheme();
+        if (event->type() == QEvent::PaletteChange
+            || event->type() == QEvent::ApplicationPaletteChange
+            || event->type() == QEvent::StyleChange) {
+            // Event filters run before QWidget applies the new palette. Rebuild
+            // the tinted symbolic pixmap on the next event-loop turn so the chip
+            // has already inherited the new light/dark palette.
+            QPointer<ThreadSummaryWidget> guard(this);
+            QTimer::singleShot(0, this, [guard] {
+                if (guard) {
+                    guard->refreshTheme();
+                }
+            });
         } else if (event->type() == QEvent::MouseButtonRelease) {
             auto* mouseEvent = static_cast<QMouseEvent*>(event);
             if (mouseEvent->button() == Qt::LeftButton) {
@@ -127,8 +134,14 @@ void ThreadSummaryWidget::changeEvent(QEvent* event)
 {
     QWidget::changeEvent(event);
     if (event && (event->type() == QEvent::PaletteChange
-                  || event->type() == QEvent::ApplicationPaletteChange)) {
-        refreshTheme();
+                  || event->type() == QEvent::ApplicationPaletteChange
+                  || event->type() == QEvent::StyleChange)) {
+        QPointer<ThreadSummaryWidget> guard(this);
+        QTimer::singleShot(0, this, [guard] {
+            if (guard) {
+                guard->refreshTheme();
+            }
+        });
     }
 }
 
@@ -142,6 +155,7 @@ void ThreadSummaryWidget::refreshTheme()
         QStringLiteral(":/icons/message-balloon"), color);
     chipIcon->setPixmap(icon.pixmap(ReactionChipStyle::IconExtent,
                                     ReactionChipStyle::IconExtent));
+    chipIcon->update();
 }
 
 void ThreadSummaryWidget::refresh()
