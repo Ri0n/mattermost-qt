@@ -7,13 +7,12 @@
 #include <QStringList>
 #include <QUrl>
 
-#include "backend/HTTPConnector.h"
-
 namespace Mattermost {
 
 class Backend;
 class BackendChannel;
 
+/** Semantic application navigation. Post retrieval belongs to PostRepository. */
 class AppNavigationService final : public QObject
 {
     Q_OBJECT
@@ -49,7 +48,6 @@ private:
     void openPostInChannel(BackendChannel& channel, const QString& postId);
 
     Backend& backend;
-    HTTPConnector httpConnector;
 };
 
 } // namespace Mattermost
