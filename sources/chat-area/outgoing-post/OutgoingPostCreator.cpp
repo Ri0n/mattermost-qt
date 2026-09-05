@@ -24,6 +24,10 @@
 
 #include "OutgoingPostCreator.h"
 
+#include <algorithm>
+#include <cmath>
+
+#include <QAbstractTextDocumentLayout>
 #include <QColor>
 #include <QDebug>
 #include <QDragMoveEvent>
@@ -34,6 +38,7 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QTextCursor>
+#include <QTextDocument>
 
 #include "NewPollDialog.h"
 #include "OutgoingAttachmentList.h"
@@ -86,12 +91,11 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 
 	connect(ui->textEdit, &MessageTextEditWidget::textChanged, [this] {
 		updateSendButtonState();
-
-		int height = ui->textEdit->document()->size().toSize().height();
-		if (height > ui->textEdit->maximumHeight()) {
-			height = ui->textEdit->maximumHeight();
-		}
-		emit heightChanged(height);
+	});
+	connect(ui->textEdit->document()->documentLayout(),
+	        &QAbstractTextDocumentLayout::documentSizeChanged,
+	        this, [this](const QSizeF&) {
+		updateEditorHeight();
 	});
 
 	connect(&panelInstance.sendButton(), &QPushButton::clicked,
@@ -111,6 +115,7 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 
 	setEditingVisual(false);
 	updateSendButtonState();
+	QTimer::singleShot(0, this, &OutgoingPostCreator::updateEditorHeight);
 
 	connectLambda(&backendInstance, &Backend::onWebSocketConnect, [this] {
 		isConnected = true;
@@ -455,6 +460,34 @@ void OutgoingPostCreator::updateSendButtonState()
 
 	panel->sendButton().setDisabled(!sendButtonEnabled);
 	panel->sendButton().setToolTip(tooltipText);
+}
+
+void OutgoingPostCreator::updateEditorHeight()
+{
+	if (!ui || !ui->textEdit || !ui->textEdit->document()) {
+		return;
+	}
+
+	const QTextDocument* document = ui->textEdit->document();
+	const QMargins margins = ui->textEdit->contentsMargins();
+	const int chromeHeight = margins.top() + margins.bottom()
+		+ 2 * ui->textEdit->frameWidth();
+	const int oneLineHeight = ui->textEdit->fontMetrics().lineSpacing()
+		+ static_cast<int>(std::ceil(document->documentMargin() * 2.0))
+		+ chromeHeight;
+	const int documentHeight = static_cast<int>(std::ceil(document->size().height()))
+		+ chromeHeight;
+	const int maximumHeight = std::min(300, ui->textEdit->maximumHeight());
+	const int wantedHeight = std::clamp(std::max(oneLineHeight, documentHeight),
+	                                    oneLineHeight, maximumHeight);
+
+	if (ui->textEdit->height() != wantedHeight) {
+		ui->textEdit->setFixedHeight(wantedHeight);
+	}
+	if (height() != wantedHeight) {
+		setFixedHeight(wantedHeight);
+	}
+	emit heightChanged(wantedHeight);
 }
 
 bool OutgoingPostCreator::isCreatingPost()
