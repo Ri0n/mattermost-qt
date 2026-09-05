@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -22,6 +22,7 @@
 #include <algorithm>
 
 #include <QApplication>
+#include <QHash>
 #include <QPalette>
 #include <QRegularExpression>
 #include <QTextBlock>
@@ -36,9 +37,6 @@ namespace UserMentionLinkifier {
 
 inline const QRegularExpression& mentionExpression()
 {
-    // Mattermost usernames may contain letters, digits, '.', '_' and '-'. The
-    // negative left context avoids turning the domain half of an e-mail address
-    // into a mention.
     static const QRegularExpression expression(
         QStringLiteral(R"((?<![A-Za-z0-9._-])@([A-Za-z0-9][A-Za-z0-9._-]*))"));
     return expression;
@@ -51,9 +49,14 @@ inline bool isSpecialMention(const QString& name)
         || name.compare(QStringLiteral("here"), Qt::CaseInsensitive) == 0;
 }
 
-inline QString mentionHref(const QString& username)
+inline QString userMentionHref(const QString& username)
 {
     return QStringLiteral("mattermost-user:///") + username;
+}
+
+inline QString groupMentionHref(const QString& groupId)
+{
+    return QStringLiteral("mattermost-group:///") + groupId;
 }
 
 inline bool rangeAlreadyLinkedOrCode(QTextDocument& document, int position, int length)
@@ -77,11 +80,11 @@ inline QPalette documentPalette(const QTextDocument& document)
     return QApplication::palette();
 }
 
-inline QTextCharFormat userMentionFormat(const QPalette& palette, const QString& username)
+inline QTextCharFormat clickableMentionFormat(const QPalette& palette, const QString& href)
 {
     QTextCharFormat format;
     format.setAnchor(true);
-    format.setAnchorHref(mentionHref(username));
+    format.setAnchorHref(href);
     format.setForeground(palette.color(QPalette::Link));
     format.setFontUnderline(false);
     return format;
@@ -91,8 +94,6 @@ inline QTextCharFormat specialMentionFormat(const QPalette& palette)
 {
     QTextCharFormat format;
     QColor background = palette.color(QPalette::Highlight);
-    // Keep special mentions visibly selection-like without making a normal
-    // message look as if the user currently selected the text.
     background.setAlphaF(std::min<qreal>(background.alphaF(), 0.45));
     format.setBackground(background);
     format.setForeground(palette.color(QPalette::Text));
@@ -101,13 +102,15 @@ inline QTextCharFormat specialMentionFormat(const QPalette& palette)
     return format;
 }
 
-inline void linkify(QTextDocument& document)
+inline void linkify(QTextDocument& document,
+                    const QHash<QString, QString>& groupMentionIds = {})
 {
+    enum class Kind { User, Group, Special };
     struct Replacement {
         int position = 0;
         int length = 0;
-        QString username;
-        bool special = false;
+        QString value;
+        Kind kind = Kind::User;
     };
 
     QList<Replacement> replacements;
@@ -115,13 +118,23 @@ inline void linkify(QTextDocument& document)
         QRegularExpressionMatchIterator matches = mentionExpression().globalMatch(block.text());
         while (matches.hasNext()) {
             const QRegularExpressionMatch match = matches.next();
-            const QString username = match.captured(1);
+            const QString name = match.captured(1);
             const int position = block.position() + static_cast<int>(match.capturedStart(0));
             const int length = static_cast<int>(match.capturedLength(0));
             if (rangeAlreadyLinkedOrCode(document, position, length)) {
                 continue;
             }
-            replacements.push_back({position, length, username, isSpecialMention(username)});
+
+            if (isSpecialMention(name)) {
+                replacements.push_back({position, length, {}, Kind::Special});
+                continue;
+            }
+            const auto groupIt = groupMentionIds.constFind(name.toLower());
+            if (groupIt != groupMentionIds.cend()) {
+                replacements.push_back({position, length, groupIt.value(), Kind::Group});
+                continue;
+            }
+            replacements.push_back({position, length, name, Kind::User});
         }
     }
 
@@ -136,27 +149,42 @@ inline void linkify(QTextDocument& document)
         cursor.setPosition(replacement.position);
         cursor.setPosition(replacement.position + replacement.length,
                            QTextCursor::KeepAnchor);
-        cursor.mergeCharFormat(replacement.special
-                                   ? specialMentionFormat(palette)
-                                   : userMentionFormat(palette, replacement.username));
+        switch (replacement.kind) {
+        case Kind::Special:
+            cursor.mergeCharFormat(specialMentionFormat(palette));
+            break;
+        case Kind::Group:
+            cursor.mergeCharFormat(clickableMentionFormat(
+                palette, groupMentionHref(replacement.value)));
+            break;
+        case Kind::User:
+            cursor.mergeCharFormat(clickableMentionFormat(
+                palette, userMentionHref(replacement.value)));
+            break;
+        }
     }
 }
 
-inline QString linkifyHtmlTextSegment(const QString& text)
+inline QString linkifyHtmlTextSegment(
+    const QString& text,
+    const QHash<QString, QString>& groupMentionIds = {})
 {
     QString result;
     int position = 0;
     QRegularExpressionMatchIterator matches = mentionExpression().globalMatch(text);
     while (matches.hasNext()) {
         const QRegularExpressionMatch match = matches.next();
-        const QString username = match.captured(1);
-        if (isSpecialMention(username)) {
+        const QString name = match.captured(1);
+        if (isSpecialMention(name)) {
             continue;
         }
 
         result += text.mid(position, static_cast<int>(match.capturedStart(0)) - position);
         const QString mention = match.captured(0);
-        result += QStringLiteral("<a href=\"") + mentionHref(username)
+        const auto groupIt = groupMentionIds.constFind(name.toLower());
+        const QString href = groupIt == groupMentionIds.cend()
+            ? userMentionHref(name) : groupMentionHref(groupIt.value());
+        result += QStringLiteral("<a href=\"") + href
             + QStringLiteral("\" style=\"text-decoration:none\">") + mention
             + QStringLiteral("</a>");
         position = static_cast<int>(match.capturedEnd(0));
@@ -165,11 +193,9 @@ inline QString linkifyHtmlTextSegment(const QString& text)
     return result;
 }
 
-inline QString linkifyHtml(const QString& html)
+inline QString linkifyHtml(const QString& html,
+                           const QHash<QString, QString>& groupMentionIds = {})
 {
-    // Qt 5's compatibility formatter produces a very small HTML subset. Walk
-    // text nodes rather than regexing the whole document so usernames inside an
-    // existing URL anchor/href are never reinterpreted as mentions.
     QString result;
     result.reserve(html.size() + 32);
 
@@ -179,7 +205,7 @@ inline QString linkifyHtml(const QString& html)
         const int tagStart = html.indexOf(QLatin1Char('<'), position);
         const int textEnd = tagStart < 0 ? html.size() : tagStart;
         const QString text = html.mid(position, textEnd - position);
-        result += anchorDepth == 0 ? linkifyHtmlTextSegment(text) : text;
+        result += anchorDepth == 0 ? linkifyHtmlTextSegment(text, groupMentionIds) : text;
 
         if (tagStart < 0) {
             break;
@@ -192,8 +218,7 @@ inline QString linkifyHtml(const QString& html)
 
         const QString tag = html.mid(tagStart, tagEnd - tagStart + 1);
         const QString lower = tag.toLower();
-        if (lower.startsWith(QStringLiteral("<a "))
-            || lower == QStringLiteral("<a>")) {
+        if (lower.startsWith(QStringLiteral("<a ")) || lower == QStringLiteral("<a>")) {
             ++anchorDepth;
         } else if (lower.startsWith(QStringLiteral("</a")) && anchorDepth > 0) {
             --anchorDepth;
