@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -27,6 +27,7 @@
 #include <QHideEvent>
 #include <QPainter>
 #include <QPalette>
+#include <QPointer>
 #include <QPushButton>
 #include <QShowEvent>
 #include <QTimer>
@@ -207,11 +208,25 @@ void ChatArea::changeEvent(QEvent* event)
     }
 
     if (event->type() == QEvent::PaletteChange
-        || event->type() == QEvent::ApplicationPaletteChange) {
+        || event->type() == QEvent::ApplicationPaletteChange
+        || event->type() == QEvent::StyleChange) {
         ThemeDebug::logWidgetState("CHAT_AREA_CHANGE_HANDLER", this, event->type());
-        if (loadingIndicator) {
-            loadingIndicator->update();
-        }
+
+        // Palette events are delivered top-down. At this point a child button
+        // may still expose its previous palette, which is why rebuilding a
+        // tinted pixmap synchronously leaves the old light/dark colour cached.
+        // Rebuild after the event queue has propagated the new palette through
+        // all composer children.
+        QPointer<ChatArea> guard(this);
+        QTimer::singleShot(0, this, [guard] {
+            if (!guard || !guard->ui) {
+                return;
+            }
+            guard->refreshActionIcons();
+            if (guard->loadingIndicator) {
+                guard->loadingIndicator->update();
+            }
+        });
     }
 }
 
@@ -221,8 +236,22 @@ bool ChatArea::eventFilter(QObject* watched, QEvent* event)
         return QWidget::eventFilter(watched, event);
     }
 
-    const bool iconVisualChanged = event->type() == QEvent::PaletteChange
-        || event->type() == QEvent::EnabledChange
+    const bool paletteChanged = event->type() == QEvent::PaletteChange
+        || event->type() == QEvent::ApplicationPaletteChange
+        || event->type() == QEvent::StyleChange;
+    if (paletteChanged) {
+        // Event filters run before the watched widget processes PaletteChange.
+        // Use a queued refresh rather than tinting from the stale button palette.
+        QPointer<ChatArea> guard(this);
+        QTimer::singleShot(0, this, [guard] {
+            if (guard && guard->ui) {
+                guard->refreshActionIcons();
+            }
+        });
+        return QWidget::eventFilter(watched, event);
+    }
+
+    const bool iconVisualChanged = event->type() == QEvent::EnabledChange
         || event->type() == QEvent::Enter
         || event->type() == QEvent::Leave;
 
