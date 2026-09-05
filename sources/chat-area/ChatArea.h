@@ -41,6 +41,7 @@ class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
 class QResizeEvent;
+class QShowEvent;
 
 namespace Mattermost {
 
@@ -88,6 +89,7 @@ public:
 	void requestExplicitReadAcknowledgement ();
 private:
 	void resizeEvent (QResizeEvent* event) override;
+	void showEvent (QShowEvent* event) override;
 	void dragEnterEvent (QDragEnterEvent* event) override;
 	void dragMoveEvent (QDragMoveEvent* event) override;
 	void dropEvent (QDropEvent* event) override;
