@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <utility>
 
+#include <QScrollBar>
 #include <QSignalBlocker>
 
 namespace Mattermost {
