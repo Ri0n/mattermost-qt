@@ -24,6 +24,7 @@
 
 #include "backend/types/BackendPost.h"
 
+class QContextMenuEvent;
 class QEvent;
 
 namespace Ui {
@@ -83,8 +84,10 @@ signals:
 
 protected:
     void changeEvent(QEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
+    void showPostContextMenu(const QPoint& globalPos);
     void setAuthor(Backend& backendInstance, const BackendUser* user);
     void updateAuthorAvatar();
     void connectReactionActions();
