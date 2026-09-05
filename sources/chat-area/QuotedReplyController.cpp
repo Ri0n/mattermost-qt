@@ -2,18 +2,15 @@
 
 #include <QByteArray>
 #include <QEvent>
-#include <QFont>
-#include <QFrame>
 #include <QHash>
 #include <QHBoxLayout>
-#include <QLabel>
 #include <QPointer>
 #include <QSizePolicy>
 #include <QToolButton>
 #include <QVariant>
-#include <QVBoxLayout>
 
 #include "ChatArea.h"
+#include "QuotedPostPreview.h"
 #include "backend/PostProps.h"
 #include "backend/types/BackendPost.h"
 #include "chat-area/outgoing-post/OutgoingPostCreator.h"
@@ -23,26 +20,6 @@ namespace Mattermost {
 namespace {
 
 constexpr char EditingPostProperty[] = "_mmqt_editing_post";
-constexpr int ReplyPreviewTextLimit = 180;
-
-QString previewText(const BackendPost& post)
-{
-    QString text = post.message;
-    text.replace(QLatin1Char('\n'), QLatin1Char(' '));
-    text = text.simplified();
-
-    if (text.isEmpty() && !post.files.empty()) {
-        text = QObject::tr("[attachment]");
-    } else if (text.isEmpty()) {
-        text = QObject::tr("[empty message]");
-    }
-
-    if (text.size() > ReplyPreviewTextLimit) {
-        text.truncate(ReplyPreviewTextLimit - 1);
-        text += QChar(0x2026);
-    }
-    return text;
-}
 
 } // namespace
 
@@ -73,44 +50,28 @@ void QuotedReplyController::ensureUi()
     editor = area.ui->outgoingPostCreator;
     wrapper = area.ui->composerInputContainer;
 
-    preview = new QFrame(wrapper);
-    preview->setObjectName(QStringLiteral("quotedReplyPreview"));
-    preview->setFrameShape(QFrame::StyledPanel);
-    preview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+    previewRow = new QWidget(wrapper);
+    previewRow->setObjectName(QStringLiteral("quotedReplyPreviewRow"));
+    previewRow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
 
-    auto* previewLayout = new QHBoxLayout(preview);
-    previewLayout->setContentsMargins(6, 3, 3, 3);
-    previewLayout->setSpacing(6);
+    auto* rowLayout = new QHBoxLayout(previewRow);
+    rowLayout->setContentsMargins(2, 2, 2, 1);
+    rowLayout->setSpacing(4);
 
-    auto* textLayout = new QVBoxLayout;
-    textLayout->setContentsMargins(0, 0, 0, 0);
-    textLayout->setSpacing(0);
+    preview = new QuotedPostPreview(previewRow, 2);
+    rowLayout->addWidget(preview, 1);
 
-    authorLabel = new QLabel(preview);
-    QFont authorFont = authorLabel->font();
-    authorFont.setBold(true);
-    authorLabel->setFont(authorFont);
-    authorLabel->setTextFormat(Qt::PlainText);
-
-    messageLabel = new QLabel(preview);
-    messageLabel->setTextFormat(Qt::PlainText);
-    messageLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-
-    textLayout->addWidget(authorLabel);
-    textLayout->addWidget(messageLabel);
-    previewLayout->addLayout(textLayout, 1);
-
-    cancelButton = new QToolButton(preview);
+    cancelButton = new QToolButton(previewRow);
     cancelButton->setText(QString::fromUtf8("×"));
     cancelButton->setAutoRaise(true);
     cancelButton->setCursor(Qt::PointingHandCursor);
     cancelButton->setToolTip(tr("Cancel reply"));
     cancelButton->setAccessibleName(tr("Cancel reply"));
-    previewLayout->addWidget(cancelButton, 0, Qt::AlignTop);
+    rowLayout->addWidget(cancelButton, 0, Qt::AlignTop);
 
-    area.ui->composerInputLayout->insertWidget(0, preview);
+    area.ui->composerInputLayout->insertWidget(0, previewRow);
 
-    preview->hide();
+    previewRow->hide();
     connect(cancelButton, &QToolButton::clicked, this, &QuotedReplyController::cancel);
     editor->installEventFilter(this);
     syncVisibility();
@@ -124,13 +85,9 @@ void QuotedReplyController::begin(const BackendPost& post)
         return;
     }
 
-    authorLabel->setText(tr("Replying to %1").arg(post.getDisplayAuthorName()));
-    const QString text = previewText(post);
-    messageLabel->setText(text);
-    messageLabel->setToolTip(post.message);
-
+    preview->setPost(post);
     editor->setProperty(PostProps::ReplyToPostId, post.id);
-    preview->show();
+    previewRow->show();
     wrapper->updateGeometry();
     editor->setFocus(Qt::OtherFocusReason);
 }
@@ -157,12 +114,12 @@ bool QuotedReplyController::eventFilter(QObject* watched, QEvent* event)
 
 void QuotedReplyController::syncVisibility()
 {
-    if (!editor || !preview) {
+    if (!editor || !previewRow) {
         return;
     }
 
     const bool hasReply = !editor->property(PostProps::ReplyToPostId).toString().isEmpty();
-    preview->setVisible(hasReply);
+    previewRow->setVisible(hasReply);
     if (wrapper) {
         wrapper->updateGeometry();
     }
