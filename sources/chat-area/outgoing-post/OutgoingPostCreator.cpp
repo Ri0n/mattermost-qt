@@ -33,6 +33,7 @@
 #include <QMimeData>
 #include <QPalette>
 #include <QPushButton>
+#include <QSizePolicy>
 #include <QTextCursor>
 
 #include "NewPollDialog.h"
@@ -40,7 +41,6 @@
 #include "backend/Backend.h"
 #include "chat-area/ChatLogWidget.h"
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
-#include "ui_OutgoingPostCreator.h"
 
 namespace Mattermost {
 
@@ -53,13 +53,16 @@ struct OutgoingPostData {
 };
 
 OutgoingPostCreator::OutgoingPostCreator(QWidget* parent)
-    : QWidget(parent)
-    , ui(new Ui::OutgoingPostCreator)
+    : MessageTextEditWidget(parent)
     , postToEdit(nullptr)
     , attachmentList(nullptr)
     , isConnected(true)
 {
-    ui->setupUi(this);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    setMinimumWidth(100);
+    setContextMenuPolicy(Qt::NoContextMenu);
+    setAcceptRichText(false);
+    setPlaceholderText(tr("Write a message"));
 }
 
 void OutgoingPostCreator::init(Backend& backendInstance,
@@ -79,31 +82,30 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 	addEmojiButton = &addEmojiButtonInstance;
 	sendButton = &sendButtonInstance;
 
-	connect(ui->textEdit, &MessageTextEditWidget::escapePressed, [this] {
-		ui->textEdit->clear();
+	connect(this, &MessageTextEditWidget::escapePressed, this, [this] {
+		clear();
 		postToEdit = nullptr;
 		setEditingVisual(false);
 		emit postEditFinished();
 	});
 
-	connect(ui->textEdit, &MessageTextEditWidget::upArrowPressed,
+	connect(this, &MessageTextEditWidget::upArrowPressed,
 	        &chatLogWidget, &ChatLogWidget::editLastOwnPost);
 
-	connect(ui->textEdit, &MessageTextEditWidget::textChanged,
+	connect(this, &QTextEdit::textChanged,
 	        this, &OutgoingPostCreator::updateSendButtonState);
 
 	connect(sendButton, &QPushButton::clicked,
 	        this, &OutgoingPostCreator::sendPostButtonAction);
-	connect(ui->textEdit, &MessageTextEditWidget::enterPressed,
+	connect(this, &MessageTextEditWidget::enterPressed,
 	        this, &OutgoingPostCreator::sendPostButtonAction);
 	connect(attachButton, &QPushButton::clicked,
 	        this, &OutgoingPostCreator::onAttachButtonClick);
 
-	connect(addEmojiButton, &QPushButton::clicked, [this] {
+	connect(addEmojiButton, &QPushButton::clicked, this, [this] {
 		showEmojiDialog([this](Emoji emoji) {
-			auto* textEdit = ui->textEdit;
-			textEdit->insertPlainText(" :" + emoji.name + ": ");
-			textEdit->setFocus();
+			insertPlainText(" :" + emoji.name + ": ");
+			setFocus();
 		});
 	});
 
@@ -120,7 +122,7 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 		updateSendButtonState();
 	});
 
-	connect(&sendRetryTimer, &QTimer::timeout, [this] {
+	connect(&sendRetryTimer, &QTimer::timeout, this, [this] {
 		qDebug() << "Post send retry";
 		prepareAndSendPost();
 	});
@@ -131,7 +133,6 @@ OutgoingPostCreator::~OutgoingPostCreator()
 	for (auto& connection : signalConnections) {
 		disconnect(connection);
 	}
-	delete ui;
 }
 
 void OutgoingPostCreator::setStatusLabelText(const QString& string)
@@ -159,9 +160,9 @@ void OutgoingPostCreator::postEditInitiated(BackendPost& post)
 	}
 
 	postToEdit = &post;
-	ui->textEdit->setText(post.message);
-	ui->textEdit->setFocus();
-	ui->textEdit->moveCursor(QTextCursor::End);
+	setText(post.message);
+	setFocus();
+	moveCursor(QTextCursor::End);
 	setEditingVisual(true);
 	updateSendButtonState();
 }
@@ -174,15 +175,15 @@ void OutgoingPostCreator::setEditingVisual(bool editing)
 
 	if (editing) {
 		const QColor accent = palette().color(QPalette::Highlight);
-		ui->textEdit->setPlaceholderText(tr("Editing message"));
-		ui->textEdit->setStyleSheet(
+		setPlaceholderText(tr("Editing message"));
+		setStyleSheet(
 			QStringLiteral("QTextEdit { border: 2px solid %1; border-radius: 4px; padding: 2px; }")
 				.arg(accent.name()));
 		statusLabel->setText(tr("Editing message · Esc to cancel"));
 		statusLabel->setStyleSheet(QStringLiteral("font-weight: 600;"));
 	} else {
-		ui->textEdit->setPlaceholderText(tr("Write a message"));
-		ui->textEdit->setStyleSheet(QString());
+		setPlaceholderText(tr("Write a message"));
+		setStyleSheet(QString());
 		statusLabel->setStyleSheet(QString());
 		if (!outgoingPostData) {
 			statusLabel->clear();
@@ -223,7 +224,7 @@ static QString getStringInsideQuotes(const QString& str, int& nextPos)
 
 void OutgoingPostCreator::sendPostButtonAction()
 {
-	const QString message = ui->textEdit->toPlainText();
+	const QString message = toPlainText();
 	if (message.isEmpty() && !attachmentList) {
 		return;
 	}
@@ -262,7 +263,7 @@ void OutgoingPostCreator::sendPostButtonAction()
 		}
 
 		newPollDialog = new NewPollDialog(this, initialPollData);
-		connect(newPollDialog, &QDialog::accepted, [this] {
+		connect(newPollDialog, &QDialog::accepted, this, [this] {
 			outgoingPostData = std::make_unique<OutgoingPostData>();
 			outgoingPostData->pollData =
 				std::make_unique<BackendNewPollData>(newPollDialog->getData());
@@ -288,7 +289,7 @@ void OutgoingPostCreator::sendPostButtonAction()
 void OutgoingPostCreator::startSendPostSequence()
 {
 	sendRetryTimer.start(25000);
-	ui->textEdit->setReadOnly(true);
+	setReadOnly(true);
 	updateSendButtonState();
 	prepareAndSendPost();
 	setStatusLabelText(isEditingPost() ? tr("Saving edit…") : tr("Sending message…"));
@@ -388,8 +389,8 @@ void OutgoingPostCreator::onPostReceived(BackendPost& post)
 		attachmentList = nullptr;
 	}
 
-	ui->textEdit->clear();
-	ui->textEdit->setReadOnly(false);
+	clear();
+	setReadOnly(false);
 	setEditingVisual(false);
 	setStatusLabelText(QString());
 	updateSendButtonState();
@@ -402,7 +403,7 @@ void OutgoingPostCreator::createAttachmentList(QStringList& files)
 		attachmentParent->insertWidget(0, attachmentList);
 		updateSendButtonState();
 
-		connect(attachmentList, &OutgoingAttachmentList::deleted, [this] {
+		connect(attachmentList, &OutgoingAttachmentList::deleted, this, [this] {
 			attachmentParent->removeWidget(attachmentList);
 			delete attachmentList;
 			attachmentList = nullptr;
@@ -463,7 +464,7 @@ bool OutgoingPostCreator::isCreatingPost()
 		return true;
 	}
 
-	const QString message = ui->textEdit->toPlainText();
+	const QString message = toPlainText();
 	return !message.isEmpty() || attachmentList;
 }
 
