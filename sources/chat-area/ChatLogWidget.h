@@ -31,6 +31,9 @@ public:
     void highlightPost(const QString& postId);
     void refreshPost(const QString& postId);
 
+    /** Keep the locally confirmed outgoing post at the live edge of the log. */
+    void followOwnPost(const QString& postId);
+
     /**
      * Keep a semantic post target anchored while its provisional logical index
      * is replaced by authoritative source data. ChatLogWidget owns only post
