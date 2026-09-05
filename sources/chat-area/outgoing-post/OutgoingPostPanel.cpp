@@ -26,6 +26,7 @@
 
 #include <QEvent>
 #include <QHideEvent>
+#include <QIcon>
 #include <QLabel>
 #include <QPainter>
 #include <QPalette>
