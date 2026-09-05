@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -26,8 +26,9 @@
 
 #include <QWidget>
 
-class QPushButton;
 class QLabel;
+class QPushButton;
+class QTimer;
 
 namespace Ui {
 class OutgoingPostPanel;
@@ -46,8 +47,17 @@ public:
     QPushButton& sendButton();
     QLabel& label();
 
+public slots:
+    /** Track one LongList range request. The indicator itself is delayed by 150 ms. */
+    void beginMessageLoading();
+    /** Complete one LongList range request. Overlapping requests are reference-counted. */
+    void endMessageLoading();
+
 private:
     Ui::OutgoingPostPanel *ui;
+    QWidget* loadingIndicator = nullptr;
+    QTimer* loadingDelayTimer = nullptr;
+    int pendingMessageLoads = 0;
 };
 
 } /* namespace Mattermost */
