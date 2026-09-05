@@ -145,9 +145,27 @@ PostWidget::~PostWidget()
 void PostWidget::changeEvent(QEvent* event)
 {
     QWidget::changeEvent(event);
-    if (event && (event->type() == QEvent::PaletteChange
-                  || event->type() == QEvent::ApplicationPaletteChange)) {
-        updateAuthorAvatar();
+    if (!event || (event->type() != QEvent::PaletteChange
+                   && event->type() != QEvent::ApplicationPaletteChange)) {
+        return;
+    }
+
+    updateAuthorAvatar();
+
+    // Materialized posts are child widgets of LongListWidget's viewport. Their
+    // effective palette changes immediately with the application palette, but
+    // Qt does not reliably invalidate every nested editor/label until the item
+    // is moved by scrolling. Repaint the already materialized subtree now so a
+    // live desktop-theme switch is visible without touching the scrollbar.
+    update();
+    const auto childWidgets = findChildren<QWidget*>();
+    for (QWidget* child : childWidgets) {
+        if (child) {
+            child->update();
+        }
+    }
+    if (QWidget* viewportWidget = parentWidget()) {
+        viewportWidget->update();
     }
 }
 
