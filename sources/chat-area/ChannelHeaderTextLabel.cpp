@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -66,51 +66,18 @@ void ChannelHeaderTextLabel::setText(const QString& text)
     }
 
     formattedText = MessageFormatter::formatMessageText(text);
-    refreshRenderedText();
-    updateCollapsedHeight();
-
-    if (popover && popover->isVisible()) {
-        if (isOverflowing()) {
-            positionPopover();
-        } else {
-            hidePopover();
-        }
-    }
-}
-
-void ChannelHeaderTextLabel::changeEvent(QEvent* event)
-{
-    QLabel::changeEvent(event);
-    if (!event) {
-        return;
-    }
-
-    if (event->type() == QEvent::PaletteChange
-        || event->type() == QEvent::ApplicationPaletteChange
-        || event->type() == QEvent::StyleChange) {
-        // QLabel caches the QTextDocument created for rich text. The widget
-        // palette itself changes correctly when the desktop theme switches, but
-        // an already parsed document can keep drawing with the old foreground
-        // until the text changes. Force a reparse after QLabel has accepted the
-        // new palette so DM presence/header text follows the theme immediately.
-        refreshRenderedText();
-    }
-}
-
-void ChannelHeaderTextLabel::refreshRenderedText()
-{
-    if (sourceText.isEmpty()) {
-        return;
-    }
-
-    // QLabel::setText() can short-circuit when the HTML string is unchanged.
-    // Clear only the base-class rendering state (not sourceText/formattedText)
-    // so the rich-text control is definitely recreated with the current palette.
-    QLabel::setText(QString());
     QLabel::setText(formattedText);
+    updateCollapsedHeight();
 
     if (popover) {
         popover->setHtml(formattedText);
+        if (popover->isVisible()) {
+            if (isOverflowing()) {
+                positionPopover();
+            } else {
+                hidePopover();
+            }
+        }
     }
 }
 
