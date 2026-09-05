@@ -113,10 +113,10 @@ void MessageTextEditWidget::updateHeightToContents()
         document()->documentLayout()->documentSize().height())) + chromeHeight;
     const int explicitLineHeight = std::max(1, document()->blockCount()) * lineHeight
         + documentMargins + chromeHeight;
-    const int maximumHeight = std::max(oneLineHeight, std::min(300, maximumHeight()));
+    const int maxHeight = std::max(oneLineHeight, std::min(300, QTextEdit::maximumHeight()));
     const int wantedHeight = std::clamp(
         std::max({oneLineHeight, laidOutHeight, explicitLineHeight}),
-        oneLineHeight, maximumHeight);
+        oneLineHeight, maxHeight);
 
     if (height() != wantedHeight) {
         setFixedHeight(wantedHeight);
