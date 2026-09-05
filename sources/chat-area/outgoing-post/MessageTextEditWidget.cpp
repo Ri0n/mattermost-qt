@@ -120,19 +120,7 @@ void MessageTextEditWidget::updateHeightToContents()
 
     if (height() != wantedHeight) {
         setFixedHeight(wantedHeight);
-    }
-
-    // OutgoingPostCreator is a zero-margin wrapper around this editor. Resize
-    // it together with the editor so the enclosing horizontal composer layout
-    // receives a real size-hint change when Shift+Enter adds a line.
-    if (QWidget* container = parentWidget()) {
-        if (container->height() != wantedHeight) {
-            container->setFixedHeight(wantedHeight);
-        }
-        container->updateGeometry();
-        if (QWidget* panel = container->parentWidget()) {
-            panel->updateGeometry();
-        }
+        updateGeometry();
     }
 }
 
