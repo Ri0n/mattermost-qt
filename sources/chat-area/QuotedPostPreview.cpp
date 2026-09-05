@@ -36,6 +36,7 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     bar->setBackgroundRole(QPalette::Mid);
     bar->setAutoFillBackground(true);
     bar->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    bar->installEventFilter(this);
     layout->addWidget(bar);
 
     auto* textLayout = new QVBoxLayout;
@@ -49,6 +50,7 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     authorLabel->setTextFormat(Qt::PlainText);
     authorLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     authorLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    authorLabel->installEventFilter(this);
 
     messageLabel = new QLabel(this);
     messageLabel->setTextFormat(Qt::PlainText);
@@ -57,6 +59,7 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     messageLabel->setMaximumHeight(
         messageLabel->fontMetrics().lineSpacing() * maximumLines + 2);
     messageLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    messageLabel->installEventFilter(this);
 
     textLayout->addWidget(authorLabel);
     textLayout->addWidget(messageLabel);
@@ -97,10 +100,6 @@ void QuotedPostPreview::contextMenuEvent(QContextMenuEvent* event)
         return;
     }
 
-    // QWidget does not reliably bubble mouse-triggered context-menu events in
-    // the same way as ordinary mouse events. The timeline preview is a direct
-    // child of PostWidget, so explicitly forward the semantic gesture to its
-    // containing post instead of merely ignoring it and hoping for propagation.
     QContextMenuEvent forwarded(event->reason(),
                                 parentWidget()->mapFromGlobal(event->globalPos()),
                                 event->globalPos(),
@@ -111,6 +110,17 @@ void QuotedPostPreview::contextMenuEvent(QContextMenuEvent* event)
     } else {
         event->ignore();
     }
+}
+
+bool QuotedPostPreview::eventFilter(QObject* watched, QEvent* event)
+{
+    if (event && event->type() == QEvent::ContextMenu
+        && (watched == authorLabel || watched == messageLabel || watched == bar)) {
+        auto* contextEvent = static_cast<QContextMenuEvent*>(event);
+        contextMenuEvent(contextEvent);
+        return contextEvent->isAccepted();
+    }
+    return QFrame::eventFilter(watched, event);
 }
 
 void QuotedPostPreview::mouseReleaseEvent(QMouseEvent* event)
@@ -138,10 +148,6 @@ void QuotedPostPreview::refreshPalette()
     const QColor textColor = palette().color(QPalette::Text);
     QColor mutedColor = palette().color(QPalette::PlaceholderText);
 
-    // PlaceholderText is the semantic secondary-text role, but a few desktop
-    // themes map it to exactly the ordinary text colour. Keep quoted previews
-    // visibly secondary in that case while still deriving the colour from the
-    // current palette on every theme switch.
     if (!mutedColor.isValid() || mutedColor.rgba() == textColor.rgba()) {
         mutedColor = textColor;
         mutedColor.setAlphaF(mutedColor.alphaF() * 0.65);
