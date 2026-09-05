@@ -24,6 +24,7 @@
 #include "ChannelIcons.h"
 #include "ChannelItem.h"
 #include "backend/types/BackendChannel.h"
+#include "ui/ThemeDebug.h"
 
 namespace Mattermost {
 
@@ -35,6 +36,9 @@ void ChannelTree::changeEvent(QEvent* event)
                    && event->type() != QEvent::StyleChange)) {
         return;
     }
+
+    ThemeDebug::logWidgetState("CHANNEL_TREE_CHANGE_HANDLER", this, event->type());
+    ThemeDebug::logWidgetState("CHANNEL_TREE_VIEWPORT_STATE", viewport(), event->type());
 
     // Keep the tree and its viewport on Qt's inherited application palette.
     // Only the pixmaps we derive from palette colours need to be regenerated.
