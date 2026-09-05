@@ -18,7 +18,7 @@ public:
                const QModelIndex& index) const override;
 
 private:
-    mutable QSet<QString> resolvedGroupChannels;
+    mutable QSet<QString> requestedGroupChannels;
 };
 
 } // namespace Mattermost
