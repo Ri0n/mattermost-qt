@@ -33,6 +33,7 @@
 #include "MessageFormatter.h"
 #include "PostQuoteFrame.h"
 #include "ThreadSummaryWidget.h"
+#include "UserMentionLinkifier.h"
 #include "attachments/PostAttachmentList.h"
 #include "attachments/PostPoll.h"
 #include "backend/Backend.h"
@@ -234,6 +235,11 @@ void PostWidget::connectMessageLinks()
 		if (!browser) {
 			continue;
 		}
+
+        // Apply Mattermost @username semantics after Markdown/HTML parsing. This
+        // works for both the Qt 6 markdown renderer and the Qt 5 compatibility
+        // path, and deliberately leaves existing links and code untouched.
+        UserMentionLinkifier::linkify(*browser->document());
 
 		browser->setOpenLinks(false);
 		browser->setOpenExternalLinks(false);
