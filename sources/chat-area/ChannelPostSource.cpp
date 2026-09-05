@@ -179,12 +179,13 @@ bool ChannelPostSource::adoptNavigationContext(const QString& targetPostId,
     // A semantic jump needs only the immediate neighbourhood. PostRepository may
     // have fetched a larger compatibility window, but publishing more than
     // 15 + target + 15 makes the initial materialization unnecessarily noisy.
+    const int validCount = static_cast<int>(validIds.size());
     const int selectedFirst = std::max(0, targetOffset - 15);
-    const int selectedLast = std::min(validIds.size() - 1, targetOffset + 15);
+    const int selectedLast = std::min(validCount - 1, targetOffset + 15);
     const QStringList selected = validIds.mid(selectedFirst,
                                               selectedLast - selectedFirst + 1);
     const bool selectedReachedOldest = reachedOldest && selectedFirst == 0;
-    const bool selectedReachedNewest = reachedNewest && selectedLast == validIds.size() - 1;
+    const bool selectedReachedNewest = reachedNewest && selectedLast == validCount - 1;
     return placeNavigationContext(targetPostId, selected,
                                   selectedReachedOldest, selectedReachedNewest);
 }
@@ -445,8 +446,9 @@ bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
 {
     const QStringList ids = uniqueChronological(chronologicalIds);
     const int targetOffset = ids.indexOf(targetPostId);
+    const int contextCount = static_cast<int>(ids.size());
     const int count = static_cast<int>(postIds.size());
-    if (targetOffset < 0 || ids.isEmpty() || ids.size() > count) {
+    if (targetOffset < 0 || contextCount <= 0 || contextCount > count) {
         return false;
     }
 
@@ -462,7 +464,7 @@ bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
     bool exactPlacement = false;
     int exactFirst = -1;
     const auto acceptExactFirst = [&](int candidate) {
-        if (candidate < 0 || candidate + ids.size() > count) {
+        if (candidate < 0 || candidate + contextCount > count) {
             return false;
         }
         if (!exactPlacement) {
@@ -477,12 +479,12 @@ bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
         qCWarning(lcTimelineChannel) << "conflicting oldest navigation context" << targetPostId;
         return false;
     }
-    if (reachedNewest && !acceptExactFirst(count - ids.size())) {
+    if (reachedNewest && !acceptExactFirst(count - contextCount)) {
         qCWarning(lcTimelineChannel) << "conflicting newest navigation context" << targetPostId;
         return false;
     }
 
-    for (int offset = 0; offset < ids.size(); ++offset) {
+    for (int offset = 0; offset < contextCount; ++offset) {
         const QString& id = ids.at(offset);
         const int existing = postIndexes.value(id, -1);
         if (existing < 0 || provisionalPostIds.contains(id)) {
@@ -507,7 +509,7 @@ bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
     int first = -1;
     if (exactPlacement) {
         first = exactFirst;
-        for (int offset = 0; offset < ids.size(); ++offset) {
+        for (int offset = 0; offset < contextCount; ++offset) {
             const QString& existing = next.at(first + offset);
             if (!existing.isEmpty() && existing != ids.at(offset)) {
                 qCWarning(lcTimelineChannel) << "authoritative navigation context collision"
@@ -520,15 +522,15 @@ bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
         const int preferredTarget = oldTargetIndex >= 0
             ? oldTargetIndex : estimateIndexForPost(*target);
         const int preferredFirst = preferredTarget - targetOffset;
-        first = findFreeWindowFirst(next, ids.size(), preferredFirst);
+        first = findFreeWindowFirst(next, contextCount, preferredFirst);
         if (first < 0) {
             qCWarning(lcTimelineChannel) << "no free provisional context span"
-                                         << targetPostId << preferredFirst << ids.size();
+                                         << targetPostId << preferredFirst << contextCount;
             return false;
         }
     }
 
-    for (int offset = 0; offset < ids.size(); ++offset) {
+    for (int offset = 0; offset < contextCount; ++offset) {
         next[first + offset] = ids.at(offset);
     }
 
@@ -539,7 +541,10 @@ bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
         provisionalPostIds.clear();
         provisionalWindow.clear();
     } else {
-        provisionalPostIds = QSet<QString>(ids.cbegin(), ids.cend());
+        provisionalPostIds.clear();
+        for (const QString& id : ids) {
+            provisionalPostIds.insert(id);
+        }
         provisionalWindow.targetPostId = targetPostId;
         provisionalWindow.postIds = ids;
         provisionalWindow.first = first;
@@ -547,7 +552,7 @@ bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
         provisionalWindow.reachedNewest = reachedNewest;
     }
 
-    const int newLast = first + ids.size() - 1;
+    const int newLast = first + contextCount - 1;
     if (oldWindow.isValid()
         && (oldWindow.first != first || oldWindow.last() != newLast)) {
         emit itemsChanged(oldWindow.first, oldWindow.last());
@@ -627,11 +632,11 @@ void ChannelPostSource::requestProvisionalRange(int first, int last)
         const bool reachedOldest = state->base.reachedOldest
             || (state->needBefore && state->before.success
                 && (state->before.prevPostId.isEmpty()
-                    || state->before.postIds.size() < ServerPageSize));
+                    || static_cast<int>(state->before.postIds.size()) < ServerPageSize));
         const bool reachedNewest = state->base.reachedNewest
             || (state->needAfter && state->after.success
                 && (state->after.nextPostId.isEmpty()
-                    || state->after.postIds.size() < ServerPageSize));
+                    || static_cast<int>(state->after.postIds.size()) < ServerPageSize));
 
         if (!combined.isEmpty()) {
             guard->placeNavigationContext(state->base.targetPostId, combined,
@@ -646,8 +651,7 @@ void ChannelPostSource::requestProvisionalRange(int first, int last)
             [state, finishPart](const PostTimelineService::Page& result) {
                 state->before = result;
                 finishPart();
-            },
-            true);
+            });
     }
     if (needAfter) {
         PostTimelineService::instance(backend).loadChannelAfter(
@@ -655,8 +659,7 @@ void ChannelPostSource::requestProvisionalRange(int first, int last)
             [state, finishPart](const PostTimelineService::Page& result) {
                 state->after = result;
                 finishPart();
-            },
-            true);
+            });
     }
 }
 
