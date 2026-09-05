@@ -6,6 +6,7 @@
 
 #include "Backend.h"
 #include "NetworkRequest.h"
+#include "QByteArrayCreator.h"
 #include "backend/types/BackendChannel.h"
 
 namespace Mattermost {
