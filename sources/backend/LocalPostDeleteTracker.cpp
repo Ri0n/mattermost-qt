@@ -1,6 +1,7 @@
 #include "LocalPostDeleteTracker.h"
 
 #include <QSet>
+#include <QStringList>
 #include <QUrl>
 
 namespace Mattermost {
