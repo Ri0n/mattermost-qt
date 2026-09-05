@@ -32,7 +32,6 @@
 #include <QTimer>
 
 #include "ChatLogWidget.h"
-#include "outgoing-post/MessageTextEditWidget.h"
 #include "ui/IconUtils.h"
 #include "ui/ThemeDebug.h"
 #include "ui_ChatArea.h"
@@ -170,8 +169,8 @@ void ChatArea::setupComposerUi()
 
 void ChatArea::focusComposer()
 {
-    if (auto* editor = ui->outgoingPostCreator->findChild<MessageTextEditWidget*>()) {
-        editor->setFocus(Qt::OtherFocusReason);
+    if (ui && ui->outgoingPostCreator) {
+        ui->outgoingPostCreator->setFocus(Qt::OtherFocusReason);
     }
 }
 
