@@ -27,6 +27,7 @@
 #include <QTextDocument>
 
 #include "post/MessageFormatter.h"
+#include "ui/PresenceAvatarLabel.h"
 
 namespace Mattermost {
 
@@ -48,12 +49,33 @@ ChannelHeaderTextLabel::ChannelHeaderTextLabel(QWidget* parent)
 
 void ChannelHeaderTextLabel::setText(const QString& text)
 {
+    // A direct-message presence is presentation state, not channel header text.
+    // Route it to the avatar badge so we use the same AvatarUtils visual as the
+    // timeline and never depend on rich-text foreground palette propagation.
+    if (PresenceAvatarLabel::isPresenceStatus(text)) {
+        sourceText.clear();
+        formattedText.clear();
+        QLabel::clear();
+        hidePopover();
+        if (popover) {
+            popover->clear();
+        }
+        if (QWidget* host = parentWidget()) {
+            if (auto* avatar = host->findChild<PresenceAvatarLabel*>(
+                    QStringLiteral("userAvatar"))) {
+                avatar->setStatus(text);
+            }
+        }
+        hide();
+        return;
+    }
+
     sourceText = text;
 
     // QTextDocument::toHtml() returns a complete HTML document even for an
     // empty Markdown source. Keep QLabel::text() genuinely empty here because
-    // ChatArea uses text().isEmpty() to decide whether a DM presence string
-    // (online/offline/etc.) still needs to be installed.
+    // ChatArea uses text().isEmpty() to decide whether a DM presence value still
+    // needs to be installed.
     if (text.isEmpty()) {
         formattedText.clear();
         QLabel::setText(QString());
@@ -62,9 +84,11 @@ void ChannelHeaderTextLabel::setText(const QString& text)
         if (popover) {
             popover->clear();
         }
+        hide();
         return;
     }
 
+    show();
     formattedText = MessageFormatter::formatMessageText(text);
     QLabel::setText(formattedText);
     updateCollapsedHeight();

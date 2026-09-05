@@ -110,7 +110,6 @@ private:
 	                       const char* debugMarker,
 	                       bool hovered);
 	void setUserAvatar (const BackendUser& user);
-	void refreshHeaderStatus();
 	void moveOnListTop ();
 	void setUnreadMessagesCount (uint32_t count);
 	void updatePinnedPostsButton ();
