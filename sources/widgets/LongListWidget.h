@@ -86,6 +86,9 @@ public:
     /** Insert real logical items and preserve the current semantic viewport anchor. */
     void insertItems(int first, int count);
 
+    /** Remove logical items and shift later identities left without losing the viewport anchor. */
+    void removeItems(int first, int count);
+
     int defaultItemHeight() const { return defaultHeight; }
     void setDefaultItemHeight(int height);
 
@@ -198,6 +201,7 @@ private:
         void reset(int count, int height);
         void resize(int count, int height);
         void insert(int first, int count, int height);
+        void remove(int first, int count);
         int size() const { return static_cast<int>(values.size()); }
         int value(int index) const;
         void setValue(int index, int value);
