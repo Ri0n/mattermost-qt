@@ -23,41 +23,56 @@
  */
 
 #include "MessageTextEditWidget.h"
-#include <QKeyEvent>
+
 #include <QDebug>
+#include <QFrame>
+#include <QKeyEvent>
+#include <QPalette>
+#include <QTextDocument>
 
 namespace Mattermost {
 
-MessageTextEditWidget::MessageTextEditWidget (QWidget *parent)
-:QTextEdit (parent)
+MessageTextEditWidget::MessageTextEditWidget(QWidget* parent)
+    : QTextEdit(parent)
 {
+    // Keep the composer visually continuous with the action row below it.
+    // BackgroundRole references remain palette-driven instead of baking the
+    // current theme color into the editor.
+    setFrameShape(QFrame::NoFrame);
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    setBackgroundRole(QPalette::Window);
+    setAutoFillBackground(true);
+    viewport()->setBackgroundRole(QPalette::Window);
+    viewport()->setAutoFillBackground(true);
+    document()->setDocumentMargin(3.0);
 }
 
-MessageTextEditWidget::~MessageTextEditWidget () = default;
+MessageTextEditWidget::~MessageTextEditWidget() = default;
 
-void MessageTextEditWidget::keyPressEvent (QKeyEvent* event)
+void MessageTextEditWidget::keyPressEvent(QKeyEvent* event)
 {
 	switch (event->key()) {
 	case Qt::Key_Up:
-		emit upArrowPressed ();
+		emit upArrowPressed();
 		break;
 	case Qt::Key_Escape:
-		emit escapePressed ();
+		emit escapePressed();
 		break;
 	case Qt::Key_Enter:
 	case Qt::Key_Return:
 		if (event->modifiers() & Qt::ShiftModifier) {
-			//do nothing, new line will be added
+			// Let QTextEdit add the requested new line.
 		} else {
-			emit enterPressed ();
+			emit enterPressed();
 			return;
 		}
 	}
 
-	QTextEdit::keyPressEvent (event);
+	QTextEdit::keyPressEvent(event);
 }
 
-bool MessageTextEditWidget::hasNonEmptyText ()
+bool MessageTextEditWidget::hasNonEmptyText()
 {
 	return document()->characterCount() > 1;
 }
