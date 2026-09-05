@@ -45,6 +45,7 @@ public:
     void setText(const QString& text);
 
 protected:
+    void changeEvent(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
@@ -55,6 +56,7 @@ private:
     void hidePopoverSoon();
     void hidePopover();
     void updateCollapsedHeight();
+    void refreshRenderedText();
 
     QString sourceText;
     QString formattedText;
