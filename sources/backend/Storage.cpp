@@ -281,7 +281,7 @@ BackendChannel* Storage::addGroupChannel (const QJsonObject& json)
 	//remove the logged-in user from the list of names
 	allUserNames.removeAll (loginUser->username);
 
-	newChannel->display_name = allUserNames.join ('|');
+	newChannel->display_name = allUserNames.join(QStringLiteral(", "));
 
 	groupChannels.channels.emplace_back (newChannel);
 	channels[newChannel->id] = groupChannels.channels.back().get();

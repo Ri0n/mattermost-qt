@@ -235,7 +235,6 @@
        <enum>Qt::ClickFocus</enum>
       </property>
      </widget>
-     <widget class="Mattermost::OutgoingPostCreator" name="outgoingPostCreator" native="true"/>
     </widget>
    </item>
    <item>
@@ -243,6 +242,21 @@
      <property name="spacing">
       <number>0</number>
      </property>
+     <property name="leftMargin">
+      <number>0</number>
+     </property>
+     <property name="topMargin">
+      <number>0</number>
+     </property>
+     <property name="rightMargin">
+      <number>0</number>
+     </property>
+     <property name="bottomMargin">
+      <number>0</number>
+     </property>
+     <item>
+      <widget class="Mattermost::OutgoingPostCreator" name="outgoingPostCreator" native="true"/>
+     </item>
      <item>
       <widget class="Mattermost::OutgoingPostPanel" name="outgoingPostPanel" native="true"/>
      </item>
@@ -277,5 +291,18 @@
  <resources>
   <include location="../../resource.qrc"/>
  </resources>
- <connections/>
+ <connections>
+  <connection>
+   <sender>listWidget</sender>
+   <signal>rangeRequested(int,int,Mattermost::LongListWidget::RequestReason,quint64)</signal>
+   <receiver>outgoingPostPanel</receiver>
+   <slot>beginMessageLoading()</slot>
+  </connection>
+  <connection>
+   <sender>listWidget</sender>
+   <signal>rangeRequestFinished(int,int)</signal>
+   <receiver>outgoingPostPanel</receiver>
+   <slot>endMessageLoading()</slot>
+  </connection>
+ </connections>
 </ui>

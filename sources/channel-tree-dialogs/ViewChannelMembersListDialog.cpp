@@ -39,6 +39,7 @@ ViewChannelMembersListDialog::ViewChannelMembersListDialog (Backend& backend, Ba
 ,channel (channel)
 ,backend (backend)
 {
+    setProfileBackend(&backend);
 	refreshMembers();
 
 	QPointer<ViewChannelMembersListDialog> guard(this);

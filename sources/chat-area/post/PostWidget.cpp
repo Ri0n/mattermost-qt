@@ -21,16 +21,19 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QEvent>
 #include <QPalette>
 #include <QPointer>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QTextBrowser>
+#include <QUrl>
 
 #include "MessageContentWidget.h"
 #include "MessageFormatter.h"
 #include "PostQuoteFrame.h"
 #include "ThreadSummaryWidget.h"
+#include "UserMentionLinkifier.h"
 #include "attachments/PostAttachmentList.h"
 #include "attachments/PostPoll.h"
 #include "backend/Backend.h"
@@ -38,6 +41,8 @@
 #include "backend/emoji/EmojiInfo.h"
 #include "backend/types/BackendPost.h"
 #include "chat-area/ChatArea.h"
+#include "chat-area/ThreadWindowTitle.h"
+#include "info-dialogs/UserProfileDialog.h"
 #include "navigation/AppNavigationService.h"
 #include "reactions/PostReactionList.h"
 #include "ui/AvatarUtils.h"
@@ -141,6 +146,27 @@ PostWidget::~PostWidget()
 	delete ui;
 }
 
+void PostWidget::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if (!event || (event->type() != QEvent::PaletteChange
+                   && event->type() != QEvent::ApplicationPaletteChange)) {
+        return;
+    }
+
+    updateAuthorAvatar();
+    update();
+    const auto childWidgets = findChildren<QWidget*>();
+    for (QWidget* child : childWidgets) {
+        if (child) {
+            child->update();
+        }
+    }
+    if (QWidget* viewportWidget = parentWidget()) {
+        viewportWidget->update();
+    }
+}
+
 void PostWidget::setAuthor(Backend& backendInstance, const BackendUser* user)
 {
 	if (!user) {
@@ -210,17 +236,66 @@ void PostWidget::connectMessageLinks()
 			continue;
 		}
 
-		// QTextBrowser navigates its own document when openLinks is left at its
-		// default value. That replaces the message body after a click. Keep the
-		// renderer immutable and route every click through the application-level
-		// navigation service instead.
+        // Apply Mattermost @username semantics after Markdown/HTML parsing. This
+        // works for both the Qt 6 markdown renderer and the Qt 5 compatibility
+        // path, and deliberately leaves existing links and code untouched.
+        UserMentionLinkifier::linkify(*browser->document());
+
 		browser->setOpenLinks(false);
 		browser->setOpenExternalLinks(false);
 		connect(browser, &QTextBrowser::anchorClicked, this,
 		        [this](const QUrl& url) {
+            if (url.scheme() == QStringLiteral("mattermost-user")) {
+                QString username = url.path();
+                while (username.startsWith(QLatin1Char('/'))) {
+                    username.remove(0, 1);
+                }
+                if (!username.isEmpty()) {
+                    openUserProfile(username);
+                }
+                return;
+            }
 			AppNavigationService::instance(backend).openUrl(url);
 		});
 	}
+}
+
+void PostWidget::openUserProfile(const QString& username)
+{
+    const auto showProfile = [this](const BackendUser* user) {
+        if (!user) {
+            return;
+        }
+        auto* dialog = new UserProfileDialog(backend, *user, this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->show();
+    };
+
+    for (const auto& entry : backend.getStorage().getAllUsers()) {
+        const BackendUser& user = entry.second;
+        if (user.username.compare(username, Qt::CaseInsensitive) == 0) {
+            showProfile(&user);
+            return;
+        }
+    }
+
+    UserSearchOptions options;
+    options.term = username;
+    options.limit = 20;
+
+    QPointer<PostWidget> guard(this);
+    UserProfileService::instance(backend).searchUsers(
+        options, [guard, username](QVector<const BackendUser*> users) {
+            if (!guard) {
+                return;
+            }
+            for (const BackendUser* user : users) {
+                if (user && user->username.compare(username, Qt::CaseInsensitive) == 0) {
+                    guard->openUserProfile(user->username);
+                    return;
+                }
+            }
+        });
 }
 
 void PostWidget::updateReactions()
@@ -262,9 +337,6 @@ void PostWidget::addThreadButton()
 		connect(threadSummary, &ThreadSummaryWidget::clicked,
 		        this, &PostWidget::openThreadWindow);
 
-		// Keep the timestamp as the rightmost element. The stretch pushes the
-		// compact reaction-like thread control next to the timestamp instead of
-		// letting the control consume the remaining header width.
 		ui->time->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
 		ui->horizontalLayout->insertStretch(1, 1);
 		ui->horizontalLayout->insertWidget(2, threadSummary, 0, Qt::AlignVCenter);
@@ -283,6 +355,7 @@ void PostWidget::openThreadWindow()
 		area = new ChatArea(parentChatArea->backend, parentChatArea->channel,
 		                    post.id, parentChatArea);
 		area->root_id = post.id;
+        area->setWindowTitle(threadWindowTitle(parentChatArea->channel, post));
 		parentChatArea->threadsAreas.insert(area);
 		area->show();
 	} else {
@@ -290,6 +363,7 @@ void PostWidget::openThreadWindow()
 		const auto end = parentChatArea->threadsAreas.end();
 		for (; it != end; ++it) {
 			if ((*it)->root_id == post.id) {
+                (*it)->setWindowTitle(threadWindowTitle(parentChatArea->channel, post));
 				(*it)->activateWindow();
 				qDebug() << "exists";
 				break;
@@ -299,6 +373,7 @@ void PostWidget::openThreadWindow()
 			area = new ChatArea(parentChatArea->backend, parentChatArea->channel,
 			                    post.id, parentChatArea);
 			area->root_id = post.id;
+            area->setWindowTitle(threadWindowTitle(parentChatArea->channel, post));
 			parentChatArea->threadsAreas.insert(area);
 			area->show();
 		}

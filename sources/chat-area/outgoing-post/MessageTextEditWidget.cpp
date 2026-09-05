@@ -23,41 +23,120 @@
  */
 
 #include "MessageTextEditWidget.h"
-#include <QKeyEvent>
+
+#include <algorithm>
+#include <cmath>
+
+#include <QAbstractTextDocumentLayout>
 #include <QDebug>
+#include <QFrame>
+#include <QKeyEvent>
+#include <QPalette>
+#include <QResizeEvent>
+#include <QTextDocument>
+#include <QTimer>
 
 namespace Mattermost {
 
-MessageTextEditWidget::MessageTextEditWidget (QWidget *parent)
-:QTextEdit (parent)
+MessageTextEditWidget::MessageTextEditWidget(QWidget* parent)
+    : QTextEdit(parent)
 {
+    // Keep the composer visually continuous with the action row below it.
+    // BackgroundRole references remain palette-driven instead of baking the
+    // current theme color into the editor.
+    setFrameShape(QFrame::NoFrame);
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    setBackgroundRole(QPalette::Window);
+    setAutoFillBackground(true);
+    viewport()->setBackgroundRole(QPalette::Window);
+    viewport()->setAutoFillBackground(true);
+    document()->setDocumentMargin(3.0);
+
+    connect(this, &QTextEdit::textChanged, this, [this] {
+        updateHeightToContents();
+        // The block inserted by Shift+Enter may finish layout after the key
+        // event. Measure once more on the next event-loop turn.
+        QTimer::singleShot(0, this, &MessageTextEditWidget::updateHeightToContents);
+    });
+    connect(document(), &QTextDocument::blockCountChanged, this,
+            [this](int) { updateHeightToContents(); });
+    connect(document()->documentLayout(),
+            &QAbstractTextDocumentLayout::documentSizeChanged,
+            this, [this](const QSizeF&) { updateHeightToContents(); });
+
+    QTimer::singleShot(0, this, &MessageTextEditWidget::updateHeightToContents);
 }
 
-MessageTextEditWidget::~MessageTextEditWidget () = default;
+MessageTextEditWidget::~MessageTextEditWidget() = default;
 
-void MessageTextEditWidget::keyPressEvent (QKeyEvent* event)
+void MessageTextEditWidget::keyPressEvent(QKeyEvent* event)
 {
 	switch (event->key()) {
 	case Qt::Key_Up:
-		emit upArrowPressed ();
+		emit upArrowPressed();
 		break;
 	case Qt::Key_Escape:
-		emit escapePressed ();
+		emit escapePressed();
 		break;
 	case Qt::Key_Enter:
 	case Qt::Key_Return:
 		if (event->modifiers() & Qt::ShiftModifier) {
-			//do nothing, new line will be added
+			// Let QTextEdit add the requested new line.
 		} else {
-			emit enterPressed ();
+			emit enterPressed();
 			return;
 		}
 	}
 
-	QTextEdit::keyPressEvent (event);
+	QTextEdit::keyPressEvent(event);
 }
 
-bool MessageTextEditWidget::hasNonEmptyText ()
+void MessageTextEditWidget::resizeEvent(QResizeEvent* event)
+{
+    QTextEdit::resizeEvent(event);
+    updateHeightToContents();
+}
+
+void MessageTextEditWidget::updateHeightToContents()
+{
+    if (!document() || !document()->documentLayout()) {
+        return;
+    }
+
+    const QMargins margins = contentsMargins();
+    const int chromeHeight = margins.top() + margins.bottom() + 2 * frameWidth();
+    const int documentMargins = static_cast<int>(std::ceil(document()->documentMargin() * 2.0));
+    const int lineHeight = fontMetrics().lineSpacing();
+    const int oneLineHeight = lineHeight + documentMargins + chromeHeight;
+    const int laidOutHeight = static_cast<int>(std::ceil(
+        document()->documentLayout()->documentSize().height())) + chromeHeight;
+    const int explicitLineHeight = std::max(1, document()->blockCount()) * lineHeight
+        + documentMargins + chromeHeight;
+    const int maxHeight = std::max(oneLineHeight, std::min(300, QTextEdit::maximumHeight()));
+    const int wantedHeight = std::clamp(
+        std::max({oneLineHeight, laidOutHeight, explicitLineHeight}),
+        oneLineHeight, maxHeight);
+
+    if (height() != wantedHeight) {
+        setFixedHeight(wantedHeight);
+    }
+
+    // OutgoingPostCreator is a zero-margin wrapper around this editor. Resize
+    // it together with the editor so the enclosing horizontal composer layout
+    // receives a real size-hint change when Shift+Enter adds a line.
+    if (QWidget* container = parentWidget()) {
+        if (container->height() != wantedHeight) {
+            container->setFixedHeight(wantedHeight);
+        }
+        container->updateGeometry();
+        if (QWidget* panel = container->parentWidget()) {
+            panel->updateGeometry();
+        }
+    }
+}
+
+bool MessageTextEditWidget::hasNonEmptyText()
 {
 	return document()->characterCount() > 1;
 }

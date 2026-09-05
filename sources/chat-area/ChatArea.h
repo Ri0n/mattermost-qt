@@ -41,6 +41,7 @@ class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
 class QResizeEvent;
+class QShowEvent;
 
 namespace Mattermost {
 
@@ -87,6 +88,7 @@ public:
 
 	void requestExplicitReadAcknowledgement ();
 private:
+	void showEvent(QShowEvent* event) override;
 	void resizeEvent (QResizeEvent* event) override;
 	void dragEnterEvent (QDragEnterEvent* event) override;
 	void dragMoveEvent (QDragMoveEvent* event) override;
@@ -97,6 +99,7 @@ private:
 	void setUnreadMessagesCount (uint32_t count);
 	void setTextEditWidgetHeight (int height);
 	void updatePinnedPostsButton ();
+	void updateThreadWindowTitle ();
 	void markChannelViewedIfAtBottom ();
 	void tryExplicitReadAcknowledgement ();
 	void setupPostSource();

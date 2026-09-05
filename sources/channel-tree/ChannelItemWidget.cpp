@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -20,6 +20,8 @@
 #include "ChannelItemWidget.h"
 #include "ui_ChannelItemWidget.h"
 
+#include <QEvent>
+#include <QPalette>
 #include <QStyle>
 
 ChannelItemWidget::ChannelItemWidget(QWidget *parent) :
@@ -28,9 +30,8 @@ ChannelItemWidget::ChannelItemWidget(QWidget *parent) :
 {
     ui->setupUi (this);
     ui->icon->setVisible (false);
-    ui->mutedIcon->setPixmap(style()->standardIcon(QStyle::SP_MediaVolumeMuted).pixmap(16, 16));
     ui->mutedIcon->setVisible(false);
-    defaultLabelPalette = ui->label->palette();
+    refreshTheme();
 }
 
 ChannelItemWidget::~ChannelItemWidget()
@@ -58,19 +59,10 @@ void ChannelItemWidget::setLabel (const QString& label)
 	ui->label->setText (label);
 }
 
-void ChannelItemWidget::setMuted(bool muted)
+void ChannelItemWidget::setMuted(bool isMuted)
 {
-    ui->mutedIcon->setVisible(muted);
-
-    if (!muted) {
-        ui->label->setPalette(defaultLabelPalette);
-        return;
-    }
-
-    QPalette mutedPalette = defaultLabelPalette;
-    mutedPalette.setColor(QPalette::WindowText,
-                          defaultLabelPalette.color(QPalette::Disabled, QPalette::WindowText));
-    ui->label->setPalette(mutedPalette);
+    muted = isMuted;
+    refreshTheme();
 }
 
 void ChannelItemWidget::setMentioned(bool mentioned)
@@ -78,4 +70,29 @@ void ChannelItemWidget::setMentioned(bool mentioned)
     QFont font = ui->label->font();
     font.setBold(mentioned);
     ui->label->setFont(font);
+}
+
+void ChannelItemWidget::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if (event && (event->type() == QEvent::PaletteChange
+                  || event->type() == QEvent::ApplicationPaletteChange
+                  || event->type() == QEvent::StyleChange)) {
+        refreshTheme();
+    }
+}
+
+void ChannelItemWidget::refreshTheme()
+{
+    ui->mutedIcon->setPixmap(style()->standardIcon(QStyle::SP_MediaVolumeMuted).pixmap(16, 16));
+    ui->mutedIcon->setVisible(muted);
+
+    // Leave the normal row completely inherited. For a muted row resolve only
+    // the foreground role that intentionally differs from the current theme.
+    QPalette labelPalette;
+    if (muted) {
+        labelPalette.setColor(QPalette::WindowText,
+                              palette().color(QPalette::Disabled, QPalette::WindowText));
+    }
+    ui->label->setPalette(labelPalette);
 }

@@ -31,17 +31,25 @@ class UserProfileDialog;
 
 namespace Mattermost {
 
+class Backend;
+
 class UserProfileDialog: public QDialog
 {
     Q_OBJECT
 
 public:
-    explicit UserProfileDialog (const BackendUser& user, QWidget *parent = nullptr);
+    explicit UserProfileDialog(const BackendUser& user, QWidget* parent = nullptr);
+    UserProfileDialog(Backend& backend, const BackendUser& user, QWidget* parent = nullptr);
     ~UserProfileDialog();
 
 private:
-    Ui::UserProfileDialog *ui;
+    UserProfileDialog(Backend* backend, const BackendUser& user, QWidget* parent);
+    void startDirectMessage();
+
+    Ui::UserProfileDialog* ui;
     HTTPConnector avatarConnector;
+    Backend* backend = nullptr;
+    QString userId;
 };
 
 } /* namespace Mattermost */

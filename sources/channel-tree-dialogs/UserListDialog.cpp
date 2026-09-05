@@ -198,9 +198,10 @@ void UserListDialog::addContextMenuActions (QMenu& menu, const QVariant& selecte
 		return;
 	}
 
-	//direct channel
 	menu.addAction ("View Profile", [this, user] {
-		UserProfileDialog* dialog = new UserProfileDialog (*user, ui->tableWidget);
+        UserProfileDialog* dialog = profileBackend
+            ? new UserProfileDialog(*profileBackend, *user, ui->tableWidget)
+            : new UserProfileDialog(*user, ui->tableWidget);
 		dialog->show ();
 	});
 }

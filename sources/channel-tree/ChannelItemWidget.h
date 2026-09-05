@@ -20,9 +20,10 @@
 #ifndef CHANNELITEMWIDGET_H
 #define CHANNELITEMWIDGET_H
 
-#include <QWidget>
 #include <QIcon>
-#include <QPalette>
+#include <QWidget>
+
+class QEvent;
 
 namespace Ui {
 class ChannelItemWidget;
@@ -42,9 +43,14 @@ public:
     void setMuted (bool muted);
     void setMentioned (bool mentioned);
 
+protected:
+    void changeEvent(QEvent* event) override;
+
 private:
+    void refreshTheme();
+
     Ui::ChannelItemWidget *ui;
-    QPalette defaultLabelPalette;
+    bool muted = false;
 };
 
 #endif // CHANNELITEMWIDGET_H

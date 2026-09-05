@@ -1,3 +1,22 @@
+/**
+ * Copyright 2026 Sergei Ilinykh
+ *
+ * This file is part of Mattermost-QT.
+ *
+ * Mattermost-QT is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Mattermost-QT is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with Mattermost-QT. If not, see https://www.gnu.org/licenses/.
+ */
+
 #include "ThreadSummaryWidget.h"
 
 #include <algorithm>
@@ -5,8 +24,10 @@
 #include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPalette>
 #include <QPointer>
 #include <QSet>
 
@@ -18,6 +39,7 @@
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendUser.h"
 #include "ui/AvatarUtils.h"
+#include "ui/IconUtils.h"
 
 namespace Mattermost {
 
@@ -49,14 +71,11 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
     chip->setAccessibleName(tr("Open thread"));
     chip->installEventFilter(this);
 
-    auto* icon = new QLabel(QStringLiteral("💬"), chip);
-    icon->setFixedSize(ReactionChipStyle::IconExtent, ReactionChipStyle::IconExtent);
-    icon->setAlignment(Qt::AlignCenter);
-    QFont iconFont = icon->font();
-    iconFont.setPointSize(ReactionChipStyle::IconPointSize);
-    icon->setFont(iconFont);
-    icon->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    chipLayout->addWidget(icon, 0, Qt::AlignVCenter);
+    chipIcon = new QLabel(chip);
+    chipIcon->setFixedSize(ReactionChipStyle::IconExtent, ReactionChipStyle::IconExtent);
+    chipIcon->setAlignment(Qt::AlignCenter);
+    chipIcon->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    chipLayout->addWidget(chipIcon, 0, Qt::AlignVCenter);
 
     chipCount = new QLabel(chip);
     chipCount->setMaximumSize(20, ReactionChipStyle::IconExtent);
@@ -66,6 +85,7 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
     chipCount->setFont(countFont);
     chipCount->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     chipLayout->addWidget(chipCount, 0, Qt::AlignBottom);
+    refreshTheme();
 
     connect(&channel, &BackendChannel::onPostEdited, this,
             [this](BackendPost& edited) {
@@ -85,14 +105,43 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
 
 bool ThreadSummaryWidget::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == chip && event && event->type() == QEvent::MouseButtonRelease) {
-        auto* mouseEvent = static_cast<QMouseEvent*>(event);
-        if (mouseEvent->button() == Qt::LeftButton) {
-            emit clicked();
-            return true;
+    if (watched == chip && event) {
+        // ThreadSummaryWidget receives its PaletteChange before the styled chip
+        // gets its own resolved palette. Rebuild the cached symbolic pixmap when
+        // the actual color-owning widget changes instead of relying on a later
+        // scroll/rematerialization to recreate the summary.
+        if (event->type() == QEvent::PaletteChange) {
+            refreshTheme();
+        } else if (event->type() == QEvent::MouseButtonRelease) {
+            auto* mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->button() == Qt::LeftButton) {
+                emit clicked();
+                return true;
+            }
         }
     }
     return QWidget::eventFilter(watched, event);
+}
+
+void ThreadSummaryWidget::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if (event && (event->type() == QEvent::PaletteChange
+                  || event->type() == QEvent::ApplicationPaletteChange)) {
+        refreshTheme();
+    }
+}
+
+void ThreadSummaryWidget::refreshTheme()
+{
+    if (!chipIcon || !chip) {
+        return;
+    }
+    const QColor color = chip->palette().color(QPalette::WindowText);
+    const QIcon icon = IconUtils::tintedSymbolicIcon(
+        QStringLiteral(":/icons/message-balloon"), color);
+    chipIcon->setPixmap(icon.pixmap(ReactionChipStyle::IconExtent,
+                                    ReactionChipStyle::IconExtent));
 }
 
 void ThreadSummaryWidget::refresh()

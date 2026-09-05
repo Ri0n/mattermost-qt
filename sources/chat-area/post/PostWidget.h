@@ -24,6 +24,8 @@
 
 #include "backend/types/BackendPost.h"
 
+class QEvent;
+
 namespace Ui {
 class PostWidget;
 }
@@ -79,11 +81,15 @@ public slots:
 signals:
 	void dimensionsChanged ();
 
+protected:
+    void changeEvent(QEvent* event) override;
+
 private:
     void setAuthor(Backend& backendInstance, const BackendUser* user);
     void updateAuthorAvatar();
     void connectReactionActions();
     void connectMessageLinks();
+    void openUserProfile(const QString& username);
 
     Backend&                            backend;
     Ui::PostWidget*						ui;

@@ -1,3 +1,28 @@
+/*
+ * Copyright (c) 2026 Sergei Ilinykh
+ * SPDX-License-Identifier: MIT
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ *
+ * This license applies to both LongListWidget.h and LongListWidget.cpp.
+ */
+
 #pragma once
 
 #include <QAbstractScrollArea>
@@ -88,6 +113,7 @@ public:
     void finishRangeRequest(int first, int last)
     {
         clearPendingRequest(first, last);
+        emit rangeRequestFinished(first, last);
     }
 
     /** Notify the view that data for already available items changed. */
@@ -140,6 +166,8 @@ signals:
                         int last,
                         Mattermost::LongListWidget::RequestReason reason,
                         quint64 generation);
+    /** Emitted once for every rangeRequested() after the source completes it. */
+    void rangeRequestFinished(int first, int last);
     void visibleRangeChanged(int first, int last);
     void materializedRangeChanged(int first, int last);
 

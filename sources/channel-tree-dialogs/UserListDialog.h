@@ -33,6 +33,7 @@ class QTableWidgetItem;
 
 namespace Mattermost {
 
+class Backend;
 class BackendTeamMember;
 class BackendChannelMember;
 struct UserListEntry;
@@ -41,9 +42,7 @@ class UserListDialog: public FilterListDialog {
 public:
 	using FilterListDialog::FilterListDialog;
 
-	//"Add direct channel"
 	UserListDialog (const FilterListDialogConfig& cfg, const std::map<QString, BackendUser>& allUsers, const QSet<const BackendUser*>* alreadyExistingUsers, QWidget *parent);
-
 	UserListDialog (const FilterListDialogConfig& cfg, const std::vector<const BackendUser*>& allUsers, const QSet<const BackendUser*>* alreadyExistingUsers, QWidget *parent);
 	virtual ~UserListDialog ();
 public:
@@ -51,10 +50,12 @@ public:
     void addContextMenuActions (QMenu& menu, const QVariant& selectedItemData)	override;
     void setItemCountLabel (uint32_t count) 								override;
     void removeRowByData (const BackendUser& user);
+    void setProfileBackend(Backend* backend) { profileBackend = backend; }
 protected:
     void create (const FilterListDialogConfig& cfg, const std::set<UserListEntry>& users, const QStringList& columnNames);
 
     QMap<const BackendUser*, QTableWidgetItem*> dataToItemMap;
+    Backend* profileBackend = nullptr;
 };
 
 using ViewTeamMembersDialog = UserListDialog;
@@ -83,6 +84,5 @@ public:
 	bool					disabledItem;
 	bool					highlight;
 };
-
 
 } /* namespace Mattermost */

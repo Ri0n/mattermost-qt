@@ -70,6 +70,7 @@ signals:
 private:
 	void createAttachmentList (QStringList& files);
 	void updateSendButtonState ();
+	void updateEditorHeight ();
 	void setEditingVisual(bool editing);
 	bool isEditingPost() const;
 	bool isCreatingPost ();

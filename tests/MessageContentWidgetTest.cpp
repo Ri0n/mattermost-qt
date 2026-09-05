@@ -90,8 +90,8 @@ private slots:
         QVERIFY(richText != nullptr);
         QVERIFY2(!richText->viewport()->autoFillBackground(),
                  "The rich-text viewport must not cover the containing post hover background");
-        QVERIFY2(richText->styleSheet().contains(QStringLiteral("background: transparent")),
-                 "The rich-text control itself must stay transparent over the post hover background");
+        QVERIFY2(richText->styleSheet().isEmpty(),
+                 "Rich text transparency must not rely on a per-widget style sheet");
     }
 
     void inlineUnicodeEmojiUsesLargerFont()

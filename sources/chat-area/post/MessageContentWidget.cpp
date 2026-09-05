@@ -125,7 +125,9 @@ public:
         setContentsMargins(0, 0, 0, 0);
         setLineWrapMode(QTextEdit::WidgetWidth);
         setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::TextSelectableByMouse);
-        setStyleSheet(QStringLiteral("QTextBrowser#messageRichText { background: transparent; }"));
+        // Keep the viewport transparent without wrapping the QTextBrowser in
+        // QStyleSheetStyle. A per-widget style sheet resolves palette roles at
+        // construction time and prevents live application palette propagation.
         viewport()->setAutoFillBackground(false);
         document()->setDocumentMargin(0);
         applyWrapMode();

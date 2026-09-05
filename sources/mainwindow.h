@@ -28,6 +28,7 @@ QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
+class QEvent;
 class QLineEdit;
 class QSplitter;
 class QSystemTrayIcon;
@@ -71,6 +72,8 @@ public:
 	void setNotificationsCountVisualization (uint32_t notificationsCount);
 	void moveEvent (QMoveEvent* event) override;
 	void dragMoveEvent (QDragMoveEvent* event) override;
+protected:
+	bool eventFilter(QObject* watched, QEvent* event) override;
 private:
 	void createMenu ();
 	void reload ();
@@ -81,6 +84,8 @@ private:
 	void applySidebarTextFilter(QTreeWidget* tree) const;
 	void openDirectMessageSearch ();
 	void openAttentionThread (const QString& channelId, const QString& rootPostId);
+	void refreshMenuButtonIcon ();
+	void refreshUnreadFilterIcon ();
 private:
 	std::unique_ptr<Ui::MainWindow>		ui;
 	QSystemTrayIcon&					trayIcon;

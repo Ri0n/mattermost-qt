@@ -14,6 +14,7 @@
 namespace Mattermost {
 
 class Backend;
+class BackendChannel;
 
 class UserSearchDialog : public UserListDialog {
 public:
@@ -24,6 +25,7 @@ public:
                      QWidget* parent = nullptr);
 
     const BackendUser* getSelectedUser();
+    void setItemCountLabel(uint32_t count) override;
 
 public slots:
     void accept() override;
@@ -33,6 +35,7 @@ private:
     void performSearch();
     void showUsers(const QVector<const BackendUser*>& serverUsers);
     bool matchesSearch(const BackendUser& user) const;
+    bool matchesSearch(const BackendChannel& channel) const;
 
     Backend& backend;
     FilterListDialogConfig cfg;
@@ -41,7 +44,7 @@ private:
     QTimer searchTimer;
     QString searchTerm;
     int searchGeneration = 0;
-    bool handledExistingDirect = false;
+    bool handledExistingConversation = false;
 };
 
 } // namespace Mattermost

@@ -26,6 +26,8 @@
 
 #include <qtextedit.h>
 
+class QResizeEvent;
+
 namespace Mattermost {
 
 class MessageTextEditWidget: public QTextEdit {
@@ -36,6 +38,13 @@ public:
 public:
 	void keyPressEvent (QKeyEvent* event) override;
 	bool hasNonEmptyText ();
+
+protected:
+	void resizeEvent(QResizeEvent* event) override;
+
+private:
+	void updateHeightToContents();
+
 signals:
 	void enterPressed ();
 	void escapePressed ();
