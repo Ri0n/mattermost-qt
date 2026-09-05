@@ -376,6 +376,16 @@ void ChatLogWidget::reconnectSource()
         insertItems(first, count);
         restoreNavigationTarget();
     }));
+    sourceConnections.push_back(connect(postSource, &AbstractPostSource::itemsRemoved,
+                                        this, [this](int first, int count) {
+        qCDebug(lcTimelineTrace).nospace()
+            << "SOURCE_REMOVED list=" << static_cast<const void*>(this)
+            << " source=" << sourceName(postSource)
+            << " first=" << first
+            << " count=" << count;
+        removeItems(first, count);
+        restoreNavigationTarget();
+    }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::rangeAvailable,
                                         this, [this](int first, int last) {
         qCDebug(lcTimelineTrace).nospace()
