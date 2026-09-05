@@ -12,10 +12,25 @@ A quoted reply is an otherwise normal Mattermost post whose `props` object conta
 }
 ```
 
-`mattermost_qt_reply_to_post_id` is a string containing the exact ID of the post being quoted.
-The constant is declared in `sources/backend/PostProps.h` as `PostProps::ReplyToPostId`.
+`mattermost_qt_reply_to_post_id` is a string containing the exact ID of the post being quoted. The constant is declared in `sources/backend/PostProps.h` as `PostProps::ReplyToPostId`.
 
-The quoted post text is deliberately **not** copied into the new post's `message`. This avoids duplicate rendered quotes in Mattermost-Qt and keeps the reference authoritative: the quoted content is resolved from the referenced post ID.
+The property is the authoritative structured reference. Do not infer the target from rendered text when the property is present.
+
+For interoperability with clients that ignore unknown `props`, new Mattermost-Qt quoted replies also prepend a short Markdown fallback to `message`:
+
+```markdown
+> [Replying to Alice](/_redirect/pl/<post-id>)
+> A compact excerpt of the quoted post…
+>
+
+The user's actual reply text starts here.
+```
+
+The excerpt is intentionally compact and flattened to a single Markdown quote line. The `/_redirect/pl/<post-id>` link is a Mattermost post permalink redirect and therefore remains useful in channels, DMs and group DMs without embedding a team-specific path.
+
+Mattermost-Qt recognizes only the exact generated `> [Replying to ...] ... \n>\n\n` prefix as its interoperability fallback. It removes that prefix from the normal message renderer and edit box, then renders the structured quote from `mattermost_qt_reply_to_post_id`. Ordinary user-authored blockquotes are never stripped.
+
+When editing a quoted reply, Mattermost-Qt keeps the existing fallback prefix on the wire while presenting only the user's reply body in the editor.
 
 ## Relationship to threads
 
@@ -36,7 +51,9 @@ This separation is required so quoted replies inside existing threads do not acc
 
 When the user chooses **Reply** from a post context menu, the composer stores the target post ID as a dynamic property with the same key. The composer preview is UI-only; the persistent reference is written into post `props` when the message is sent.
 
-When rendering a post, `PostWidget` first looks for `mattermost_qt_reply_to_post_id` in `props`. If the referenced post is already materialized in the channel it is rendered immediately with `PostQuoteFrame`. Otherwise the exact post is loaded through `PostRepository::loadPost()` and the quote frame is inserted after retrieval.
+Both composer and timeline use the compact `QuotedPostPreview` presentation: muted text, a vertical quote bar and a bounded excerpt. The timeline preview expands to the available post width and is limited to two lines rather than rendering the complete quoted post as rich message content.
+
+When rendering a post, `PostWidget` first looks for `mattermost_qt_reply_to_post_id` in `props`. If the referenced post is already materialized in the channel it is rendered immediately. Otherwise the exact post is loaded through `PostRepository::loadPost()` and the preview is inserted after retrieval.
 
 Clicking the rendered quote navigates to the referenced post through `ChatArea::goToPost(postId)`, so sparse timeline materialization remains centralized in the normal navigation path.
 
@@ -44,6 +61,8 @@ The older **Reply in thread** action is separate and continues to use Mattermost
 
 ## Interoperability
 
-The property is Mattermost-Qt-specific metadata. Other clients that ignore unknown post props still display the post's normal `message`, attachments, reactions, and thread membership; they simply do not render the additional inline quote.
+The property is Mattermost-Qt-specific metadata, while the Markdown prefix is the compatibility representation for standard Mattermost clients. Clients that ignore the property still show a conventional blockquote and a clickable post link, followed by the real reply body.
 
-Do not rename or repurpose this property without a migration strategy: posts already stored on the server may depend on this key for restoring the quote after restart or history reload.
+Posts created by early Mattermost-Qt builds that contain `mattermost_qt_reply_to_post_id` but no Markdown fallback still render correctly in Mattermost-Qt, but other clients have no quote representation for those already-stored historical posts.
+
+Do not rename or repurpose this property or the generated fallback grammar without a migration strategy: posts already stored on the server may depend on them for restoring the quote after restart, history reload or cross-client display.
