@@ -21,11 +21,13 @@
 
 #include <algorithm>
 
+#include <QApplication>
 #include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPalette>
 #include <QPointer>
 #include <QSet>
 
@@ -37,7 +39,7 @@
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendUser.h"
 #include "ui/AvatarUtils.h"
-#include "ui/ThemeIconWidgets.h"
+#include "ui/IconUtils.h"
 
 namespace Mattermost {
 
@@ -69,11 +71,7 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
     chip->setAccessibleName(tr("Open thread"));
     chip->installEventFilter(this);
 
-    // This icon is deliberately painted from QApplication's current palette at
-    // paint time. It no longer depends on PaletteChange ordering or on a cached
-    // QLabel pixmap that only happened to refresh after timeline rematerialize.
-    chipIcon = new ThemeSymbolicIconLabel(
-        QStringLiteral(":/icons/message-balloon"), chip);
+    chipIcon = new QLabel(chip);
     chipIcon->setObjectName(QStringLiteral("threadSummaryIcon"));
     chipIcon->setFixedSize(ReactionChipStyle::IconExtent, ReactionChipStyle::IconExtent);
     chipIcon->setAlignment(Qt::AlignCenter);
@@ -102,7 +100,18 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
         }
     });
 
+    refreshTheme();
     refresh();
+}
+
+void ThreadSummaryWidget::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if (event && (event->type() == QEvent::PaletteChange
+                  || event->type() == QEvent::ApplicationPaletteChange
+                  || event->type() == QEvent::StyleChange)) {
+        refreshTheme();
+    }
 }
 
 bool ThreadSummaryWidget::eventFilter(QObject* watched, QEvent* event)
@@ -117,6 +126,28 @@ bool ThreadSummaryWidget::eventFilter(QObject* watched, QEvent* event)
     return QWidget::eventFilter(watched, event);
 }
 
+void ThreadSummaryWidget::refreshTheme()
+{
+    if (!chipIcon || !chipCount) {
+        return;
+    }
+
+    // ReactionChipStyle uses a stylesheet for the translucent chip background.
+    // The trace shows QStyleSheetStyle keeping the old inherited WindowText on
+    // the chip while QApplication already exposes the new desktop palette.
+    const QPalette currentPalette = qApp ? qApp->palette() : palette();
+    chipCount->setPalette(currentPalette);
+    chipCount->setForegroundRole(QPalette::WindowText);
+
+    const QColor iconColor = currentPalette.color(QPalette::WindowText);
+    chipIcon->setPixmap(IconUtils::tintedSymbolicIcon(
+        QStringLiteral(":/icons/message-balloon"), iconColor)
+        .pixmap(ReactionChipStyle::IconExtent, ReactionChipStyle::IconExtent));
+
+    chipCount->update();
+    chipIcon->update();
+}
+
 void ThreadSummaryWidget::refresh()
 {
     rebuildParticipantAvatars();
@@ -127,6 +158,7 @@ void ThreadSummaryWidget::refresh()
         chipCount->clear();
         chipCount->hide();
     }
+    refreshTheme();
     chip->adjustSize();
     updateGeometry();
 }
@@ -145,9 +177,6 @@ void ThreadSummaryWidget::rebuildParticipantAvatars()
     QStringList participantIds;
     QSet<QString> seen;
 
-    // Locally materialized replies are authoritative for the very latest live
-    // activity and complement the transient participant sample returned on the
-    // root post by Mattermost collapsed-thread responses.
     for (auto it = channel.posts.rbegin(); it != channel.posts.rend(); ++it) {
         if (it->root_id != rootPost.id || it->user_id.isEmpty() || seen.contains(it->user_id)) {
             continue;
@@ -159,9 +188,6 @@ void ThreadSummaryWidget::rebuildParticipantAvatars()
         }
     }
 
-    // Mattermost stores thread participants oldest -> newest. Walk the sample
-    // backwards so the chip shows the most recent unique participants first,
-    // without having to load the thread itself.
     for (auto it = rootPost.threadParticipantUserIds.crbegin();
          it != rootPost.threadParticipantUserIds.crend()
          && participantIds.size() < MaxParticipantAvatars; ++it) {
