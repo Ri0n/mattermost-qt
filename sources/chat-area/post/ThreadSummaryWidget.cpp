@@ -5,6 +5,7 @@
 #include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPointer>
@@ -49,12 +50,11 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
     chip->setAccessibleName(tr("Open thread"));
     chip->installEventFilter(this);
 
-    auto* icon = new QLabel(QStringLiteral("💬"), chip);
+    auto* icon = new QLabel(chip);
     icon->setFixedSize(ReactionChipStyle::IconExtent, ReactionChipStyle::IconExtent);
     icon->setAlignment(Qt::AlignCenter);
-    QFont iconFont = icon->font();
-    iconFont.setPointSize(ReactionChipStyle::IconPointSize);
-    icon->setFont(iconFont);
+    icon->setPixmap(QIcon(QStringLiteral(":/icons/message-balloon")).pixmap(
+        ReactionChipStyle::IconExtent, ReactionChipStyle::IconExtent));
     icon->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     chipLayout->addWidget(icon, 0, Qt::AlignVCenter);
 
