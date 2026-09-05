@@ -108,9 +108,11 @@ OutgoingPostPanel::OutgoingPostPanel(QWidget *parent)
 
     ui->addEmojiButton->setText(QString());
     ui->addEmojiButton->setIconSize(QSize(18, 18));
+    ui->addEmojiButton->installEventFilter(this);
 
     ui->attachButton->setText(QString());
     ui->attachButton->setIconSize(QSize(18, 18));
+    ui->attachButton->installEventFilter(this);
     refreshActionIcons();
 
     loadingIndicator = new LoadingIndicator(this);
@@ -186,11 +188,27 @@ void OutgoingPostPanel::changeEvent(QEvent* event)
     if (event->type() == QEvent::PaletteChange
         || event->type() == QEvent::ApplicationPaletteChange) {
         ThemeDebug::logWidgetState("OUTGOING_CHANGE_HANDLER", this, event->type());
-        refreshActionIcons();
         if (loadingIndicator) {
             loadingIndicator->update();
         }
     }
+}
+
+bool OutgoingPostPanel::eventFilter(QObject* watched, QEvent* event)
+{
+    if (event && event->type() == QEvent::PaletteChange) {
+        if (watched == ui->addEmojiButton) {
+            refreshActionIcon(*ui->addEmojiButton,
+                              QStringLiteral(":/icons/emoji"),
+                              "OUTGOING_ICON_REFRESH_EMOJI");
+        } else if (watched == ui->attachButton) {
+            refreshActionIcon(*ui->attachButton,
+                              QStringLiteral(":/icons/paperclip"),
+                              "OUTGOING_ICON_REFRESH_ATTACH");
+        }
+    }
+
+    return QWidget::eventFilter(watched, event);
 }
 
 void OutgoingPostPanel::refreshActionIcons()
@@ -199,19 +217,21 @@ void OutgoingPostPanel::refreshActionIcons()
         return;
     }
 
-    ThemeDebug::logWidgetState("OUTGOING_ICON_REFRESH_EMOJI",
-                               ui->addEmojiButton,
-                               QEvent::None);
-    ThemeDebug::logWidgetState("OUTGOING_ICON_REFRESH_ATTACH",
-                               ui->attachButton,
-                               QEvent::None);
+    refreshActionIcon(*ui->addEmojiButton,
+                      QStringLiteral(":/icons/emoji"),
+                      "OUTGOING_ICON_REFRESH_EMOJI");
+    refreshActionIcon(*ui->attachButton,
+                      QStringLiteral(":/icons/paperclip"),
+                      "OUTGOING_ICON_REFRESH_ATTACH");
+}
 
-    const QColor emojiColor = ui->addEmojiButton->palette().color(QPalette::ButtonText);
-    const QColor attachColor = ui->attachButton->palette().color(QPalette::ButtonText);
-    ui->addEmojiButton->setIcon(
-        IconUtils::tintedSymbolicIcon(QStringLiteral(":/icons/emoji"), emojiColor));
-    ui->attachButton->setIcon(
-        IconUtils::tintedSymbolicIcon(QStringLiteral(":/icons/paperclip"), attachColor));
+void OutgoingPostPanel::refreshActionIcon(QPushButton& button,
+                                          const QString& resourcePath,
+                                          const char* debugMarker)
+{
+    ThemeDebug::logWidgetState(debugMarker, &button, QEvent::None);
+    button.setIcon(IconUtils::tintedSymbolicIcon(
+        resourcePath, button.palette().color(QPalette::ButtonText)));
 }
 
 } /* namespace Mattermost */

@@ -56,9 +56,13 @@ public slots:
 
 protected:
     void changeEvent(QEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void refreshActionIcons();
+    void refreshActionIcon(QPushButton& button,
+                           const QString& resourcePath,
+                           const char* debugMarker);
 
     Ui::OutgoingPostPanel *ui;
     QWidget* loadingIndicator = nullptr;
