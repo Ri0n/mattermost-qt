@@ -1,20 +1,14 @@
 #include "ChannelItemDelegate.h"
 
 #include <QApplication>
+#include <QMetaObject>
 #include <QPainter>
 #include <QPainterPath>
-#include <QPointer>
 #include <QStyle>
 #include <QStyleOptionViewItem>
-#include <QTreeWidgetItemIterator>
 
 #include "ChannelIcons.h"
-#include "ChannelItem.h"
-#include "ChannelTree.h"
 #include "SidebarItem.h"
-#include "backend/Backend.h"
-#include "backend/Storage.h"
-#include "backend/UserProfileService.h"
 #include "backend/types/BackendChannel.h"
 #include "ui/AvatarUtils.h"
 
@@ -62,53 +56,25 @@ void ChannelItemDelegate::paint(QPainter* painter,
 
     QStyleOptionViewItem base(option);
     initStyleOption(&base, index);
-    QString text = base.text;
+    const QString text = base.text;
     QIcon icon = base.icon;
     const int type = channelType(index);
 
     if (type == BackendChannel::groupChannel) {
-        auto* tree = qobject_cast<ChannelTree*>(parent());
-        Backend* backend = tree ? tree->backendInstance() : nullptr;
         const QString channelId = index.data(SidebarItem::IdRole).toString();
-        BackendChannel* channel = backend
-            ? backend->getStorage().getChannelById(channelId) : nullptr;
+        if (!channelId.isEmpty() && !requestedGroupChannels.contains(channelId)) {
+            requestedGroupChannels.insert(channelId);
 
-        if (channel) {
-            if (!channel->display_name.isEmpty()) {
-                text = channel->display_name;
-            }
-
-            if (!requestedGroupChannels.contains(channelId)) {
-                requestedGroupChannels.insert(channelId);
-
-                // The delegate is the first point where we know this group DM is
-                // actually visible. Resolve only that small member set instead of
-                // restoring an eager global user-directory preload.
-                QPointer<ChannelTree> treeGuard(tree);
-                QPointer<BackendChannel> channelGuard(channel);
-                QObject::connect(channel, &BackendChannel::onUpdated,
-                                 const_cast<ChannelItemDelegate*>(this),
-                                 [treeGuard, channelGuard, channelId] {
-                    if (!treeGuard || !channelGuard) {
-                        return;
-                    }
-
-                    // Persist the resolved label in the item model as well as
-                    // drawing it. A channel can occur in several categories, so
-                    // update every row carrying the same semantic channel ID.
-                    for (QTreeWidgetItemIterator it(treeGuard); *it; ++it) {
-                        QTreeWidgetItem* row = *it;
-                        if (row->data(0, SidebarItem::KindRole).toInt() != SidebarItem::Channel
-                            || row->data(0, SidebarItem::IdRole).toString() != channelId) {
-                            continue;
-                        }
-                        static_cast<ChannelItem*>(row)->setLabel(channelGuard->display_name);
-                    }
-                    if (treeGuard->viewport()) {
-                        treeGuard->viewport()->update();
-                    }
-                });
-                UserProfileService::instance(*backend).ensureGroupChannelMembers(*channel);
+            // Painting must stay independent from Backend/Storage services: the
+            // delegate is also built in isolation by the rendering unit test.
+            // Ask the owning ChannelTree to resolve this visible group-DM title
+            // asynchronously through its meta-object instead of performing
+            // network/storage work directly from paint().
+            if (QObject* owner = parent()) {
+                QMetaObject::invokeMethod(owner,
+                                          "ensureGroupChannelDisplayName",
+                                          Qt::QueuedConnection,
+                                          Q_ARG(QString, channelId));
             }
         }
     }
