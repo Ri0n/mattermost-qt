@@ -311,6 +311,29 @@ void OutgoingPostPanel::adoptComposerWidget()
     const int verticalPadding = std::max(
         2, composerWidget->fontMetrics().lineSpacing() * 2 / 5);
     ui->horizontalLayout->setContentsMargins(0, verticalPadding, 0, verticalPadding);
+
+    auto resizePanelToComposer = [this](int composerHeight) {
+        if (!ui) {
+            return;
+        }
+
+        const QMargins margins = ui->horizontalLayout->contentsMargins();
+        const int controlsHeight = std::max(ActionButtonExtent, composerHeight);
+        const int wantedHeight = controlsHeight + margins.top() + margins.bottom();
+        if (height() != wantedHeight) {
+            setFixedHeight(wantedHeight);
+        }
+        updateGeometry();
+    };
+
+    connect(composerWidget, &OutgoingPostCreator::heightChanged,
+            this, resizePanelToComposer);
+
+    if (auto* editor = composerWidget->findChild<MessageTextEditWidget*>()) {
+        resizePanelToComposer(editor->height());
+    } else {
+        resizePanelToComposer(composerWidget->height());
+    }
 }
 
 void OutgoingPostPanel::focusComposer()
