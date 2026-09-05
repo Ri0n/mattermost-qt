@@ -64,7 +64,7 @@ GAP | known successor
 ```
 
 Mattermost thread pagination uses `(fromCreateAt, fromPost)` as a compound cursor. Supplying
-`fromPost` without its `create_at` is invalid and must never be emitted by `PostTimelineService`.
+`fromPost` without its `create_at` is invalid and must never be emitted by `PostRepository`.
 
 Cursor responses are placed at the exact logical window implied by the cursor. They must not pass
 through approximate index placement and must not relocate already authoritative overlap rows.
@@ -88,5 +88,6 @@ Newly filled empty slots require availability notification. `itemsChanged` is re
 indices whose previously concrete identity/content really changed.
 
 All viewport position preservation, request look-ahead calculation, materialization and scrolling
-remain inside `LongListWidget`; thread-specific cursor selection and logical identity placement remain
-inside `ThreadPostSource` / `PostTimelineService`.
+remain inside `LongListWidget`. Thread-specific logical identity and cursor choice remain inside
+`ThreadPostSource`; Mattermost REST transport, pagination encoding, response normalization and cache
+ingestion remain inside the single `PostRepository`.
