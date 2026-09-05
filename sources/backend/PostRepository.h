@@ -81,13 +81,15 @@ public:
     void loadChannelBefore(BackendChannel& channel,
                            const QString& beforePostId,
                            int perPage,
-                           PageCallback callback);
+                           PageCallback callback,
+                           bool quietIngest = false);
 
     /** Extend an arbitrary channel window toward newer posts from a known post. */
     void loadChannelAfter(BackendChannel& channel,
                           const QString& afterPostId,
                           int perPage,
-                          PageCallback callback);
+                          PageCallback callback,
+                          bool quietIngest = false);
 
     /** Load a bounded channel context around a semantic target post. */
     void loadChannelAround(BackendChannel& channel,
