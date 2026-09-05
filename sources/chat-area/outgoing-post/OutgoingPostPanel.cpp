@@ -27,6 +27,8 @@
 #include <algorithm>
 
 #include <QEvent>
+#include <QFont>
+#include <QGraphicsOpacityEffect>
 #include <QHideEvent>
 #include <QIcon>
 #include <QLabel>
@@ -49,6 +51,8 @@ namespace {
 constexpr int LoadingIndicatorDelayMs = 150;
 constexpr int LoadingIndicatorExtent = 18;
 constexpr int LoadingAnimationIntervalMs = 70;
+constexpr int ActionButtonExtent = 30;
+constexpr int ActionIconExtent = 24;
 constexpr qreal RestingIconOpacity = 0.8;
 
 class LoadingIndicator final : public QWidget
@@ -112,20 +116,40 @@ OutgoingPostPanel::OutgoingPostPanel(QWidget *parent)
 {
     ui->setupUi(this);
 
+    auto configureActionButton = [](QPushButton& button) {
+        button.setFlat(true);
+        button.setFixedSize(ActionButtonExtent, ActionButtonExtent);
+        button.setCursor(Qt::PointingHandCursor);
+        // Breeze still paints a hover frame for flat QPushButton. Keep styling
+        // local to the button so the rest of the widget tree remains fully
+        // palette-driven while the action itself stays visually borderless.
+        button.setStyleSheet(QStringLiteral(
+            "QPushButton { border: none; background: transparent; padding: 0px; margin: 0px; }"));
+    };
+
     ui->addEmojiButton->setText(QString());
-    ui->addEmojiButton->setIconSize(QSize(18, 18));
-    ui->addEmojiButton->setFlat(true);
-    ui->addEmojiButton->setCursor(Qt::PointingHandCursor);
+    ui->addEmojiButton->setIconSize(QSize(ActionIconExtent, ActionIconExtent));
+    configureActionButton(*ui->addEmojiButton);
     ui->addEmojiButton->installEventFilter(this);
 
     ui->attachButton->setText(QString());
-    ui->attachButton->setIconSize(QSize(18, 18));
-    ui->attachButton->setFlat(true);
-    ui->attachButton->setCursor(Qt::PointingHandCursor);
+    ui->attachButton->setIconSize(QSize(ActionIconExtent, ActionIconExtent));
+    configureActionButton(*ui->attachButton);
     ui->attachButton->installEventFilter(this);
 
-    ui->sendButton->setFlat(true);
-    ui->sendButton->setCursor(Qt::PointingHandCursor);
+    configureActionButton(*ui->sendButton);
+    QFont sendFont = ui->sendButton->font();
+    if (sendFont.pointSizeF() > 0.0) {
+        sendFont.setPointSizeF(sendFont.pointSizeF() + 2.0);
+    } else if (sendFont.pixelSize() > 0) {
+        sendFont.setPixelSize(sendFont.pixelSize() + 3);
+    }
+    ui->sendButton->setFont(sendFont);
+    ui->sendButton->installEventFilter(this);
+
+    auto* sendOpacity = new QGraphicsOpacityEffect(ui->sendButton);
+    sendOpacity->setOpacity(RestingIconOpacity);
+    ui->sendButton->setGraphicsEffect(sendOpacity);
 
     refreshActionIcons();
 
@@ -239,6 +263,12 @@ bool OutgoingPostPanel::eventFilter(QObject* watched, QEvent* event)
                               QStringLiteral(":/icons/paperclip"),
                               "OUTGOING_ICON_REFRESH_ATTACH",
                               hovered);
+        } else if (watched == ui->sendButton) {
+            if (auto* effect = qobject_cast<QGraphicsOpacityEffect*>(
+                    ui->sendButton->graphicsEffect())) {
+                effect->setOpacity(hovered && ui->sendButton->isEnabled()
+                                       ? 1.0 : RestingIconOpacity);
+            }
         }
     }
 
@@ -267,11 +297,27 @@ void OutgoingPostPanel::adoptComposerWidget()
     composerWidget = composer;
     composerWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
-    const int attachIndex = ui->horizontalLayout->indexOf(ui->attachButton);
-    ui->horizontalLayout->insertWidget(
-        attachIndex + 1, composerWidget, 1, Qt::AlignVCenter);
+    // The expanding composer now owns the free horizontal space; the old
+    // spacer from the pre-composer action row would only create a dead gap.
+    if (ui->horizontalSpacer) {
+        ui->horizontalLayout->removeItem(ui->horizontalSpacer);
+        delete ui->horizontalSpacer;
+        ui->horizontalSpacer = nullptr;
+    }
 
-    const int verticalPadding = std::max(2, composerWidget->fontMetrics().lineSpacing() / 2);
+    // Status/loading stay at the far left. The actual compose controls are
+    // ordered like Telegram: attach | editor | emoji | send.
+    ui->horizontalLayout->removeWidget(ui->attachButton);
+    ui->horizontalLayout->removeWidget(ui->addEmojiButton);
+    ui->horizontalLayout->removeWidget(ui->sendButton);
+    ui->horizontalLayout->addWidget(ui->attachButton, 0, Qt::AlignVCenter);
+    ui->horizontalLayout->addWidget(composerWidget, 1, Qt::AlignVCenter);
+    ui->horizontalLayout->addWidget(ui->addEmojiButton, 0, Qt::AlignVCenter);
+    ui->horizontalLayout->addWidget(ui->sendButton, 0, Qt::AlignVCenter);
+
+    // 40% of line height is 20% less than the previous half-line padding.
+    const int verticalPadding = std::max(
+        2, composerWidget->fontMetrics().lineSpacing() * 2 / 5);
     ui->horizontalLayout->setContentsMargins(0, verticalPadding, 0, verticalPadding);
 }
 
