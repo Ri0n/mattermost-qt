@@ -35,7 +35,7 @@
 #include <QVBoxLayout>
 
 #include "ChatArea.h"
-#include "backend/PostNavigationService.h"
+#include "backend/PostRepository.h"
 #include "backend/types/BackendChannel.h"
 #include "post/PostWidget.h"
 #include "ui_PinnedPostsList.h"
@@ -150,9 +150,9 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
 
         chatArea->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
         chatArea->goToPost(navigationId);
-        PostNavigationService::instance(chatArea->getBackend()).loadAround(
+        PostRepository::instance(chatArea->getBackend()).loadChannelAround(
             channel, navigationId,
-            [guard, navigationId](const PostNavigationService::Context& context) {
+            [guard, navigationId](const PostRepository::Context& context) {
                 if (!guard || !context.success) {
                     return;
                 }
