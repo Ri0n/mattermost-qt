@@ -73,9 +73,11 @@ public:
 
 	QString getChannelDescription () const;
 	QString getTeamAndChannelName ();
+	/** Rebuild a group-DM title from loaded member profiles. */
+	bool refreshGroupDisplayName();
 
 	QSet<const BackendUser*> getAllMembers () const;
-	void addMember (const Storage& channelStorage, const QJsonObject& jsonObject);
+	void addMember (const Storage& storage, const QJsonObject& jsonObject);
 
 	BackendPost* addPost (const QJsonObject& postObject);
 
@@ -126,47 +128,19 @@ signals:
 
 	/**
 	 * Called when a post is being edited
-	 * @param post post
 	 */
 	void onPostEdited (BackendPost& post);
 
-	/**
-	 * Called when a post reaction is being updated (added or removed)
-	 * @param post post
-	 */
+	/** Called when a post reaction is being updated. */
 	void onPostReactionUpdated (BackendPost& post);
 
-	/**
-	 * Called when a post is being deleted
-	 * @param postId postId
-	 */
+	/** Called when a post is deleted. */
 	void onPostDeleted (const QString& postId);
 
-	/**
-	 * Called when someone is typing in the channel.
-	 * Typing notifications are sent ~every 5 seconds, while the user is typing
-	 * @param user user, who is typing
-	 */
 	void onUserTyping (const BackendUser& user);
-
-	/**
-	 * Called when there were missed posts - for example, because of a disconnect
-	 */
 	void onMissedPosts ();
-
-	/**
-	 * Called when the logged-in user is removed from the channel, or has left the channel
-	 */
 	void onLeave ();
-
-	/**
-	 * Called when a user has been added to the channel
-	 */
 	void onUserAdded (const BackendUser& user);
-
-	/**
-	 * Called when a user (other than the logged-in user) has been removed from the channel
-	 */
 	void onUserRemoved (const BackendUser& user);
 private:
 	void addPost (const QJsonObject& postObject, std::list<BackendPost>::iterator position, ChannelNewPostsChunk& currentChunk, QVector<QPair<QString, QString>>& rootLinks, bool initialLoad);
@@ -186,7 +160,7 @@ public:
     uint64_t						last_post_at;
     int								total_msg_count;
     int								total_msg_count_root;
-    bool							has_total_msg_count_root;
+    bool								has_total_msg_count_root;
     int								extra_update_at;
     const BackendUser*				creator;
     QMap<QString, BackendChannelMember> 		members;
@@ -203,4 +177,3 @@ public:
 };
 
 } /* namespace Mattermost */
-
