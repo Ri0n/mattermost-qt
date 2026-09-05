@@ -301,13 +301,40 @@
         </widget>
        </item>
        <item>
-        <widget class="Mattermost::OutgoingPostCreator" name="outgoingPostCreator" native="true">
+        <widget class="QWidget" name="composerInputContainer">
          <property name="sizePolicy">
-          <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+          <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
            <horstretch>1</horstretch>
            <verstretch>0</verstretch>
           </sizepolicy>
          </property>
+         <layout class="QVBoxLayout" name="composerInputLayout">
+          <property name="spacing">
+           <number>2</number>
+          </property>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item>
+           <widget class="Mattermost::OutgoingPostCreator" name="outgoingPostCreator">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+              <horstretch>1</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </widget>
        </item>
        <item alignment="Qt::AlignBottom">
@@ -389,7 +416,7 @@
   </customwidget>
   <customwidget>
    <class>Mattermost::OutgoingPostCreator</class>
-   <extends>QWidget</extends>
+   <extends>QTextEdit</extends>
    <header>chat-area/outgoing-post/OutgoingPostCreator.h</header>
   </customwidget>
  </customwidgets>
