@@ -97,7 +97,6 @@ private:
 	void setUserAvatar (const BackendUser& user);
 	void moveOnListTop ();
 	void setUnreadMessagesCount (uint32_t count);
-	void setTextEditWidgetHeight (int height);
 	void updatePinnedPostsButton ();
 	void updateThreadWindowTitle ();
 	void markChannelViewedIfAtBottom ();
@@ -122,7 +121,6 @@ public:
 	void deinit();
 
 	uint32_t unreadMessagesCount;
-	int texteditDefaultHeight;
 	bool isThread;
 	bool initialized;
 	bool explicitReadPending = false;
