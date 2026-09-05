@@ -7,6 +7,7 @@
 #pragma once
 
 #include <QLabel>
+#include <QPixmap>
 #include <QPushButton>
 #include <QString>
 
