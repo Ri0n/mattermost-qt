@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -296,14 +296,6 @@ void OutgoingPostPanel::adoptComposerWidget()
 
     composerWidget = composer;
     composerWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-
-    // The expanding composer now owns the free horizontal space; the old
-    // spacer from the pre-composer action row would only create a dead gap.
-    if (ui->horizontalSpacer) {
-        ui->horizontalLayout->removeItem(ui->horizontalSpacer);
-        delete ui->horizontalSpacer;
-        ui->horizontalSpacer = nullptr;
-    }
 
     // Status/loading stay at the far left. The actual compose controls are
     // ordered like Telegram: attach | editor | emoji | send.
