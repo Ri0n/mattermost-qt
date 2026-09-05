@@ -86,9 +86,8 @@ inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(styleHints(), &QStyleHints::colorSchemeChanged, this,
             [this](Qt::ColorScheme) {
-        // The signal is emitted while the previous application palette may
-        // still be active. Defer until the platform theme has installed the
-        // new default palette, then remove any resolved top-level overrides.
+        // The signal is emitted while the previous application palette is still
+        // active. Defer until Qt has installed the new system palette.
         QTimer::singleShot(0, this, &MattermostApplication::refreshTopLevelPalettes);
     });
 #endif
@@ -108,19 +107,28 @@ bool MattermostApplication::event(QEvent* event)
 void MattermostApplication::refreshTopLevelPalettes()
 {
     const QWidgetList windows = QApplication::topLevelWidgets();
-    for (QWidget* widget : windows) {
-        if (!widget) {
+    for (QWidget* window : windows) {
+        if (!window) {
             continue;
         }
 
-        // Keep top-level widgets inherited from QApplication. Copying the
-        // current application palette into QWidget::setPalette() resolves all
-        // roles explicitly; Qt then intentionally preserves those roles on the
-        // next system color-scheme change. An empty palette clears that resolve
-        // mask while leaving deliberate child palettes (for example code-block
-        // syntax colors) untouched.
-        widget->setPalette(QPalette());
-        widget->update();
+        // Top-level widgets must inherit the freshly installed application
+        // palette. Do not copy QApplication::palette() here: that would resolve
+        // all roles explicitly and freeze this theme for the next switch.
+        window->setPalette(QPalette());
+        window->update();
+
+        // Palette propagation changes the effective roles immediately, but some
+        // QWidget/QAbstractScrollArea children keep their old backing-store
+        // pixels until another interaction (notably scrolling) exposes them.
+        // Explicitly invalidate the existing widget tree; this does not alter
+        // layout, materialization or any intentional child palette overrides.
+        const auto children = window->findChildren<QWidget*>();
+        for (QWidget* child : children) {
+            if (child) {
+                child->update();
+            }
+        }
     }
 }
 
