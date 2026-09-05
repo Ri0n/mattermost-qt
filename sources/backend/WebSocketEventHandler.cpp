@@ -265,6 +265,7 @@ void WebSocketEventHandler::handleEvent (const UserAddedToTeamEvent& event)
 
 	if (!team) {
 		LOG_DEBUG ("UserAddedToTeamEvent: No team " << teamName << " found. The team will be retrieved");
+		backend.retrieveTeam (event.teamId);
 		return;
 	}
 
