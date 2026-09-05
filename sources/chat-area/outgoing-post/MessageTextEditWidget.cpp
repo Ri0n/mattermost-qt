@@ -24,11 +24,17 @@
 
 #include "MessageTextEditWidget.h"
 
+#include <algorithm>
+#include <cmath>
+
+#include <QAbstractTextDocumentLayout>
 #include <QDebug>
 #include <QFrame>
 #include <QKeyEvent>
 #include <QPalette>
+#include <QResizeEvent>
 #include <QTextDocument>
+#include <QTimer>
 
 namespace Mattermost {
 
@@ -46,6 +52,20 @@ MessageTextEditWidget::MessageTextEditWidget(QWidget* parent)
     viewport()->setBackgroundRole(QPalette::Window);
     viewport()->setAutoFillBackground(true);
     document()->setDocumentMargin(3.0);
+
+    connect(this, &QTextEdit::textChanged, this, [this] {
+        updateHeightToContents();
+        // The block inserted by Shift+Enter may finish layout after the key
+        // event. Measure once more on the next event-loop turn.
+        QTimer::singleShot(0, this, &MessageTextEditWidget::updateHeightToContents);
+    });
+    connect(document(), &QTextDocument::blockCountChanged, this,
+            [this](int) { updateHeightToContents(); });
+    connect(document()->documentLayout(),
+            &QAbstractTextDocumentLayout::documentSizeChanged,
+            this, [this](const QSizeF&) { updateHeightToContents(); });
+
+    QTimer::singleShot(0, this, &MessageTextEditWidget::updateHeightToContents);
 }
 
 MessageTextEditWidget::~MessageTextEditWidget() = default;
@@ -70,6 +90,50 @@ void MessageTextEditWidget::keyPressEvent(QKeyEvent* event)
 	}
 
 	QTextEdit::keyPressEvent(event);
+}
+
+void MessageTextEditWidget::resizeEvent(QResizeEvent* event)
+{
+    QTextEdit::resizeEvent(event);
+    updateHeightToContents();
+}
+
+void MessageTextEditWidget::updateHeightToContents()
+{
+    if (!document() || !document()->documentLayout()) {
+        return;
+    }
+
+    const QMargins margins = contentsMargins();
+    const int chromeHeight = margins.top() + margins.bottom() + 2 * frameWidth();
+    const int documentMargins = static_cast<int>(std::ceil(document()->documentMargin() * 2.0));
+    const int lineHeight = fontMetrics().lineSpacing();
+    const int oneLineHeight = lineHeight + documentMargins + chromeHeight;
+    const int laidOutHeight = static_cast<int>(std::ceil(
+        document()->documentLayout()->documentSize().height())) + chromeHeight;
+    const int explicitLineHeight = std::max(1, document()->blockCount()) * lineHeight
+        + documentMargins + chromeHeight;
+    const int maximumHeight = std::max(oneLineHeight, std::min(300, maximumHeight()));
+    const int wantedHeight = std::clamp(
+        std::max({oneLineHeight, laidOutHeight, explicitLineHeight}),
+        oneLineHeight, maximumHeight);
+
+    if (height() != wantedHeight) {
+        setFixedHeight(wantedHeight);
+    }
+
+    // OutgoingPostCreator is a zero-margin wrapper around this editor. Resize
+    // it together with the editor so the enclosing horizontal composer layout
+    // receives a real size-hint change when Shift+Enter adds a line.
+    if (QWidget* container = parentWidget()) {
+        if (container->height() != wantedHeight) {
+            container->setFixedHeight(wantedHeight);
+        }
+        container->updateGeometry();
+        if (QWidget* panel = container->parentWidget()) {
+            panel->updateGeometry();
+        }
+    }
 }
 
 bool MessageTextEditWidget::hasNonEmptyText()
