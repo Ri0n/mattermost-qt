@@ -35,6 +35,7 @@
 #include <QTimer>
 
 #include "ui/IconUtils.h"
+#include "ui/ThemeDebug.h"
 #include "ui_OutgoingPostPanel.h"
 
 namespace Mattermost {
@@ -184,6 +185,7 @@ void OutgoingPostPanel::changeEvent(QEvent* event)
 
     if (event->type() == QEvent::PaletteChange
         || event->type() == QEvent::ApplicationPaletteChange) {
+        ThemeDebug::logWidgetState("OUTGOING_CHANGE_HANDLER", this, event->type());
         refreshActionIcons();
         if (loadingIndicator) {
             loadingIndicator->update();
@@ -196,6 +198,13 @@ void OutgoingPostPanel::refreshActionIcons()
     if (!ui) {
         return;
     }
+
+    ThemeDebug::logWidgetState("OUTGOING_ICON_REFRESH_EMOJI",
+                               ui->addEmojiButton,
+                               QEvent::None);
+    ThemeDebug::logWidgetState("OUTGOING_ICON_REFRESH_ATTACH",
+                               ui->attachButton,
+                               QEvent::None);
 
     const QColor emojiColor = ui->addEmojiButton->palette().color(QPalette::ButtonText);
     const QColor attachColor = ui->attachButton->palette().color(QPalette::ButtonText);
