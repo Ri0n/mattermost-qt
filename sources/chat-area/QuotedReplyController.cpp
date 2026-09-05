@@ -5,7 +5,9 @@
 #include <QEvent>
 #include <QFont>
 #include <QFrame>
+#include <QHash>
 #include <QLabel>
+#include <QPointer>
 #include <QSizePolicy>
 #include <QToolButton>
 #include <QVariant>
@@ -46,13 +48,11 @@ QString previewText(const BackendPost& post)
 
 QuotedReplyController& QuotedReplyController::instance(ChatArea& area)
 {
-    if (auto* controller = area.findChild<QuotedReplyController*>(
-            QStringLiteral("mmqtQuotedReplyController"), Qt::FindDirectChildrenOnly)) {
-        return *controller;
+    static QHash<ChatArea*, QPointer<QuotedReplyController>> instances;
+    QPointer<QuotedReplyController>& controller = instances[&area];
+    if (!controller) {
+        controller = new QuotedReplyController(area);
     }
-
-    auto* controller = new QuotedReplyController(area);
-    controller->setObjectName(QStringLiteral("mmqtQuotedReplyController"));
     return *controller;
 }
 
