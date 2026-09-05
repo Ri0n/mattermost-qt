@@ -66,6 +66,7 @@ public:
 	Backend& getBackend ();
 	BackendChannel& getChannel ();
 	void handleUserTyping (const BackendUser& user);
+	void editPost(BackendPost& post);
 
 	/** Scroll to a post through the logical post source, materializing it if known. */
 	void goToPost (const BackendPost& post);
