@@ -43,7 +43,7 @@
 #include "./ui_mainwindow.h"
 #include "SettingsWindow.h"
 #include "backend/Backend.h"
-#include "backend/PostNavigationService.h"
+#include "backend/PostRepository.h"
 #include "backend/SidebarService.h"
 #include "backend/UserProfileService.h"
 #include "backend/types/BackendChannel.h"
@@ -558,10 +558,10 @@ void MainWindow::openAttentionThread(const QString& channelId, const QString& ro
 	}
 
 	QPointer<MainWindow> guard(this);
-	PostNavigationService::instance(backend).loadAround(
+	PostRepository::instance(backend).loadChannelAround(
 		*channel, rootPostId,
-		[guard, channelId, rootPostId](bool success) {
-			if (!guard || !success) {
+		[guard, channelId, rootPostId](const PostRepository::Context& context) {
+			if (!guard || !context.success) {
 				return;
 			}
 
