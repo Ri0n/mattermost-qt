@@ -17,7 +17,6 @@ class OutgoingPostCreator;
 /** Owns the UI-only quoted-reply state around the composer QTextEdit. */
 class QuotedReplyController final : public QObject
 {
-    Q_OBJECT
 public:
     static QuotedReplyController& instance(ChatArea& area);
 
