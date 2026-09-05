@@ -6,8 +6,10 @@
 #include <QPointer>
 #include <QStyle>
 #include <QStyleOptionViewItem>
+#include <QTreeWidgetItemIterator>
 
 #include "ChannelIcons.h"
+#include "ChannelItem.h"
 #include "ChannelTree.h"
 #include "SidebarItem.h"
 #include "backend/Backend.h"
@@ -76,19 +78,33 @@ void ChannelItemDelegate::paint(QPainter* painter,
                 text = channel->display_name;
             }
 
-            if (!resolvedGroupChannels.contains(channelId)) {
-                resolvedGroupChannels.insert(channelId);
+            if (!requestedGroupChannels.contains(channelId)) {
+                requestedGroupChannels.insert(channelId);
 
-                // The row delegate is already the point where we know a group
-                // DM is actually visible. Resolve its tiny member set here rather
-                // than reintroducing an eager global user-directory preload.
-                // Keep rendering tied to BackendChannel::display_name so the same
-                // value is also consumed by ChatArea's existing onUpdated path.
+                // The delegate is the first point where we know this group DM is
+                // actually visible. Resolve only that small member set instead of
+                // restoring an eager global user-directory preload.
                 QPointer<ChannelTree> treeGuard(tree);
+                QPointer<BackendChannel> channelGuard(channel);
                 QObject::connect(channel, &BackendChannel::onUpdated,
                                  const_cast<ChannelItemDelegate*>(this),
-                                 [treeGuard] {
-                    if (treeGuard && treeGuard->viewport()) {
+                                 [treeGuard, channelGuard, channelId] {
+                    if (!treeGuard || !channelGuard) {
+                        return;
+                    }
+
+                    // Persist the resolved label in the item model as well as
+                    // drawing it. A channel can occur in several categories, so
+                    // update every row carrying the same semantic channel ID.
+                    for (QTreeWidgetItemIterator it(treeGuard); *it; ++it) {
+                        QTreeWidgetItem* row = *it;
+                        if (row->data(0, SidebarItem::KindRole).toInt() != SidebarItem::Channel
+                            || row->data(0, SidebarItem::IdRole).toString() != channelId) {
+                            continue;
+                        }
+                        static_cast<ChannelItem*>(row)->setLabel(channelGuard->display_name);
+                    }
+                    if (treeGuard->viewport()) {
                         treeGuard->viewport()->update();
                     }
                 });
