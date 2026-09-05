@@ -32,7 +32,6 @@
 #include "SidebarItem.h"
 
 class QDropEvent;
-class QEvent;
 class QMouseEvent;
 class QStackedWidget;
 class QTreeWidgetItem;
@@ -117,7 +116,6 @@ protected:
 	void currentChanged(const QModelIndex& current, const QModelIndex& previous) override;
 	void mousePressEvent(QMouseEvent* event) override;
 	void dropEvent(QDropEvent* event) override;
-    void changeEvent(QEvent* event) override;
 
 private:
 	void markChannelViewed(QTreeWidgetItem* item);
@@ -139,7 +137,6 @@ private:
 	void syncCategoryChannels(QTreeWidgetItem* firstCategory, QTreeWidgetItem* secondCategory = nullptr);
 	void syncCategoryOrder(QTreeWidgetItem* teamItem);
 	QStringList channelIds(QTreeWidgetItem* categoryItem) const;
-    void refreshPaletteDependentIcons();
 
 	QStackedWidget*						chatAreaStackedWidget;
 	QMap<QString, QList<QTreeWidgetItem*>>	channelToItemMap;
