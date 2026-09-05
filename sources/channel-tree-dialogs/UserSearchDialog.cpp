@@ -40,6 +40,7 @@ UserSearchDialog::UserSearchDialog(Backend& backend,
     , searchOptions(std::move(options))
     , disabledUserIds(disabledUserIds)
 {
+    setProfileBackend(&backend);
     create(cfg, {}, {QStringLiteral("Full Name"), QStringLiteral("Status")});
     ui->filterLineEdit->setPlaceholderText(QStringLiteral("Filter DMs or search users"));
 
