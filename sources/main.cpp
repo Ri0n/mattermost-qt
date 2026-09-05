@@ -18,10 +18,14 @@
  */
 
 #include <memory>
+
+#include <QAbstractScrollArea>
 #include <QApplication>
 #include <QEvent>
+#include <QLoggingCategory>
 #include <QMenu>
 #include <QPalette>
+#include <QStyle>
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QWidget>
@@ -30,12 +34,29 @@
 #include <QStyleHints>
 #endif
 
-#include "login/LoginDialog.h"
-#include "mainwindow.h"
 #include "backend/Backend.h"
 #include "config/Config.h"
+#include "login/LoginDialog.h"
+#include "mainwindow.h"
 
 namespace Mattermost {
+
+namespace {
+
+Q_LOGGING_CATEGORY(lcThemeTrace, "mattermost.theme.trace", QtWarningMsg)
+
+QString paletteSummary(const QPalette& palette)
+{
+    return QStringLiteral("Window=%1 WindowText=%2 Base=%3 Text=%4 Button=%5 ButtonText=%6")
+        .arg(palette.color(QPalette::Window).name(),
+             palette.color(QPalette::WindowText).name(),
+             palette.color(QPalette::Base).name(),
+             palette.color(QPalette::Text).name(),
+             palette.color(QPalette::Button).name(),
+             palette.color(QPalette::ButtonText).name());
+}
+
+} // namespace
 
 class MattermostApplication: public QApplication {
 public:
@@ -50,7 +71,7 @@ protected:
     bool event(QEvent* event) override;
 
 private:
-    void refreshTopLevelPalettes();
+    void traceThemeState(const char* stage) const;
 
 	std::unique_ptr<MainWindow>			mainWindow;
 	std::unique_ptr<QSystemTrayIcon> 	trayIcon;
@@ -86,9 +107,13 @@ inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     connect(styleHints(), &QStyleHints::colorSchemeChanged, this,
             [this](Qt::ColorScheme) {
-        // The signal is emitted while the previous application palette is still
-        // active. Defer until Qt has installed the new system palette.
-        QTimer::singleShot(0, this, &MattermostApplication::refreshTopLevelPalettes);
+        // Qt documents that colorSchemeChanged is emitted while the old palette
+        // is still active. Observe the immediate and deferred states instead of
+        // modifying them here; this lets us distinguish a stale application
+        // palette from stale per-widget palette resolution.
+        traceThemeState("color-scheme-signal");
+        QTimer::singleShot(0, this, [this] { traceThemeState("color-scheme+0ms"); });
+        QTimer::singleShot(100, this, [this] { traceThemeState("color-scheme+100ms"); });
     });
 #endif
 }
@@ -99,35 +124,48 @@ bool MattermostApplication::event(QEvent* event)
     const bool handled = QApplication::event(event);
 
     if (paletteChanged) {
-        QTimer::singleShot(0, this, &MattermostApplication::refreshTopLevelPalettes);
+        traceThemeState("application-palette-change");
+        QTimer::singleShot(0, this, [this] { traceThemeState("application-palette+0ms"); });
     }
     return handled;
 }
 
-void MattermostApplication::refreshTopLevelPalettes()
+void MattermostApplication::traceThemeState(const char* stage) const
 {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    const int scheme = static_cast<int>(styleHints()->colorScheme());
+#else
+    const int scheme = -1;
+#endif
+
+    qCDebug(lcThemeTrace).noquote()
+        << "THEME" << stage
+        << "scheme=" << scheme
+        << "style=" << (style() ? style()->objectName() : QStringLiteral("<none>"))
+        << "app" << paletteSummary(QApplication::palette());
+
     const QWidgetList windows = QApplication::topLevelWidgets();
     for (QWidget* window : windows) {
         if (!window) {
             continue;
         }
+        qCDebug(lcThemeTrace).noquote()
+            << "THEME_WINDOW" << stage
+            << window->metaObject()->className()
+            << "object=" << window->objectName()
+            << paletteSummary(window->palette());
 
-        // Top-level widgets must inherit the freshly installed application
-        // palette. Do not copy QApplication::palette() here: that would resolve
-        // all roles explicitly and freeze this theme for the next switch.
-        window->setPalette(QPalette());
-        window->update();
-
-        // Palette propagation changes the effective roles immediately, but some
-        // QWidget/QAbstractScrollArea children keep their old backing-store
-        // pixels until another interaction (notably scrolling) exposes them.
-        // Explicitly invalidate the existing widget tree; this does not alter
-        // layout, materialization or any intentional child palette overrides.
-        const auto children = window->findChildren<QWidget*>();
-        for (QWidget* child : children) {
-            if (child) {
-                child->update();
+        const auto scrollAreas = window->findChildren<QAbstractScrollArea*>();
+        for (QAbstractScrollArea* area : scrollAreas) {
+            if (!area || !area->viewport()) {
+                continue;
             }
+            qCDebug(lcThemeTrace).noquote()
+                << "THEME_VIEWPORT" << stage
+                << area->metaObject()->className()
+                << "object=" << area->objectName()
+                << "area" << paletteSummary(area->palette())
+                << "viewport" << paletteSummary(area->viewport()->palette());
         }
     }
 }
