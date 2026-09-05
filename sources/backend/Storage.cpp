@@ -64,7 +64,6 @@ const BackendUser* Storage::getUserById (const QString& userID) const
 	return &it->second;
 }
 
-
 QString Storage::getUserDisplayNameByUserId (const QString& userID, bool explainLoginUser) const
 {
 	const BackendUser* user = getUserById (userID);
@@ -110,7 +109,6 @@ const BackendTeam* Storage::getTeamById (const QString& teamID) const
 	return &it->second;
 }
 
-
 BackendChannel* Storage::getChannelById (const QString& channelID)
 {
 	auto it = channels.find (channelID);
@@ -148,7 +146,6 @@ BackendTeam* Storage::addTeam (const QJsonObject& json)
 
 	auto it = teams.find (teamId);
 
-	//team already exists.
 	if (it != teams.end()) {
 		return nullptr;
 	} else {
@@ -172,7 +169,6 @@ BackendChannel* Storage::addChannel (BackendTeam& team, const QJsonObject& json)
 
 BackendChannel* Storage::addTeamChannel (BackendTeam& team, const QJsonObject& json)
 {
-	//get channel type in order to check if a channel has to be created
 	uint32_t channelType = BackendChannel::getChannelType (json);
 
 	if (channelType == BackendChannel::directChannel) {
@@ -198,19 +194,12 @@ BackendChannel* Storage::addDirectChannel (const QJsonObject& json)
 
 	BackendChannel* existingChannel = getChannelById (channelId);
 
-	/**
-	 * Check if the channel is already added
-	 */
 	if (existingChannel) {
 		++existingChannel->referenceCount;
 		return existingChannel;
 	}
 
 	BackendChannel* newChannel = new BackendChannel (*this, json);
-
-	/*
-	 * get pointer to the other participant in the direct channel
-	 */
 
 	//the channel name contains the userIDs of it's participants
 	QStringList allUserIds = newChannel->name.split("__");
@@ -224,7 +213,6 @@ BackendChannel* Storage::addDirectChannel (const QJsonObject& json)
 	if (allUserIds.isEmpty()) {
 		userID = loginUser->id;
 	} else {
-	//the remote user ID is the remaining id
 		userID = allUserIds.first();
 	}
 
@@ -261,9 +249,6 @@ BackendChannel* Storage::addGroupChannel (const QJsonObject& json)
 
 	BackendChannel* existingChannel = getChannelById (channelId);
 
-	/**
-	 * Check if the channel is already added
-	 */
 	if (existingChannel) {
 		++existingChannel->referenceCount;
 		return existingChannel;
@@ -281,7 +266,7 @@ BackendChannel* Storage::addGroupChannel (const QJsonObject& json)
 	//remove the logged-in user from the list of names
 	allUserNames.removeAll (loginUser->username);
 
-	newChannel->display_name = allUserNames.join ('|');
+	newChannel->display_name = allUserNames.join(QStringLiteral(", "));
 
 	groupChannels.channels.emplace_back (newChannel);
 	channels[newChannel->id] = groupChannels.channels.back().get();
@@ -363,12 +348,11 @@ void Storage::printTeams ()
 	qDebug() << teams.size() << " teams";
 	for (auto& teamIt: teams) {
 		auto& team = teamIt.second;
-		qDebug() << "Team " << team.id << " " << team.display_name << ":";
+		std::cout << "Team " << team.display_name.toStdString() << " " << team.id.toStdString() << std::endl;
 		for (auto& channel: team.channels) {
-			qDebug() << "\tChannel: " << channel->id << channel.get();
+			std::cout << "\tChannel: " << channel->id.toStdString() << " " << channel.get() << std::endl;
 		}
 	}
 }
 
 } /* namespace Mattermost */
-
