@@ -3,6 +3,8 @@
 #include <QFrame>
 #include <functional>
 
+class QContextMenuEvent;
+class QEvent;
 class QLabel;
 class QMouseEvent;
 class QResizeEvent;
@@ -20,10 +22,13 @@ public:
     void setActivatedCallback(std::function<void()> callback);
 
 protected:
+    void changeEvent(QEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
 
 private:
+    void refreshPalette();
     void refreshText();
 
     QLabel* authorLabel = nullptr;
