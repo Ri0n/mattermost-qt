@@ -91,6 +91,10 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 
 	connect(ui->textEdit, &MessageTextEditWidget::textChanged, [this] {
 		updateSendButtonState();
+		// QTextDocument finishes laying out the newly inserted block after the
+		// key event. Re-measure on the next turn so Shift+Enter grows the composer
+		// immediately instead of waiting for an unrelated resize/scroll event.
+		QTimer::singleShot(0, this, &OutgoingPostCreator::updateEditorHeight);
 	});
 	connect(ui->textEdit->document()->documentLayout(),
 	        &QAbstractTextDocumentLayout::documentSizeChanged,
@@ -453,7 +457,7 @@ void OutgoingPostCreator::updateSendButtonState()
 	}
 
 	if (sendButtonEnabled && editing) {
-		tooltipText = tr("Save edited message · Esc to cancel");
+		tooltipText = tr("Save edited message · Esc to cancel"));
 	} else if (sendButtonEnabled && tooltipText.isEmpty()) {
 		tooltipText = tr("Send");
 	}
@@ -472,14 +476,18 @@ void OutgoingPostCreator::updateEditorHeight()
 	const QMargins margins = ui->textEdit->contentsMargins();
 	const int chromeHeight = margins.top() + margins.bottom()
 		+ 2 * ui->textEdit->frameWidth();
-	const int oneLineHeight = ui->textEdit->fontMetrics().lineSpacing()
-		+ static_cast<int>(std::ceil(document->documentMargin() * 2.0))
-		+ chromeHeight;
-	const int documentHeight = static_cast<int>(std::ceil(document->size().height()))
-		+ chromeHeight;
-	const int maximumHeight = std::min(300, ui->textEdit->maximumHeight());
-	const int wantedHeight = std::clamp(std::max(oneLineHeight, documentHeight),
-	                                    oneLineHeight, maximumHeight);
+	const int documentMargins = static_cast<int>(std::ceil(document->documentMargin() * 2.0));
+	const int lineHeight = ui->textEdit->fontMetrics().lineSpacing();
+	const int oneLineHeight = lineHeight + documentMargins + chromeHeight;
+	const int laidOutHeight = static_cast<int>(std::ceil(
+		document->documentLayout()->documentSize().height())) + chromeHeight;
+	const int explicitLineHeight = std::max(1, document->blockCount()) * lineHeight
+		+ documentMargins + chromeHeight;
+	const int maximumHeight = std::max(oneLineHeight,
+		std::min(300, ui->textEdit->maximumHeight()));
+	const int wantedHeight = std::clamp(
+		std::max({oneLineHeight, laidOutHeight, explicitLineHeight}),
+		oneLineHeight, maximumHeight);
 
 	if (ui->textEdit->height() != wantedHeight) {
 		ui->textEdit->setFixedHeight(wantedHeight);
