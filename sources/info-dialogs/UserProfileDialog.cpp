@@ -20,6 +20,8 @@
 #include "UserProfileDialog.h"
 #include "ui_UserProfileDialog.h"
 
+#include <QDialogButtonBox>
+#include <QLayoutItem>
 #include <QNetworkRequest>
 #include <QPixmap>
 #include <QPointer>
@@ -57,6 +59,14 @@ UserProfileDialog::UserProfileDialog(Backend* backendInstance,
     , userId(user.id)
 {
     ui->setupUi(this);
+
+    // Keep the primary profile action on the same baseline as Close. ActionRole
+    // is ordered on the opposite side of the standard reject/close buttons by
+    // the active platform style, instead of maintaining a second button row.
+    ui->buttonBox->addButton(ui->messageButton, QDialogButtonBox::ActionRole);
+    while (QLayoutItem* item = ui->actionsLayout->takeAt(0)) {
+        delete item;
+    }
 
     setWindowTitle(QStringLiteral("Profile for ") + user.getDisplayName()
                    + QStringLiteral(" - Mattermost"));
