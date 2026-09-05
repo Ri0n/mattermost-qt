@@ -1,7 +1,6 @@
 #include "QuotedPostPreview.h"
 
 #include <algorithm>
-#include <utility>
 
 #include <QEvent>
 #include <QFont>
@@ -63,9 +62,9 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
 void QuotedPostPreview::setPost(const BackendPost& post)
 {
     authorLabel->setText(QObject::tr("Replying to %1").arg(post.getDisplayAuthorName()));
-    const QString visibleBody = QuotedReplyFormat::stripFallback(post.message);
-    fullText = QuotedReplyFormat::compactText(visibleBody, !post.files.empty(), 500);
-    setToolTip(visibleBody);
+    fullText = QuotedReplyFormat::compactText(
+        QuotedReplyFormat::stripFallback(post.message), !post.files.empty(), 500);
+    setToolTip(QuotedReplyFormat::stripFallback(post.message));
     refreshText();
 }
 
@@ -108,7 +107,10 @@ void QuotedPostPreview::refreshPalette()
     barPalette.setColor(QPalette::Window, source.color(QPalette::Mid));
     bar->setPalette(barPalette);
 
-    const QColor muted = source.color(QPalette::Disabled, QPalette::Text);
+    // PlaceholderText is the palette's semantic secondary/muted foreground.
+    // Disabled/Text is not suitable here: styles are allowed to make it equal
+    // to normal WindowText, which made log quotes look like primary content.
+    const QColor muted = source.color(QPalette::PlaceholderText);
     QPalette authorPalette = authorLabel->palette();
     authorPalette.setColor(QPalette::WindowText, muted);
     authorLabel->setPalette(authorPalette);
