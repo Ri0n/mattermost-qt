@@ -101,10 +101,11 @@ void WebSocketEventHandler::handleEvent (const PostDeletedEvent& event)
 {
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 
-	LOG_DEBUG ("Delete post in  '" << (channel ? channel->name : event.channelId) << "' : '" << event.postId);
+	LOG_DEBUG ("Delete post in  '" << (channel ? channel->name : event.channelId)
+	           << "' [" << event.channelId << "] : '" << event.postId);
 
 	if (channel) {
-		emit channel->onPostDeleted (event.postId);
+		channel->deletePost(event.postId);
 	}
 }
 
@@ -264,7 +265,6 @@ void WebSocketEventHandler::handleEvent (const UserAddedToTeamEvent& event)
 
 	if (!team) {
 		LOG_DEBUG ("UserAddedToTeamEvent: No team " << teamName << " found. The team will be retrieved");
-		backend.retrieveTeam (event.teamId);
 		return;
 	}
 
