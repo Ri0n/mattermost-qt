@@ -47,7 +47,7 @@ QString buildFallback(const QString& postId,
 
     const QString safeAuthor = escapeLinkLabel(
         author.isEmpty() ? QStringLiteral("deleted user") : author);
-    const QString quote = compactText(message, hasAttachments);
+    const QString quote = compactText(stripFallback(message), hasAttachments);
 
     return QStringLiteral("> [Replying to %1](/_redirect/pl/%2)\n> %3\n>\n\n")
         .arg(safeAuthor, postId, quote);
