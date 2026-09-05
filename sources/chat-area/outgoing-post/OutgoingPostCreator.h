@@ -25,12 +25,12 @@
 #pragma once
 
 #include <memory>
+#include <QBoxLayout>
 #include <QTimer>
 
 #include "MessageTextEditWidget.h"
 #include "fwd.h"
 
-class QBoxLayout;
 class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
