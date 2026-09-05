@@ -6,6 +6,8 @@
 
 #include "ThemeIconWidgets.h"
 
+#include <utility>
+
 #include <QApplication>
 #include <QColor>
 #include <QIcon>

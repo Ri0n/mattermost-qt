@@ -49,12 +49,10 @@ public slots:
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
-    void changeEvent(QEvent* event) override;
 
 private:
     void rebuildParticipantAvatars();
     void watchUser(const BackendUser* user);
-    void refreshTheme();
 
     Backend& backend;
     BackendChannel& channel;
