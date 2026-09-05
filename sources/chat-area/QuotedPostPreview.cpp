@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include <QContextMenuEvent>
+#include <QCoreApplication>
 #include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
@@ -91,10 +92,23 @@ void QuotedPostPreview::changeEvent(QEvent* event)
 
 void QuotedPostPreview::contextMenuEvent(QContextMenuEvent* event)
 {
-    // The preview is semantically part of the post. Do not consume the context
-    // menu gesture here: let Qt propagate it to PostWidget so right-clicking a
-    // quoted reply opens the same post menu as right-clicking the message body.
-    if (event) {
+    if (!event || !parentWidget()) {
+        QFrame::contextMenuEvent(event);
+        return;
+    }
+
+    // QWidget does not reliably bubble mouse-triggered context-menu events in
+    // the same way as ordinary mouse events. The timeline preview is a direct
+    // child of PostWidget, so explicitly forward the semantic gesture to its
+    // containing post instead of merely ignoring it and hoping for propagation.
+    QContextMenuEvent forwarded(event->reason(),
+                                parentWidget()->mapFromGlobal(event->globalPos()),
+                                event->globalPos(),
+                                event->modifiers());
+    QCoreApplication::sendEvent(parentWidget(), &forwarded);
+    if (forwarded.isAccepted()) {
+        event->accept();
+    } else {
         event->ignore();
     }
 }
