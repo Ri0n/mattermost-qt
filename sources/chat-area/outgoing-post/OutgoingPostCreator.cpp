@@ -42,7 +42,9 @@
 #include "backend/Backend.h"
 #include "backend/PostCreateService.h"
 #include "backend/PostProps.h"
+#include "backend/types/BackendPost.h"
 #include "chat-area/ChatLogWidget.h"
+#include "chat-area/QuotedReplyFormat.h"
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
 
 namespace Mattermost {
@@ -173,10 +175,11 @@ void OutgoingPostCreator::postEditInitiated(BackendPost& post)
 		return;
 	}
 
-	// Editing and quoted reply are mutually exclusive composer modes.
+	// Editing and quoted reply are mutually exclusive composer modes. Keep the
+	// interoperability blockquote out of the editor; it is restored on send.
 	setProperty(PostProps::ReplyToPostId, QString());
 	postToEdit = &post;
-	setText(post.message);
+	setText(QuotedReplyFormat::stripFallback(post.message));
 	setFocus();
 	moveCursor(QTextCursor::End);
 	setEditingVisual(true);
@@ -356,19 +359,38 @@ void OutgoingPostCreator::sendPost()
 
 	if (outgoingPostData->postToEdit) {
 		qDebug() << "Send post edit" << attachmentsLogStr;
+		QString wireMessage = outgoingPostData->message;
+		const QString existingFallback =
+			QuotedReplyFormat::fallbackPrefix(outgoingPostData->postToEdit->message);
+		if (!existingFallback.isEmpty()) {
+			wireMessage.prepend(existingFallback);
+		}
 		backend->editPost(outgoingPostData->postToEdit->id,
-		                  outgoingPostData->message,
+		                  wireMessage,
 		                  outgoingPostData->attachmentIds);
 	} else if (outgoingPostData->pollData) {
 		backend->addPoll(*channel, *outgoingPostData->pollData);
 	} else {
 		qDebug() << "Send post" << attachmentsLogStr;
 		QJsonObject props;
+		QString wireMessage = outgoingPostData->message;
 		if (!outgoingPostData->replyToPostId.isEmpty()) {
 			props.insert(PostProps::ReplyToPostId, outgoingPostData->replyToPostId);
+
+			if (BackendPost* quotedPost = channel->postIdToPost.value(
+			        outgoingPostData->replyToPostId, nullptr)) {
+				wireMessage.prepend(QuotedReplyFormat::buildFallback(
+					quotedPost->id,
+					quotedPost->getDisplayAuthorName(),
+					quotedPost->message,
+					!quotedPost->files.empty()));
+			} else {
+				qWarning() << "Quoted reply target is not materialized:"
+				           << outgoingPostData->replyToPostId;
+			}
 		}
 		PostCreateService::instance(*backend).createPost(
-			*channel, outgoingPostData->message, outgoingPostData->attachmentIds,
+			*channel, wireMessage, outgoingPostData->attachmentIds,
 			root_id, props);
 	}
 }
