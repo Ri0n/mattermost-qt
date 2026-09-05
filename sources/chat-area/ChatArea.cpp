@@ -75,10 +75,13 @@ ChatArea::ChatArea(Backend& backend,
     setAcceptDrops(true);
     ui->setupUi(this);
     ui->listWidget->configure(backend, *this);
+    setupComposerUi();
 
     ui->usersButton->setIcon(getUserButtonIcon());
-    ui->outgoingPostPanel->composer().init(backend, channel, *ui->outgoingPostPanel,
-                                           *ui->listWidget, ui->footerLayout);
+    ui->outgoingPostCreator->init(backend, channel, *ui->listWidget,
+                                  ui->footerLayout, *ui->composerStatusLabel,
+                                  *ui->attachButton, *ui->addEmojiButton,
+                                  *ui->sendButton);
 
     ui->titleLabel->setText(channel.display_name);
     ui->statusLabel->setText(channel.getChannelDescription());
@@ -145,10 +148,13 @@ ChatArea::ChatArea(Backend& backend,
     setAcceptDrops(true);
     ui->setupUi(this);
     ui->listWidget->configure(backend, *this);
+    setupComposerUi();
 
-    ui->outgoingPostPanel->composer().init(backend, channel, *ui->outgoingPostPanel,
-                                           *ui->listWidget, ui->footerLayout);
-    ui->outgoingPostPanel->composer().setRootId(root_id);
+    ui->outgoingPostCreator->init(backend, channel, *ui->listWidget,
+                                  ui->footerLayout, *ui->composerStatusLabel,
+                                  *ui->attachButton, *ui->addEmojiButton,
+                                  *ui->sendButton);
+    ui->outgoingPostCreator->setRootId(root_id);
 
     ui->titleLabel->setText(channel.display_name);
     ui->statusLabel->setText(channel.getChannelDescription());
@@ -347,7 +353,7 @@ void ChatArea::init()
         }));
     }
 
-    auto& composer = ui->outgoingPostPanel->composer();
+    auto& composer = *ui->outgoingPostCreator;
     signalConnections.push_back(connect(&channel, &BackendChannel::onNewPost,
                                         &composer,
                                         &OutgoingPostCreator::onPostReceived));
@@ -550,17 +556,17 @@ void ChatArea::resizeEvent(QResizeEvent* event)
 
 void ChatArea::dragEnterEvent(QDragEnterEvent* event)
 {
-    ui->outgoingPostPanel->composer().onDragEnterEvent(event);
+    ui->outgoingPostCreator->onDragEnterEvent(event);
 }
 
 void ChatArea::dragMoveEvent(QDragMoveEvent* event)
 {
-    ui->outgoingPostPanel->composer().onDragMoveEvent(event);
+    ui->outgoingPostCreator->onDragMoveEvent(event);
 }
 
 void ChatArea::dropEvent(QDropEvent* event)
 {
-    ui->outgoingPostPanel->composer().onDropEvent(event);
+    ui->outgoingPostCreator->onDropEvent(event);
 }
 
 void ChatArea::goToPost(const BackendPost& post)
