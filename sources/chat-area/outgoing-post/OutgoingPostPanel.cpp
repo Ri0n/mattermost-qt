@@ -24,14 +24,16 @@
 
 #include "OutgoingPostPanel.h"
 
+#include <QEvent>
 #include <QHideEvent>
-#include <QIcon>
 #include <QLabel>
 #include <QPainter>
+#include <QPalette>
 #include <QPushButton>
 #include <QShowEvent>
 #include <QTimer>
 
+#include "ui/IconUtils.h"
 #include "ui_OutgoingPostPanel.h"
 
 namespace Mattermost {
@@ -103,12 +105,11 @@ OutgoingPostPanel::OutgoingPostPanel(QWidget *parent)
     ui->setupUi(this);
 
     ui->addEmojiButton->setText(QString());
-    ui->addEmojiButton->setIcon(QIcon(QStringLiteral(":/icons/emoji")));
     ui->addEmojiButton->setIconSize(QSize(18, 18));
 
     ui->attachButton->setText(QString());
-    ui->attachButton->setIcon(QIcon(QStringLiteral(":/icons/paperclip")));
     ui->attachButton->setIconSize(QSize(18, 18));
+    refreshActionIcons();
 
     loadingIndicator = new LoadingIndicator(this);
     ui->horizontalLayout->insertWidget(0, loadingIndicator, 0, Qt::AlignVCenter);
@@ -171,6 +172,36 @@ void OutgoingPostPanel::endMessageLoading()
     if (loadingIndicator) {
         loadingIndicator->hide();
     }
+}
+
+void OutgoingPostPanel::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if (!event) {
+        return;
+    }
+
+    if (event->type() == QEvent::PaletteChange
+        || event->type() == QEvent::ApplicationPaletteChange) {
+        refreshActionIcons();
+        if (loadingIndicator) {
+            loadingIndicator->update();
+        }
+    }
+}
+
+void OutgoingPostPanel::refreshActionIcons()
+{
+    if (!ui) {
+        return;
+    }
+
+    const QColor emojiColor = ui->addEmojiButton->palette().color(QPalette::ButtonText);
+    const QColor attachColor = ui->attachButton->palette().color(QPalette::ButtonText);
+    ui->addEmojiButton->setIcon(
+        IconUtils::tintedSymbolicIcon(QStringLiteral(":/icons/emoji"), emojiColor));
+    ui->attachButton->setIcon(
+        IconUtils::tintedSymbolicIcon(QStringLiteral(":/icons/paperclip"), attachColor));
 }
 
 } /* namespace Mattermost */
