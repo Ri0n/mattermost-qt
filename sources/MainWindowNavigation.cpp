@@ -73,7 +73,8 @@ void MainWindow::openChannelPost(const QString& channelId,
 
     // A freshly opened lazy ChatArea installs its ChannelPostSource on the next
     // event-loop turn. Apply the already-fetched permalink context after that
-    // setup so the target cannot be replaced by initial source initialization.
+    // setup. The context must be published before the viewport is moved: an
+    // isolated estimated target is deliberately no longer a valid source row.
     QPointer<ChatArea> areaGuard(area);
     QTimer::singleShot(0, area,
         [areaGuard, postId, contextPostIds, reachedOldest, reachedNewest] {
@@ -81,13 +82,16 @@ void MainWindow::openChannelPost(const QString& channelId,
                 return;
             }
 
-            areaGuard->lockNavigationToPost(postId, 0);
             if (!contextPostIds.isEmpty()) {
-                areaGuard->ensurePinnedPostVisible(postId, contextPostIds,
-                                                   reachedOldest, reachedNewest);
-            } else {
-                areaGuard->ensurePostVisible(postId);
+                if (!areaGuard->ensurePinnedPostVisible(postId, contextPostIds,
+                                                        reachedOldest, reachedNewest)) {
+                    return;
+                }
+            } else if (!areaGuard->ensurePostVisible(postId)) {
+                return;
             }
+
+            areaGuard->lockNavigationToPost(postId, 0);
             areaGuard->goToPost(postId);
         });
 }
