@@ -21,6 +21,7 @@
 
 #include <QDateTime>
 #include <QDebug>
+#include <QEvent>
 #include <QPalette>
 #include <QPointer>
 #include <QPushButton>
@@ -139,6 +140,15 @@ PostWidget::PostWidget(Backend& backend,
 PostWidget::~PostWidget()
 {
 	delete ui;
+}
+
+void PostWidget::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if (event && (event->type() == QEvent::PaletteChange
+                  || event->type() == QEvent::ApplicationPaletteChange)) {
+        updateAuthorAvatar();
+    }
 }
 
 void PostWidget::setAuthor(Backend& backendInstance, const BackendUser* user)
