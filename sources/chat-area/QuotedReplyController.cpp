@@ -1,7 +1,8 @@
 #include "QuotedReplyController.h"
 
 #include <QBoxLayout>
-#include <QDynamicPropertyChangeEvent>
+#include <QByteArray>
+#include <QEvent>
 #include <QFont>
 #include <QFrame>
 #include <QLabel>
@@ -45,14 +46,13 @@ QString previewText(const BackendPost& post)
 
 QuotedReplyController& QuotedReplyController::instance(ChatArea& area)
 {
-    constexpr auto ObjectName = "mmqtQuotedReplyController";
     if (auto* controller = area.findChild<QuotedReplyController*>(
-            QStringLiteral(ObjectName), Qt::FindDirectChildrenOnly)) {
+            QStringLiteral("mmqtQuotedReplyController"), Qt::FindDirectChildrenOnly)) {
         return *controller;
     }
 
     auto* controller = new QuotedReplyController(area);
-    controller->setObjectName(QStringLiteral(ObjectName));
+    controller->setObjectName(QStringLiteral("mmqtQuotedReplyController"));
     return *controller;
 }
 
