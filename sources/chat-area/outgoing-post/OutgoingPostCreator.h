@@ -29,10 +29,12 @@
 #include <QWidget>
 #include "fwd.h"
 
+class QBoxLayout;
 class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
-class QBoxLayout;
+class QLabel;
+class QPushButton;
 
 namespace Ui {
 class OutgoingPostCreator;
@@ -42,7 +44,6 @@ namespace Mattermost {
 
 struct OutgoingPostData;
 class ChatLogWidget;
-class OutgoingPostPanel;
 
 class OutgoingPostCreator: public QWidget {
 	Q_OBJECT
@@ -50,7 +51,14 @@ public:
 	explicit OutgoingPostCreator (QWidget *parent = nullptr);
 	~OutgoingPostCreator();
 public:
-	void init (Backend& backend, BackendChannel& channel, OutgoingPostPanel& panel, ChatLogWidget& chatLogWidget, QBoxLayout* attachmentParent);
+	void init(Backend& backend,
+	          BackendChannel& channel,
+	          ChatLogWidget& chatLogWidget,
+	          QBoxLayout* attachmentParent,
+	          QLabel& statusLabel,
+	          QPushButton& attachButton,
+	          QPushButton& addEmojiButton,
+	          QPushButton& sendButton);
 	void setRootId(QString id);
 	void onDragEnterEvent (QDragEnterEvent* event);
 	void onDragMoveEvent (QDragMoveEvent* event);
@@ -69,7 +77,6 @@ signals:
 private:
 	void createAttachmentList (QStringList& files);
 	void updateSendButtonState ();
-	void updateEditorHeight ();
 	void setEditingVisual(bool editing);
 	bool isEditingPost() const;
 	bool isCreatingPost ();
@@ -87,15 +94,18 @@ private:
 
 private:
 	Ui::OutgoingPostCreator*			ui;
-	Backend*							backend;
-	BackendChannel*						channel;
-	OutgoingPostPanel*					panel;
+	Backend*							backend = nullptr;
+	BackendChannel*						channel = nullptr;
+	QLabel*								statusLabel = nullptr;
+	QPushButton*						attachButton = nullptr;
+	QPushButton*						addEmojiButton = nullptr;
+	QPushButton*						sendButton = nullptr;
 	QTimer								sendRetryTimer;
 	const BackendPost*					postToEdit;
 	OutgoingAttachmentList*				attachmentList;
 	std::unique_ptr<OutgoingPostData> 	outgoingPostData;
 	bool								isConnected;
-	QBoxLayout* 						attachmentParent;
+	QBoxLayout* 						attachmentParent = nullptr;
 	std::vector<QMetaObject::Connection> signalConnections;
 	QString						root_id;
 };
