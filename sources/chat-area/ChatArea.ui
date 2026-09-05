@@ -136,7 +136,7 @@
         </widget>
        </item>
        <item alignment="Qt::AlignBottom">
-        <widget class="QPushButton" name="sendButton">
+        <widget class="Mattermost::ThemeIconButton" name="sendButton">
          <property name="minimumSize"><size><width>34</width><height>30</height></size></property>
          <property name="maximumSize"><size><width>38</width><height>30</height></size></property>
          <property name="font"><font><pointsize>14</pointsize></font></property>
