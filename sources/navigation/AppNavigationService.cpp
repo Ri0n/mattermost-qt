@@ -25,7 +25,7 @@ AppNavigationService& AppNavigationService::instance(Backend& backend)
     static QMap<Backend*, AppNavigationService*> instances;
     auto it = instances.find(&backend);
     if (it == instances.end()) {
-        it = instances.insert(backend, new AppNavigationService(backend));
+        it = instances.insert(&backend, new AppNavigationService(backend));
     }
     return **it;
 }
@@ -113,9 +113,6 @@ void AppNavigationService::openUrl(const QUrl& url)
         }
     }
 
-    // Mattermost direct-message deep links use /<team>/messages/@<username>.
-    // Existing DMs are already represented in Storage; route them without
-    // sending a perfectly local navigation action through the browser.
     if (path.size() >= 3 && path.at(1) == QStringLiteral("messages")) {
         QString username = path.at(2);
         if (username.startsWith(QLatin1Char('@'))) {
@@ -134,8 +131,6 @@ void AppNavigationService::openUrl(const QUrl& url)
         }
     }
 
-    // Both normal permalinks (/<team>/pl/<post>) and Mattermost's
-    // /_redirect/pl/<post> form have "pl" as the second path component.
     if (path.size() >= 3 && path.at(1) == QStringLiteral("pl")) {
         openPost(path.at(2));
         return;
@@ -237,8 +232,6 @@ void AppNavigationService::openThreadAtLastViewed(const QString& channelId,
 void AppNavigationService::openPostInChannel(BackendChannel& channel,
                                              const QString& postId)
 {
-    // A cached reply carries its exact thread identity, so semantic navigation
-    // can route directly to the thread without fetching an unused channel window.
     if (BackendPost* cached = channel.postIdToPost.value(postId, nullptr)) {
         if (!cached->root_id.isEmpty()) {
             emit channelRequested(channel.id,
