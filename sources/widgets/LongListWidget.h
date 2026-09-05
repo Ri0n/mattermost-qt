@@ -88,6 +88,7 @@ public:
     void finishRangeRequest(int first, int last)
     {
         clearPendingRequest(first, last);
+        emit rangeRequestFinished(first, last);
     }
 
     /** Notify the view that data for already available items changed. */
@@ -140,6 +141,8 @@ signals:
                         int last,
                         Mattermost::LongListWidget::RequestReason reason,
                         quint64 generation);
+    /** Emitted once for every rangeRequested() after the source completes it. */
+    void rangeRequestFinished(int first, int last);
     void visibleRangeChanged(int first, int last);
     void materializedRangeChanged(int first, int last);
 
