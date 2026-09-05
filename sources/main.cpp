@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -19,8 +19,12 @@
 
 #include <memory>
 #include <QApplication>
+#include <QEvent>
 #include <QMenu>
+#include <QPalette>
 #include <QSystemTrayIcon>
+#include <QTimer>
+#include <QWidget>
 
 #include "login/LoginDialog.h"
 #include "mainwindow.h"
@@ -37,7 +41,13 @@ public:
 	void showWindow ();
 	void toggleShowWindow ();
 	void reopen ();
+
+protected:
+    bool event(QEvent* event) override;
+
 private:
+    void refreshTopLevelPalettes();
+
 	std::unique_ptr<MainWindow>			mainWindow;
 	std::unique_ptr<QSystemTrayIcon> 	trayIcon;
 	std::unique_ptr<QMenu>				trayIconMenu;
@@ -68,6 +78,34 @@ inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 	trayIconMenu->addAction ("Open Mattermost", this, &MattermostApplication::showWindow);
 	trayIconMenu->addAction ("Quit", qApp, &QApplication::quit);
 	qApp->setQuitOnLastWindowClosed(false);
+}
+
+bool MattermostApplication::event(QEvent* event)
+{
+    const bool paletteChanged = event && event->type() == QEvent::ApplicationPaletteChange;
+    const bool handled = QApplication::event(event);
+
+    if (paletteChanged) {
+        // Platform themes can update the application palette independently of
+        // already-created widget palettes. Defer one event-loop turn so the
+        // new application palette is final, then re-seed each top-level widget;
+        // ordinary Qt palette inheritance propagates it through the child tree.
+        QTimer::singleShot(0, this, &MattermostApplication::refreshTopLevelPalettes);
+    }
+    return handled;
+}
+
+void MattermostApplication::refreshTopLevelPalettes()
+{
+    const QPalette currentPalette = QApplication::palette();
+    const QWidgetList windows = QApplication::topLevelWidgets();
+    for (QWidget* widget : windows) {
+        if (!widget) {
+            continue;
+        }
+        widget->setPalette(currentPalette);
+        widget->update();
+    }
 }
 
 void MattermostApplication::openLoginWindow ()
@@ -117,4 +155,3 @@ int main( int argc, char *argv[])
 	app.openLoginWindow ();
 	return app.exec();
 }
-
