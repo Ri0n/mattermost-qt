@@ -26,6 +26,10 @@
 #include <QTimer>
 #include <QWidget>
 
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+#include <QStyleHints>
+#endif
+
 #include "login/LoginDialog.h"
 #include "mainwindow.h"
 #include "backend/Backend.h"
@@ -78,6 +82,16 @@ inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 	trayIconMenu->addAction ("Open Mattermost", this, &MattermostApplication::showWindow);
 	trayIconMenu->addAction ("Quit", qApp, &QApplication::quit);
 	qApp->setQuitOnLastWindowClosed(false);
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    connect(styleHints(), &QStyleHints::colorSchemeChanged, this,
+            [this](Qt::ColorScheme) {
+        // The signal is emitted while the previous application palette may
+        // still be active. Defer until the platform theme has installed the
+        // new default palette, then remove any resolved top-level overrides.
+        QTimer::singleShot(0, this, &MattermostApplication::refreshTopLevelPalettes);
+    });
+#endif
 }
 
 bool MattermostApplication::event(QEvent* event)
@@ -86,10 +100,6 @@ bool MattermostApplication::event(QEvent* event)
     const bool handled = QApplication::event(event);
 
     if (paletteChanged) {
-        // Platform themes can update the application palette independently of
-        // already-created widget palettes. Defer one event-loop turn so the
-        // new application palette is final, then re-seed each top-level widget;
-        // ordinary Qt palette inheritance propagates it through the child tree.
         QTimer::singleShot(0, this, &MattermostApplication::refreshTopLevelPalettes);
     }
     return handled;
@@ -97,13 +107,19 @@ bool MattermostApplication::event(QEvent* event)
 
 void MattermostApplication::refreshTopLevelPalettes()
 {
-    const QPalette currentPalette = QApplication::palette();
     const QWidgetList windows = QApplication::topLevelWidgets();
     for (QWidget* widget : windows) {
         if (!widget) {
             continue;
         }
-        widget->setPalette(currentPalette);
+
+        // Keep top-level widgets inherited from QApplication. Copying the
+        // current application palette into QWidget::setPalette() resolves all
+        // roles explicitly; Qt then intentionally preserves those roles on the
+        // next system color-scheme change. An empty palette clears that resolve
+        // mask while leaving deliberate child palettes (for example code-block
+        // syntax colors) untouched.
+        widget->setPalette(QPalette());
         widget->update();
     }
 }
