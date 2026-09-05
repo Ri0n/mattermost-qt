@@ -41,7 +41,6 @@ class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
 class QEvent;
-class QPushButton;
 class QResizeEvent;
 class QShowEvent;
 class QTimer;
@@ -93,7 +92,6 @@ public:
 	void requestExplicitReadAcknowledgement ();
 private:
 	void changeEvent(QEvent* event) override;
-	bool eventFilter(QObject* watched, QEvent* event) override;
 	void showEvent(QShowEvent* event) override;
 	void resizeEvent (QResizeEvent* event) override;
 	void dragEnterEvent (QDragEnterEvent* event) override;
@@ -104,11 +102,6 @@ private:
 	void focusComposer();
 	void beginMessageLoading();
 	void endMessageLoading();
-	void refreshActionIcons();
-	void refreshActionIcon(QPushButton& button,
-	                       const QString& resourcePath,
-	                       const char* debugMarker,
-	                       bool hovered);
 	void setUserAvatar (const BackendUser& user);
 	void moveOnListTop ();
 	void setUnreadMessagesCount (uint32_t count);
