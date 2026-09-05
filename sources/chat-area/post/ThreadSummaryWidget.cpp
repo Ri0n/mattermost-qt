@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -25,6 +25,7 @@
 #include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPalette>
@@ -100,18 +101,7 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
         }
     });
 
-    refreshTheme();
     refresh();
-}
-
-void ThreadSummaryWidget::changeEvent(QEvent* event)
-{
-    QWidget::changeEvent(event);
-    if (event && (event->type() == QEvent::PaletteChange
-                  || event->type() == QEvent::ApplicationPaletteChange
-                  || event->type() == QEvent::StyleChange)) {
-        refreshTheme();
-    }
 }
 
 bool ThreadSummaryWidget::eventFilter(QObject* watched, QEvent* event)
@@ -124,28 +114,6 @@ bool ThreadSummaryWidget::eventFilter(QObject* watched, QEvent* event)
         }
     }
     return QWidget::eventFilter(watched, event);
-}
-
-void ThreadSummaryWidget::refreshTheme()
-{
-    if (!chipIcon || !chipCount) {
-        return;
-    }
-
-    // ReactionChipStyle uses a stylesheet for the translucent chip background.
-    // The trace shows QStyleSheetStyle keeping the old inherited WindowText on
-    // the chip while QApplication already exposes the new desktop palette.
-    const QPalette currentPalette = qApp ? qApp->palette() : palette();
-    chipCount->setPalette(currentPalette);
-    chipCount->setForegroundRole(QPalette::WindowText);
-
-    const QColor iconColor = currentPalette.color(QPalette::WindowText);
-    chipIcon->setPixmap(IconUtils::tintedSymbolicIcon(
-        QStringLiteral(":/icons/message-balloon"), iconColor)
-        .pixmap(ReactionChipStyle::IconExtent, ReactionChipStyle::IconExtent));
-
-    chipCount->update();
-    chipIcon->update();
 }
 
 void ThreadSummaryWidget::refresh()
@@ -163,6 +131,34 @@ void ThreadSummaryWidget::refresh()
     updateGeometry();
 }
 
+void ThreadSummaryWidget::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if (event && (event->type() == QEvent::PaletteChange
+                  || event->type() == QEvent::ApplicationPaletteChange
+                  || event->type() == QEvent::StyleChange)) {
+        refreshTheme();
+    }
+}
+
+void ThreadSummaryWidget::refreshTheme()
+{
+    if (!chipIcon || !chipCount) {
+        return;
+    }
+
+    const QPalette currentPalette = qApp ? qApp->palette() : palette();
+    chipCount->setPalette(currentPalette);
+
+    const QColor iconColor = currentPalette.color(QPalette::WindowText);
+    chipIcon->setPixmap(IconUtils::tintedSymbolicIcon(
+        QStringLiteral(":/icons/message-balloon"), iconColor)
+                            .pixmap(ReactionChipStyle::IconExtent,
+                                    ReactionChipStyle::IconExtent));
+    chipIcon->update();
+    chipCount->update();
+}
+
 void ThreadSummaryWidget::rebuildParticipantAvatars()
 {
     while (layout->count() > 0) {
@@ -177,6 +173,9 @@ void ThreadSummaryWidget::rebuildParticipantAvatars()
     QStringList participantIds;
     QSet<QString> seen;
 
+    // Locally materialized replies are authoritative for the very latest live
+    // activity and complement the transient participant sample returned on the
+    // root post by Mattermost collapsed-thread responses.
     for (auto it = channel.posts.rbegin(); it != channel.posts.rend(); ++it) {
         if (it->root_id != rootPost.id || it->user_id.isEmpty() || seen.contains(it->user_id)) {
             continue;
@@ -188,6 +187,9 @@ void ThreadSummaryWidget::rebuildParticipantAvatars()
         }
     }
 
+    // Mattermost stores thread participants oldest -> newest. Walk the sample
+    // backwards so the chip shows the most recent unique participants first,
+    // without having to load the thread itself.
     for (auto it = rootPost.threadParticipantUserIds.crbegin();
          it != rootPost.threadParticipantUserIds.crend()
          && participantIds.size() < MaxParticipantAvatars; ++it) {
