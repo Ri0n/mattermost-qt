@@ -3,6 +3,7 @@
 #include <QFrame>
 #include <functional>
 
+class QEvent;
 class QLabel;
 class QMouseEvent;
 class QResizeEvent;
