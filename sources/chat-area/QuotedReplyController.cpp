@@ -1,11 +1,11 @@
 #include "QuotedReplyController.h"
 
-#include <QBoxLayout>
 #include <QByteArray>
 #include <QEvent>
 #include <QFont>
 #include <QFrame>
 #include <QHash>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QPointer>
 #include <QSizePolicy>
@@ -65,25 +65,13 @@ QuotedReplyController::QuotedReplyController(ChatArea& sourceArea)
 
 void QuotedReplyController::ensureUi()
 {
-    if (wrapper || !area.ui || !area.ui->outgoingPostCreator || !area.ui->composerLayout) {
+    if (preview || !area.ui || !area.ui->outgoingPostCreator
+        || !area.ui->composerInputContainer || !area.ui->composerInputLayout) {
         return;
     }
 
     editor = area.ui->outgoingPostCreator;
-    const int editorIndex = area.ui->composerLayout->indexOf(editor);
-    if (editorIndex < 0) {
-        return;
-    }
-
-    area.ui->composerLayout->removeWidget(editor);
-
-    wrapper = new QWidget(&area);
-    wrapper->setObjectName(QStringLiteral("composerInputWrapper"));
-    wrapper->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-
-    auto* wrapperLayout = new QVBoxLayout(wrapper);
-    wrapperLayout->setContentsMargins(0, 0, 0, 0);
-    wrapperLayout->setSpacing(2);
+    wrapper = area.ui->composerInputContainer;
 
     preview = new QFrame(wrapper);
     preview->setObjectName(QStringLiteral("quotedReplyPreview"));
@@ -120,9 +108,7 @@ void QuotedReplyController::ensureUi()
     cancelButton->setAccessibleName(tr("Cancel reply"));
     previewLayout->addWidget(cancelButton, 0, Qt::AlignTop);
 
-    wrapperLayout->addWidget(preview);
-    wrapperLayout->addWidget(editor);
-    area.ui->composerLayout->insertWidget(editorIndex, wrapper, 1);
+    area.ui->composerInputLayout->insertWidget(0, preview);
 
     preview->hide();
     connect(cancelButton, &QToolButton::clicked, this, &QuotedReplyController::cancel);
