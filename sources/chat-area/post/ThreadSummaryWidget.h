@@ -48,9 +48,11 @@ public slots:
     void refresh();
 
 protected:
+    void changeEvent(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    void refreshTheme();
     void rebuildParticipantAvatars();
     void watchUser(const BackendUser* user);
 
