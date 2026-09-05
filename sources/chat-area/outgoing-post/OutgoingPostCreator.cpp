@@ -28,6 +28,7 @@
 #include <QDebug>
 #include <QDragMoveEvent>
 #include <QFileDialog>
+#include <QJsonObject>
 #include <QLabel>
 #include <QMessageBox>
 #include <QMimeData>
@@ -39,15 +40,23 @@
 #include "NewPollDialog.h"
 #include "OutgoingAttachmentList.h"
 #include "backend/Backend.h"
+#include "backend/PostCreateService.h"
+#include "backend/PostProps.h"
 #include "chat-area/ChatLogWidget.h"
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
 
 namespace Mattermost {
+namespace {
+
+constexpr char EditingPostProperty[] = "_mmqt_editing_post";
+
+}
 
 struct OutgoingPostData {
 	const BackendPost* postToEdit;
 	std::unique_ptr<BackendNewPollData> pollData;
 	QString message;
+	QString replyToPostId;
 	QList<QString> attachmentPaths;
 	QList<QString> attachmentIds;
 };
@@ -83,6 +92,11 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 	sendButton = &sendButtonInstance;
 
 	connect(this, &MessageTextEditWidget::escapePressed, this, [this] {
+		if (!isEditingPost()
+		    && !property(PostProps::ReplyToPostId).toString().isEmpty()) {
+			setProperty(PostProps::ReplyToPostId, QString());
+			return;
+		}
 		clear();
 		postToEdit = nullptr;
 		setEditingVisual(false);
@@ -159,6 +173,8 @@ void OutgoingPostCreator::postEditInitiated(BackendPost& post)
 		return;
 	}
 
+	// Editing and quoted reply are mutually exclusive composer modes.
+	setProperty(PostProps::ReplyToPostId, QString());
 	postToEdit = &post;
 	setText(post.message);
 	setFocus();
@@ -169,6 +185,7 @@ void OutgoingPostCreator::postEditInitiated(BackendPost& post)
 
 void OutgoingPostCreator::setEditingVisual(bool editing)
 {
+	setProperty(EditingPostProperty, editing);
 	if (!statusLabel) {
 		return;
 	}
@@ -229,7 +246,14 @@ void OutgoingPostCreator::sendPostButtonAction()
 		return;
 	}
 
+	const QString replyToPostId = property(PostProps::ReplyToPostId).toString();
 	if (message.startsWith("/poll")) {
+		if (!replyToPostId.isEmpty()) {
+			QMessageBox::warning(this, tr("Cannot quote poll"),
+			                     tr("Polls cannot be sent as quoted replies. Cancel the reply first."),
+			                     QMessageBox::Ok);
+			return;
+		}
 		if (postToEdit) {
 			QMessageBox::warning(this, "Error",
 			                     "Cannot replace a non-poll message with a poll. Either delete the post or add the poll as a new post",
@@ -276,6 +300,9 @@ void OutgoingPostCreator::sendPostButtonAction()
 	outgoingPostData = std::make_unique<OutgoingPostData>();
 	outgoingPostData->message = message;
 	outgoingPostData->postToEdit = postToEdit;
+	if (!outgoingPostData->postToEdit) {
+		outgoingPostData->replyToPostId = replyToPostId;
+	}
 	postToEdit = nullptr;
 
 	if (attachmentList) {
@@ -336,8 +363,13 @@ void OutgoingPostCreator::sendPost()
 		backend->addPoll(*channel, *outgoingPostData->pollData);
 	} else {
 		qDebug() << "Send post" << attachmentsLogStr;
-		backend->addPost(*channel, outgoingPostData->message,
-		                 outgoingPostData->attachmentIds, root_id);
+		QJsonObject props;
+		if (!outgoingPostData->replyToPostId.isEmpty()) {
+			props.insert(PostProps::ReplyToPostId, outgoingPostData->replyToPostId);
+		}
+		PostCreateService::instance(*backend).createPost(
+			*channel, outgoingPostData->message, outgoingPostData->attachmentIds,
+			root_id, props);
 	}
 }
 
@@ -383,6 +415,7 @@ void OutgoingPostCreator::onPostReceived(BackendPost& post)
 	}
 
 	outgoingPostData.reset();
+	setProperty(PostProps::ReplyToPostId, QString());
 
 	if (attachmentList) {
 		delete attachmentList;
