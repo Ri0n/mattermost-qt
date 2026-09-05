@@ -29,6 +29,7 @@
 class QEvent;
 class QLabel;
 class QPushButton;
+class QShowEvent;
 class QTimer;
 
 namespace Ui {
@@ -57,15 +58,20 @@ public slots:
 protected:
     void changeEvent(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
+    void adoptComposerWidget();
+    void focusComposer();
     void refreshActionIcons();
     void refreshActionIcon(QPushButton& button,
                            const QString& resourcePath,
-                           const char* debugMarker);
+                           const char* debugMarker,
+                           bool hovered);
 
     Ui::OutgoingPostPanel *ui;
     QWidget* loadingIndicator = nullptr;
+    QWidget* composerWidget = nullptr;
     QTimer* loadingDelayTimer = nullptr;
     int pendingMessageLoads = 0;
 };
