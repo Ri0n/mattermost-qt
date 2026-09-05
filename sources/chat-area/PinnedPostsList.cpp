@@ -148,19 +148,22 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
         QPointer<ChatArea> guard(chatArea);
         BackendChannel& channel = chatArea->getChannel();
 
-        chatArea->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
-        chatArea->goToPost(navigationId);
+        // Do not move the viewport to an isolated guessed row. Fetch the local
+        // identity context first; ChannelPostSource publishes it atomically and
+        // only then is LongListWidget allowed to center/lock the target.
         PostRepository::instance(chatArea->getBackend()).loadChannelAround(
             channel, navigationId,
             [guard, navigationId](const PostRepository::Context& context) {
                 if (!guard || !context.success) {
                     return;
                 }
+                if (!guard->ensurePinnedPostVisible(navigationId,
+                                                    context.postIds,
+                                                    context.reachedOldest,
+                                                    context.reachedNewest)) {
+                    return;
+                }
                 guard->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
-                guard->ensurePinnedPostVisible(navigationId,
-                                               context.postIds,
-                                               context.reachedOldest,
-                                               context.reachedNewest);
                 guard->goToPost(navigationId);
             },
             true);
