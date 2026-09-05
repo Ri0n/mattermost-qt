@@ -26,6 +26,7 @@
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QPalette>
 #include <QPointer>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -56,6 +57,7 @@
 #include "chat-area/ChatArea.h"
 #include "log.h"
 #include "notifications/NotificationManager.h"
+#include "ui/IconUtils.h"
 
 namespace Mattermost {
 namespace {
@@ -93,7 +95,9 @@ MainWindow::MainWindow(QWidget* parent, QSystemTrayIcon& trayIcon, Backend& _bac
 	LOG_DEBUG("MainWindow create start");
 
 	ui->setupUi(this);
+	ui->toolButton->installEventFilter(this);
 	setupChannelTabs();
+	refreshMenuButtonIcon();
 	ui->channelList->setChatAreaStackedWidget(ui->chatAreaStackedWidget);
 	ui->channelList->setFocus();
 
@@ -228,7 +232,6 @@ void MainWindow::setupChannelTabs()
 	channelTabs = new QTabWidget(ui->centralwidget);
 	channelTabs->setDocumentMode(true);
 	channelTabs->setSizePolicy(ui->channelList->sizePolicy());
-	channelTabs->setStyleSheet(QStringLiteral("QTabWidget::pane { border: 0; }"));
 
 	channelsPage = new QWidget(channelTabs);
 	auto* channelsLayout = new QVBoxLayout(channelsPage);
@@ -247,11 +250,8 @@ void MainWindow::setupChannelTabs()
 	unreadFilterButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
 	unreadFilterButton->setToolTip(tr("Show unread channels only"));
 	unreadFilterButton->setAccessibleName(tr("Show unread channels only"));
-	QIcon unreadIcon = QIcon::fromTheme(QStringLiteral("mail-unread"));
-	if (unreadIcon.isNull()) {
-		unreadIcon = style()->standardIcon(QStyle::SP_MessageBoxInformation);
-	}
-	unreadFilterButton->setIcon(unreadIcon);
+	unreadFilterButton->installEventFilter(this);
+	refreshUnreadFilterIcon();
 	channelsToolsLayout->addWidget(unreadFilterButton);
 
 	channelsLayout->addWidget(channelsTools);
@@ -582,7 +582,6 @@ void MainWindow::openAttentionThread(const QString& channelId, const QString& ro
 					threadArea = area;
 					break;
 				}
-			}
 
 			if (!threadArea) {
 				threadArea = new ChatArea(guard->backend, *currentChannel, rootPostId, parentArea);
@@ -640,6 +639,45 @@ void MainWindow::createMenu()
 	});
 
 	ui->toolButton->setMenu(mainMenu);
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+	if (event && event->type() == QEvent::PaletteChange) {
+		if (watched == ui->toolButton) {
+			refreshMenuButtonIcon();
+		} else if (watched == unreadFilterButton) {
+			refreshUnreadFilterIcon();
+		}
+	}
+	return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::refreshMenuButtonIcon()
+{
+	if (!ui || !ui->toolButton) {
+		return;
+	}
+	ui->toolButton->setIcon(IconUtils::tintedSymbolicIcon(
+		QStringLiteral(":/icons/burger"),
+		ui->toolButton->palette().color(QPalette::ButtonText)));
+}
+
+void MainWindow::refreshUnreadFilterIcon()
+{
+	if (!unreadFilterButton) {
+		return;
+	}
+
+	QIcon icon = QIcon::fromTheme(QStringLiteral("mail-unread-symbolic"));
+	if (icon.isNull()) {
+		icon = QIcon::fromTheme(QStringLiteral("mail-unread"));
+	}
+	if (icon.isNull()) {
+		icon = style()->standardIcon(QStyle::SP_MessageBoxInformation);
+	}
+	unreadFilterButton->setIcon(IconUtils::tintedIcon(
+		icon, unreadFilterButton->palette().color(QPalette::ButtonText)));
 }
 
 void MainWindow::moveEvent(QMoveEvent*)
