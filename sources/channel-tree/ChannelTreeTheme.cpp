@@ -20,7 +20,6 @@
 #include "ChannelTree.h"
 
 #include <QEvent>
-#include <QPalette>
 
 #include "ChannelIcons.h"
 #include "ChannelItem.h"
@@ -37,10 +36,8 @@ void ChannelTree::changeEvent(QEvent* event)
         return;
     }
 
-    // The viewport must keep inheriting the tree/application palette. Copying
-    // palette() here resolves every role explicitly and freezes the current
-    // light/dark colours for the next desktop-theme change.
-    viewport()->setPalette(QPalette());
+    // Keep the tree and its viewport on Qt's inherited application palette.
+    // Only the pixmaps we derive from palette colours need to be regenerated.
     refreshPaletteDependentIcons();
     viewport()->update();
 }
