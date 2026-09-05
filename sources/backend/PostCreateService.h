@@ -18,7 +18,6 @@ class BackendChannel;
  */
 class PostCreateService final : public QObject
 {
-    Q_OBJECT
 public:
     static PostCreateService& instance(Backend& backend);
 
