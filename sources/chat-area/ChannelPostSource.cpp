@@ -176,18 +176,61 @@ bool ChannelPostSource::adoptNavigationContext(const QString& targetPostId,
         return false;
     }
 
+    // Determine exact placement from the entire fetched context before slicing
+    // it for the first paint. An authoritative overlap 16..30 rows away from the
+    // target is still valuable even though only 15 rows per side are rendered.
+    const int validCount = static_cast<int>(validIds.size());
+    const int logicalCount = static_cast<int>(postIds.size());
+    bool fullExact = false;
+    int fullExactFirst = -1;
+    const auto acceptFullExactFirst = [&](int candidate) {
+        if (candidate < 0 || candidate + validCount > logicalCount) {
+            return false;
+        }
+        if (!fullExact) {
+            fullExact = true;
+            fullExactFirst = candidate;
+            return true;
+        }
+        return fullExactFirst == candidate;
+    };
+
+    if (reachedOldest && !acceptFullExactFirst(0)) {
+        qCWarning(lcTimelineChannel) << "conflicting oldest full navigation context"
+                                     << targetPostId;
+        return false;
+    }
+    if (reachedNewest && !acceptFullExactFirst(logicalCount - validCount)) {
+        qCWarning(lcTimelineChannel) << "conflicting newest full navigation context"
+                                     << targetPostId;
+        return false;
+    }
+    for (int offset = 0; offset < validCount; ++offset) {
+        const QString& id = validIds.at(offset);
+        const int existing = postIndexes.value(id, -1);
+        if (existing < 0 || provisionalPostIds.contains(id)) {
+            continue;
+        }
+        if (!acceptFullExactFirst(existing - offset)) {
+            qCWarning(lcTimelineChannel) << "inconsistent full authoritative context overlap"
+                                         << targetPostId << id << existing << offset;
+            return false;
+        }
+    }
+
     // A semantic jump needs only the immediate neighbourhood. PostRepository may
     // have fetched a larger compatibility window, but publishing more than
     // 15 + target + 15 makes the initial materialization unnecessarily noisy.
-    const int validCount = static_cast<int>(validIds.size());
     const int selectedFirst = std::max(0, targetOffset - 15);
     const int selectedLast = std::min(validCount - 1, targetOffset + 15);
     const QStringList selected = validIds.mid(selectedFirst,
                                               selectedLast - selectedFirst + 1);
     const bool selectedReachedOldest = reachedOldest && selectedFirst == 0;
     const bool selectedReachedNewest = reachedNewest && selectedLast == validCount - 1;
+    const int exactSelectedFirst = fullExact ? fullExactFirst + selectedFirst : -1;
     return placeNavigationContext(targetPostId, selected,
-                                  selectedReachedOldest, selectedReachedNewest);
+                                  selectedReachedOldest, selectedReachedNewest,
+                                  exactSelectedFirst);
 }
 
 void ChannelPostSource::requestRange(int first,
@@ -442,7 +485,8 @@ bool ChannelPostSource::isAuthoritativePost(const QString& postId) const
 bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
                                                const QStringList& chronologicalIds,
                                                bool reachedOldest,
-                                               bool reachedNewest)
+                                               bool reachedNewest,
+                                               int exactFirstHint)
 {
     const QStringList ids = uniqueChronological(chronologicalIds);
     const int targetOffset = ids.indexOf(targetPostId);
@@ -475,6 +519,11 @@ bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
         return exactFirst == candidate;
     };
 
+    if (exactFirstHint >= 0 && !acceptExactFirst(exactFirstHint)) {
+        qCWarning(lcTimelineChannel) << "invalid exact navigation context hint"
+                                     << targetPostId << exactFirstHint;
+        return false;
+    }
     if (reachedOldest && !acceptExactFirst(0)) {
         qCWarning(lcTimelineChannel) << "conflicting oldest navigation context" << targetPostId;
         return false;
