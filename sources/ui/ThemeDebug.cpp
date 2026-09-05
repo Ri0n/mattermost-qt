@@ -78,7 +78,8 @@ QString widgetName(const QWidget* widget)
 
     QString result = QString::fromLatin1(widget->metaObject()->className());
     if (!widget->objectName().isEmpty()) {
-        result += QLatin1Char('#') + widget->objectName();
+        result += QLatin1Char('#');
+        result += widget->objectName();
     }
     return result;
 }
@@ -208,17 +209,28 @@ void logWidgetState(const char* marker,
         ? paletteSummary(qApp->palette())
         : QStringLiteral("<no-app>");
 
+    const QWidget* parent = widget->parentWidget();
+    const QWidget* topLevel = widget->window();
+    const QString parentPalette = parent
+        ? paletteSummary(parent->palette())
+        : QStringLiteral("<none>");
+    const QString topLevelPalette = topLevel
+        ? paletteSummary(topLevel->palette())
+        : QStringLiteral("<none>");
+
     qCDebug(lcMattermostThemeTrace).noquote()
         << marker
-        << "event=" + eventName(eventType)
-        << "widget=" + widgetPath(widget)
-        << "visible=" + QString::number(widget->isVisible())
-        << "enabled=" + QString::number(widget->isEnabled())
-        << "style=" + styleName
-        << "stylesheet=" + QString::number(!widget->styleSheet().isEmpty())
-        << "autofill=" + QString::number(widget->autoFillBackground())
-        << "widgetPalette={" + paletteSummary(widget->palette()) + QLatin1Char('}')
-        << "appPalette={" + appPalette + QLatin1Char('}');
+        << QStringLiteral("event=") + eventName(eventType)
+        << QStringLiteral("widget=") + widgetPath(widget)
+        << QStringLiteral("visible=") + QString::number(widget->isVisible())
+        << QStringLiteral("enabled=") + QString::number(widget->isEnabled())
+        << QStringLiteral("style=") + styleName
+        << QStringLiteral("stylesheet=") + QString::number(!widget->styleSheet().isEmpty())
+        << QStringLiteral("autofill=") + QString::number(widget->autoFillBackground())
+        << QStringLiteral("widgetPalette={") + paletteSummary(widget->palette()) + QLatin1Char('}')
+        << QStringLiteral("parentPalette={") + parentPalette + QLatin1Char('}')
+        << QStringLiteral("windowPalette={") + topLevelPalette + QLatin1Char('}')
+        << QStringLiteral("appPalette={") + appPalette + QLatin1Char('}');
 }
 
 } // namespace ThemeDebug
@@ -239,13 +251,13 @@ ThemeDebugProbe::ThemeDebugProbe(QObject* parent)
             }
             qCDebug(lcMattermostThemeTrace).noquote()
                 << "THEME_SCHEME_SIGNAL"
-                << "scheme=" + schemeName(scheme)
-                << "appPalette={" + paletteSummary(qApp->palette()) + QLatin1Char('}');
+                << QStringLiteral("scheme=") + schemeName(scheme)
+                << QStringLiteral("appPalette={") + paletteSummary(qApp->palette()) + QLatin1Char('}');
             QTimer::singleShot(0, this, [scheme] {
                 qCDebug(lcMattermostThemeTrace).noquote()
                     << "THEME_SCHEME_QUEUED"
-                    << "scheme=" + schemeName(scheme)
-                    << "appPalette={" + paletteSummary(qApp->palette()) + QLatin1Char('}');
+                    << QStringLiteral("scheme=") + schemeName(scheme)
+                    << QStringLiteral("appPalette={") + paletteSummary(qApp->palette()) + QLatin1Char('}');
             });
         });
     }
