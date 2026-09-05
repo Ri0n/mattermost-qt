@@ -582,6 +582,7 @@ void MainWindow::openAttentionThread(const QString& channelId, const QString& ro
 					threadArea = area;
 					break;
 				}
+			}
 
 			if (!threadArea) {
 				threadArea = new ChatArea(guard->backend, *currentChannel, rootPostId, parentArea);
