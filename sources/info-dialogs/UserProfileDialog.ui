@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>412</width>
-    <height>398</height>
+    <height>430</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -40,204 +40,54 @@
        <property name="sizeConstraint">
         <enum>QLayout::SetMinimumSize</enum>
        </property>
-       <item>
-        <widget class="QLabel" name="fullnameLabel">
-         <property name="text">
-          <string>Full Name:</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="nicknameLabel">
-         <property name="text">
-          <string>Nickname:</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="usernameLabel">
-         <property name="text">
-          <string>Username:</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="emailLabel">
-         <property name="text">
-          <string>E-mail:</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="positionLabel">
-         <property name="text">
-          <string>Position</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="statusLabel">
-         <property name="text">
-          <string>Status</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="timezoneLabel">
-         <property name="text">
-          <string>Time Zone</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <spacer name="verticalSpacer_2">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>20</width>
-           <height>40</height>
-          </size>
-         </property>
-        </spacer>
-       </item>
+       <item><widget class="QLabel" name="fullnameLabel"><property name="text"><string>Full Name:</string></property></widget></item>
+       <item><widget class="QLabel" name="nicknameLabel"><property name="text"><string>Nickname:</string></property></widget></item>
+       <item><widget class="QLabel" name="usernameLabel"><property name="text"><string>Username:</string></property></widget></item>
+       <item><widget class="QLabel" name="emailLabel"><property name="text"><string>E-mail:</string></property></widget></item>
+       <item><widget class="QLabel" name="positionLabel"><property name="text"><string>Position</string></property></widget></item>
+       <item><widget class="QLabel" name="statusLabel"><property name="text"><string>Status</string></property></widget></item>
+       <item><widget class="QLabel" name="timezoneLabel"><property name="text"><string>Time Zone</string></property></widget></item>
+       <item><spacer name="verticalSpacer_2"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>20</width><height>40</height></size></property></spacer></item>
       </layout>
      </item>
      <item>
       <layout class="QVBoxLayout" name="verticalLayout">
-       <item>
-        <widget class="QLabel" name="fullnameValue">
-         <property name="text">
-          <string/>
-         </property>
-         <property name="textInteractionFlags">
-          <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="nicknameValue">
-         <property name="text">
-          <string/>
-         </property>
-         <property name="textInteractionFlags">
-          <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="usernameValue">
-         <property name="text">
-          <string/>
-         </property>
-         <property name="textInteractionFlags">
-          <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="emailValue">
-         <property name="text">
-          <string/>
-         </property>
-         <property name="textInteractionFlags">
-          <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="positionValue">
-         <property name="text">
-          <string/>
-         </property>
-         <property name="textInteractionFlags">
-          <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="statusValue">
-         <property name="text">
-          <string/>
-         </property>
-         <property name="textInteractionFlags">
-          <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="timezoneValue">
-         <property name="text">
-          <string/>
-         </property>
-         <property name="textInteractionFlags">
-          <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <spacer name="verticalSpacer">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>20</width>
-           <height>40</height>
-          </size>
-         </property>
-        </spacer>
-       </item>
+       <item><widget class="QLabel" name="fullnameValue"><property name="text"><string/></property><property name="textInteractionFlags"><set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set></property></widget></item>
+       <item><widget class="QLabel" name="nicknameValue"><property name="text"><string/></property><property name="textInteractionFlags"><set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set></property></widget></item>
+       <item><widget class="QLabel" name="usernameValue"><property name="text"><string/></property><property name="textInteractionFlags"><set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set></property></widget></item>
+       <item><widget class="QLabel" name="emailValue"><property name="text"><string/></property><property name="textInteractionFlags"><set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set></property></widget></item>
+       <item><widget class="QLabel" name="positionValue"><property name="text"><string/></property><property name="textInteractionFlags"><set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set></property></widget></item>
+       <item><widget class="QLabel" name="statusValue"><property name="text"><string/></property><property name="textInteractionFlags"><set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set></property></widget></item>
+       <item><widget class="QLabel" name="timezoneValue"><property name="text"><string/></property><property name="textInteractionFlags"><set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByMouse</set></property></widget></item>
+       <item><spacer name="verticalSpacer"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>20</width><height>40</height></size></property></spacer></item>
       </layout>
      </item>
     </layout>
    </item>
    <item>
+    <layout class="QHBoxLayout" name="actionsLayout">
+     <item>
+      <widget class="QPushButton" name="messageButton">
+       <property name="text"><string>Message</string></property>
+       <property name="toolTip"><string>Start or open a direct message</string></property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="actionsSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
     <widget class="QDialogButtonBox" name="buttonBox">
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
-     </property>
-     <property name="standardButtons">
-      <set>QDialogButtonBox::Close</set>
-     </property>
+     <property name="orientation"><enum>Qt::Horizontal</enum></property>
+     <property name="standardButtons"><set>QDialogButtonBox::Close</set></property>
     </widget>
    </item>
   </layout>
  </widget>
  <resources/>
  <connections>
-  <connection>
-   <sender>buttonBox</sender>
-   <signal>accepted()</signal>
-   <receiver>UserProfileDialog</receiver>
-   <slot>accept()</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>248</x>
-     <y>254</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>157</x>
-     <y>274</y>
-    </hint>
-   </hints>
-  </connection>
-  <connection>
-   <sender>buttonBox</sender>
-   <signal>rejected()</signal>
-   <receiver>UserProfileDialog</receiver>
-   <slot>reject()</slot>
-   <hints>
-    <hint type="sourcelabel">
-     <x>316</x>
-     <y>260</y>
-    </hint>
-    <hint type="destinationlabel">
-     <x>286</x>
-     <y>274</y>
-    </hint>
-   </hints>
-  </connection>
+  <connection><sender>buttonBox</sender><signal>accepted()</signal><receiver>UserProfileDialog</receiver><slot>accept()</slot></connection>
+  <connection><sender>buttonBox</sender><signal>rejected()</signal><receiver>UserProfileDialog</receiver><slot>reject()</slot></connection>
  </connections>
 </ui>
