@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -20,9 +20,10 @@
 #ifndef CHANNELITEMWIDGET_H
 #define CHANNELITEMWIDGET_H
 
-#include <QWidget>
 #include <QIcon>
-#include <QPalette>
+#include <QWidget>
+
+class QEvent;
 
 namespace Ui {
 class ChannelItemWidget;
@@ -42,9 +43,14 @@ public:
     void setMuted (bool muted);
     void setMentioned (bool mentioned);
 
+protected:
+    void changeEvent(QEvent* event) override;
+
 private:
+    void refreshTheme();
+
     Ui::ChannelItemWidget *ui;
-    QPalette defaultLabelPalette;
+    bool muted = false;
 };
 
 #endif // CHANNELITEMWIDGET_H
