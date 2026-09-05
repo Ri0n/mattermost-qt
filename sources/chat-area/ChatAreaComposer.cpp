@@ -23,17 +23,14 @@
 
 #include <QEvent>
 #include <QFont>
-#include <QGraphicsOpacityEffect>
 #include <QHideEvent>
 #include <QPainter>
 #include <QPalette>
-#include <QPointer>
 #include <QPushButton>
 #include <QShowEvent>
 #include <QTimer>
 
 #include "ChatLogWidget.h"
-#include "ui/IconUtils.h"
 #include "ui/ThemeDebug.h"
 #include "ui_ChatArea.h"
 
@@ -45,7 +42,6 @@ constexpr int LoadingIndicatorExtent = 18;
 constexpr int LoadingAnimationIntervalMs = 70;
 constexpr int ActionButtonExtent = 30;
 constexpr int ActionIconExtent = 24;
-constexpr qreal RestingIconOpacity = 0.8;
 
 class LoadingIndicator final : public QWidget
 {
@@ -105,24 +101,17 @@ private:
 void ChatArea::setupComposerUi()
 {
     auto configureActionButton = [](QPushButton& button) {
-        button.setFlat(true);
         button.setFixedSize(ActionButtonExtent, ActionButtonExtent);
         button.setCursor(Qt::PointingHandCursor);
-        // Breeze still paints a hover frame for flat QPushButton. Keep styling
-        // local to the button so palette propagation through ChatArea stays native.
-        button.setStyleSheet(QStringLiteral(
-            "QPushButton { border: none; background: transparent; padding: 0px; margin: 0px; }"));
     };
 
     ui->addEmojiButton->setText(QString());
     ui->addEmojiButton->setIconSize(QSize(ActionIconExtent, ActionIconExtent));
     configureActionButton(*ui->addEmojiButton);
-    ui->addEmojiButton->installEventFilter(this);
 
     ui->attachButton->setText(QString());
     ui->attachButton->setIconSize(QSize(ActionIconExtent, ActionIconExtent));
     configureActionButton(*ui->attachButton);
-    ui->attachButton->installEventFilter(this);
 
     configureActionButton(*ui->sendButton);
     QFont sendFont = ui->sendButton->font();
@@ -132,19 +121,16 @@ void ChatArea::setupComposerUi()
         sendFont.setPixelSize(sendFont.pixelSize() + 3);
     }
     ui->sendButton->setFont(sendFont);
-    ui->sendButton->installEventFilter(this);
 
-    auto* sendOpacity = new QGraphicsOpacityEffect(ui->sendButton);
-    sendOpacity->setOpacity(RestingIconOpacity);
-    ui->sendButton->setGraphicsEffect(sendOpacity);
+    // The action buttons are owner-drawn by ThemeIconButton. Do not attach a
+    // stylesheet merely to suppress Breeze's hover frame: QStyleSheetStyle was
+    // also the source of stale inherited palette roles during theme changes.
 
     // The editor is the only vertically growing child. The other controls are
     // bottom-aligned in ChatArea.ui, so new lines grow upward from the action row.
     const int verticalPadding = std::max(
         2, ui->outgoingPostCreator->fontMetrics().lineSpacing() * 2 / 5);
     ui->composerLayout->setContentsMargins(0, verticalPadding, 0, verticalPadding);
-
-    refreshActionIcons();
 
     loadingIndicator = new LoadingIndicator(this);
     ui->composerLayout->insertWidget(0, loadingIndicator, 0, Qt::AlignBottom);
@@ -211,106 +197,15 @@ void ChatArea::changeEvent(QEvent* event)
         || event->type() == QEvent::ApplicationPaletteChange
         || event->type() == QEvent::StyleChange) {
         ThemeDebug::logWidgetState("CHAT_AREA_CHANGE_HANDLER", this, event->type());
-
-        // Palette events are delivered top-down. At this point a child button
-        // may still expose its previous palette, which is why rebuilding a
-        // tinted pixmap synchronously leaves the old light/dark colour cached.
-        // Rebuild after the event queue has propagated the new palette through
-        // all composer children.
-        QPointer<ChatArea> guard(this);
-        QTimer::singleShot(0, this, [guard] {
-            if (!guard || !guard->ui) {
-                return;
-            }
-            guard->refreshActionIcons();
-            if (guard->loadingIndicator) {
-                guard->loadingIndicator->update();
-            }
-        });
-    }
-}
-
-bool ChatArea::eventFilter(QObject* watched, QEvent* event)
-{
-    if (!event) {
-        return QWidget::eventFilter(watched, event);
-    }
-
-    const bool paletteChanged = event->type() == QEvent::PaletteChange
-        || event->type() == QEvent::ApplicationPaletteChange
-        || event->type() == QEvent::StyleChange;
-    if (paletteChanged) {
-        // Event filters run before the watched widget processes PaletteChange.
-        // Use a queued refresh rather than tinting from the stale button palette.
-        QPointer<ChatArea> guard(this);
-        QTimer::singleShot(0, this, [guard] {
-            if (guard && guard->ui) {
-                guard->refreshActionIcons();
-            }
-        });
-        return QWidget::eventFilter(watched, event);
-    }
-
-    const bool iconVisualChanged = event->type() == QEvent::EnabledChange
-        || event->type() == QEvent::Enter
-        || event->type() == QEvent::Leave;
-
-    if (iconVisualChanged) {
-        bool hovered = false;
-        if (event->type() == QEvent::Enter) {
-            hovered = true;
-        } else if (event->type() != QEvent::Leave) {
-            if (auto* button = qobject_cast<QPushButton*>(watched)) {
-                hovered = button->underMouse();
-            }
+        if (ui) {
+            ui->addEmojiButton->update();
+            ui->attachButton->update();
+            ui->sendButton->update();
         }
-
-        if (watched == ui->addEmojiButton) {
-            refreshActionIcon(*ui->addEmojiButton,
-                              QStringLiteral(":/icons/emoji"),
-                              "CHAT_AREA_ICON_REFRESH_EMOJI",
-                              hovered);
-        } else if (watched == ui->attachButton) {
-            refreshActionIcon(*ui->attachButton,
-                              QStringLiteral(":/icons/paperclip"),
-                              "CHAT_AREA_ICON_REFRESH_ATTACH",
-                              hovered);
-        } else if (watched == ui->sendButton) {
-            if (auto* effect = qobject_cast<QGraphicsOpacityEffect*>(
-                    ui->sendButton->graphicsEffect())) {
-                effect->setOpacity(hovered && ui->sendButton->isEnabled()
-                                       ? 1.0 : RestingIconOpacity);
-            }
+        if (loadingIndicator) {
+            loadingIndicator->update();
         }
     }
-
-    return QWidget::eventFilter(watched, event);
-}
-
-void ChatArea::refreshActionIcons()
-{
-    refreshActionIcon(*ui->addEmojiButton,
-                      QStringLiteral(":/icons/emoji"),
-                      "CHAT_AREA_ICON_REFRESH_EMOJI",
-                      ui->addEmojiButton->underMouse());
-    refreshActionIcon(*ui->attachButton,
-                      QStringLiteral(":/icons/paperclip"),
-                      "CHAT_AREA_ICON_REFRESH_ATTACH",
-                      ui->attachButton->underMouse());
-}
-
-void ChatArea::refreshActionIcon(QPushButton& button,
-                                 const QString& resourcePath,
-                                 const char* debugMarker,
-                                 bool hovered)
-{
-    ThemeDebug::logWidgetState(debugMarker, &button, QEvent::None);
-
-    QColor color = button.palette().color(QPalette::ButtonText);
-    if (!hovered) {
-        color.setAlphaF(color.alphaF() * RestingIconOpacity);
-    }
-    button.setIcon(IconUtils::tintedSymbolicIcon(resourcePath, color));
 }
 
 } // namespace Mattermost
