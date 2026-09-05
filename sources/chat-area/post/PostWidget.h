@@ -89,7 +89,10 @@ private:
     void updateAuthorAvatar();
     void connectReactionActions();
     void connectMessageLinks();
+    void refreshMentionLinks();
     void openUserProfile(const QString& username);
+    void openGroupMention(const QString& groupId);
+    QString mentionTeamId() const;
 
     Backend&                            backend;
     Ui::PostWidget*						ui;
