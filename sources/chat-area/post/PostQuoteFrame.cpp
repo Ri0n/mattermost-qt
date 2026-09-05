@@ -20,6 +20,8 @@
 #include "PostQuoteFrame.h"
 
 #include <QDebug>
+#include <QPlainTextEdit>
+#include <QTextBrowser>
 #include "ui_PostQuoteFrame.h"
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendPoll.h"
@@ -81,6 +83,15 @@ PostQuoteFrame::PostQuoteFrame (const BackendPost& quotedPost, const Storage& st
 		message += quotedPost.message;
 		messageContent->setMessage(message);
 
+	}
+
+	// A quote belongs to the containing post. Let context-menu events bubble
+	// up to PostWidget instead of opening the text editors' standard menus.
+	for (auto* browser : messageContent->findChildren<QTextBrowser*>()) {
+		browser->setContextMenuPolicy(Qt::NoContextMenu);
+	}
+	for (auto* editor : messageContent->findChildren<QPlainTextEdit*>()) {
+		editor->setContextMenuPolicy(Qt::NoContextMenu);
 	}
 
 	setContentsMargins (20, 4, 4, 4);

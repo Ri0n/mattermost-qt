@@ -2,8 +2,6 @@
 
 #include <algorithm>
 
-#include <QContextMenuEvent>
-#include <QCoreApplication>
 #include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
@@ -36,7 +34,6 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     bar->setBackgroundRole(QPalette::Mid);
     bar->setAutoFillBackground(true);
     bar->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    bar->installEventFilter(this);
     layout->addWidget(bar);
 
     auto* textLayout = new QVBoxLayout;
@@ -50,7 +47,6 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     authorLabel->setTextFormat(Qt::PlainText);
     authorLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     authorLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    authorLabel->installEventFilter(this);
 
     messageLabel = new QLabel(this);
     messageLabel->setTextFormat(Qt::PlainText);
@@ -59,7 +55,6 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     messageLabel->setMaximumHeight(
         messageLabel->fontMetrics().lineSpacing() * maximumLines + 2);
     messageLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    messageLabel->installEventFilter(this);
 
     textLayout->addWidget(authorLabel);
     textLayout->addWidget(messageLabel);
@@ -91,36 +86,6 @@ void QuotedPostPreview::changeEvent(QEvent* event)
                   || event->type() == QEvent::StyleChange)) {
         refreshPalette();
     }
-}
-
-void QuotedPostPreview::contextMenuEvent(QContextMenuEvent* event)
-{
-    if (!event || !parentWidget()) {
-        QFrame::contextMenuEvent(event);
-        return;
-    }
-
-    QContextMenuEvent forwarded(event->reason(),
-                                parentWidget()->mapFromGlobal(event->globalPos()),
-                                event->globalPos(),
-                                event->modifiers());
-    QCoreApplication::sendEvent(parentWidget(), &forwarded);
-    if (forwarded.isAccepted()) {
-        event->accept();
-    } else {
-        event->ignore();
-    }
-}
-
-bool QuotedPostPreview::eventFilter(QObject* watched, QEvent* event)
-{
-    if (event && event->type() == QEvent::ContextMenu
-        && (watched == authorLabel || watched == messageLabel || watched == bar)) {
-        auto* contextEvent = static_cast<QContextMenuEvent*>(event);
-        contextMenuEvent(contextEvent);
-        return contextEvent->isAccepted();
-    }
-    return QFrame::eventFilter(watched, event);
 }
 
 void QuotedPostPreview::mouseReleaseEvent(QMouseEvent* event)

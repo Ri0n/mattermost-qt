@@ -3,7 +3,6 @@
 #include <QFrame>
 #include <functional>
 
-class QContextMenuEvent;
 class QEvent;
 class QLabel;
 class QMouseEvent;
@@ -23,8 +22,6 @@ public:
 
 protected:
     void changeEvent(QEvent* event) override;
-    void contextMenuEvent(QContextMenuEvent* event) override;
-    bool eventFilter(QObject* watched, QEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
 
