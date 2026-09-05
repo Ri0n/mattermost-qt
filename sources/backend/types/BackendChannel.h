@@ -90,6 +90,7 @@ public:
 	void mergePostContext (const QJsonArray& orderArray, const QJsonObject& postsObject);
 	void addPinnedPosts (const QJsonArray& orderArray, const QJsonObject& postsObject);
 	void editPost (BackendPost& newPost);
+	void deletePost (QString postId);
 	void addPostReaction (QString postId, QString userId, QString emojiName);
 	void removePostReaction (QString postId, QString userId, QString emojiName);
 signals:
