@@ -83,7 +83,7 @@
         <number>0</number>
        </property>
        <item>
-        <widget class="QLabel" name="usericon_label">
+        <widget class="Mattermost::PresenceAvatarLabel" name="usericon_label">
          <property name="sizePolicy">
           <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
            <horstretch>0</horstretch>
@@ -103,7 +103,7 @@
           </size>
          </property>
          <property name="frameShape">
-          <enum>QFrame::Box</enum>
+          <enum>QFrame::NoFrame</enum>
          </property>
         </widget>
        </item>
@@ -126,7 +126,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="statusLabel">
+          <widget class="Mattermost::PresenceStatusLabel" name="statusLabel">
            <property name="text">
             <string/>
            </property>
@@ -246,6 +246,16 @@
    <class>Mattermost::ChannelTree</class>
    <extends>QTreeWidget</extends>
    <header>sources/channel-tree/ChannelTree.h</header>
+  </customwidget>
+  <customwidget>
+   <class>Mattermost::PresenceAvatarLabel</class>
+   <extends>QLabel</extends>
+   <header>ui/PresenceAvatarLabel.h</header>
+  </customwidget>
+  <customwidget>
+   <class>Mattermost::PresenceStatusLabel</class>
+   <extends>QLabel</extends>
+   <header>ui/PresenceAvatarLabel.h</header>
   </customwidget>
  </customwidgets>
  <tabstops>

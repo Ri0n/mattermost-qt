@@ -40,8 +40,11 @@ class QDockWidget;
 class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
+class QEvent;
+class QPushButton;
 class QResizeEvent;
 class QShowEvent;
+class QTimer;
 
 namespace Mattermost {
 
@@ -63,6 +66,7 @@ public:
 	Backend& getBackend ();
 	BackendChannel& getChannel ();
 	void handleUserTyping (const BackendUser& user);
+	void editPost(BackendPost& post);
 
 	/** Scroll to a post through the logical post source, materializing it if known. */
 	void goToPost (const BackendPost& post);
@@ -88,16 +92,27 @@ public:
 
 	void requestExplicitReadAcknowledgement ();
 private:
+	void changeEvent(QEvent* event) override;
+	bool eventFilter(QObject* watched, QEvent* event) override;
 	void showEvent(QShowEvent* event) override;
 	void resizeEvent (QResizeEvent* event) override;
 	void dragEnterEvent (QDragEnterEvent* event) override;
 	void dragMoveEvent (QDragMoveEvent* event) override;
 	void dropEvent (QDropEvent* event) override;
 
+	void setupComposerUi();
+	void focusComposer();
+	void beginMessageLoading();
+	void endMessageLoading();
+	void refreshActionIcons();
+	void refreshActionIcon(QPushButton& button,
+	                       const QString& resourcePath,
+	                       const char* debugMarker,
+	                       bool hovered);
 	void setUserAvatar (const BackendUser& user);
+	void refreshHeaderStatus();
 	void moveOnListTop ();
 	void setUnreadMessagesCount (uint32_t count);
-	void setTextEditWidgetHeight (int height);
 	void updatePinnedPostsButton ();
 	void updateThreadWindowTitle ();
 	void markChannelViewedIfAtBottom ();
@@ -110,6 +125,9 @@ private:
 	QString parentPostId;
 	QString pendingPostId;
 	AbstractPostSource* postSource = nullptr; // QObject child; owned by ChatArea
+	QWidget* loadingIndicator = nullptr;
+	QTimer* loadingDelayTimer = nullptr;
+	int pendingMessageLoads = 0;
 
 public:
 	Ui::ChatArea* ui;
@@ -122,7 +140,6 @@ public:
 	void deinit();
 
 	uint32_t unreadMessagesCount;
-	int texteditDefaultHeight;
 	bool isThread;
 	bool initialized;
 	bool explicitReadPending = false;

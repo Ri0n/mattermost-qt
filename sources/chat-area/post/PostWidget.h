@@ -24,6 +24,7 @@
 
 #include "backend/types/BackendPost.h"
 
+class QContextMenuEvent;
 class QEvent;
 
 namespace Ui {
@@ -35,6 +36,7 @@ namespace Mattermost {
 class Backend;
 class BackendUser;
 class PostQuoteFrame;
+class QuotedPostPreview;
 class PostAttachmentList;
 class PostReactionList;
 class PostPoll;
@@ -83,17 +85,23 @@ signals:
 
 protected:
     void changeEvent(QEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
+    void showPostContextMenu(const QPoint& globalPos);
     void setAuthor(Backend& backendInstance, const BackendUser* user);
     void updateAuthorAvatar();
     void connectReactionActions();
     void connectMessageLinks();
+    void refreshMentionLinks();
     void openUserProfile(const QString& username);
+    void openGroupMention(const QString& groupId);
+    QString mentionTeamId() const;
 
     Backend&                            backend;
     Ui::PostWidget*						ui;
     std::unique_ptr<PostQuoteFrame>		quoteFrame;
+    std::unique_ptr<QuotedPostPreview>    quotedReplyPreview;
     std::unique_ptr<PostAttachmentList>	attachments;
     std::unique_ptr<PostPoll>			poll;
     std::unique_ptr<PostReactionList>	reactions;

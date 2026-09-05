@@ -214,27 +214,19 @@
     </layout>
    </item>
    <item>
-    <widget class="QSplitter" name="splitter">
-     <property name="orientation">
-      <enum>Qt::Vertical</enum>
+    <widget class="Mattermost::ChatLogWidget" name="listWidget">
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+       <horstretch>0</horstretch>
+       <verstretch>1</verstretch>
+      </sizepolicy>
      </property>
-     <property name="handleWidth">
-      <number>4</number>
+     <property name="focusPolicy">
+      <enum>Qt::ClickFocus</enum>
      </property>
-     <property name="childrenCollapsible">
-      <bool>false</bool>
+     <property name="frameShape">
+      <enum>QFrame::NoFrame</enum>
      </property>
-     <widget class="Mattermost::ChatLogWidget" name="listWidget">
-      <property name="sizePolicy">
-       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-        <horstretch>0</horstretch>
-        <verstretch>1</verstretch>
-       </sizepolicy>
-      </property>
-      <property name="focusPolicy">
-       <enum>Qt::ClickFocus</enum>
-      </property>
-     </widget>
     </widget>
    </item>
    <item>
@@ -255,10 +247,157 @@
       <number>0</number>
      </property>
      <item>
-      <widget class="Mattermost::OutgoingPostCreator" name="outgoingPostCreator" native="true"/>
-     </item>
-     <item>
-      <widget class="Mattermost::OutgoingPostPanel" name="outgoingPostPanel" native="true"/>
+      <layout class="QHBoxLayout" name="composerLayout">
+       <property name="spacing">
+        <number>4</number>
+       </property>
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <item alignment="Qt::AlignBottom">
+        <widget class="QLabel" name="composerStatusLabel">
+         <property name="text">
+          <string/>
+         </property>
+        </widget>
+       </item>
+       <item alignment="Qt::AlignBottom">
+        <widget class="QPushButton" name="attachButton">
+         <property name="minimumSize">
+          <size>
+           <width>34</width>
+           <height>30</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>38</width>
+           <height>30</height>
+          </size>
+         </property>
+         <property name="font">
+          <font>
+           <pointsize>14</pointsize>
+          </font>
+         </property>
+         <property name="toolTip">
+          <string>Attach File</string>
+         </property>
+         <property name="accessibleName">
+          <string>Attach File</string>
+         </property>
+         <property name="text">
+          <string/>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QWidget" name="composerInputContainer">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+           <horstretch>1</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <layout class="QVBoxLayout" name="composerInputLayout">
+          <property name="spacing">
+           <number>2</number>
+          </property>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item>
+           <widget class="Mattermost::OutgoingPostCreator" name="outgoingPostCreator">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+              <horstretch>1</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item alignment="Qt::AlignBottom">
+        <widget class="QPushButton" name="addEmojiButton">
+         <property name="minimumSize">
+          <size>
+           <width>34</width>
+           <height>30</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>38</width>
+           <height>30</height>
+          </size>
+         </property>
+         <property name="font">
+          <font>
+           <pointsize>14</pointsize>
+          </font>
+         </property>
+         <property name="toolTip">
+          <string>Insert Emoji</string>
+         </property>
+         <property name="accessibleName">
+          <string>Insert Emoji</string>
+         </property>
+         <property name="text">
+          <string/>
+         </property>
+        </widget>
+       </item>
+       <item alignment="Qt::AlignBottom">
+        <widget class="QPushButton" name="sendButton">
+         <property name="minimumSize">
+          <size>
+           <width>34</width>
+           <height>30</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>38</width>
+           <height>30</height>
+          </size>
+         </property>
+         <property name="font">
+          <font>
+           <pointsize>14</pointsize>
+          </font>
+         </property>
+         <property name="toolTip">
+          <string>Send</string>
+         </property>
+         <property name="accessibleName">
+          <string>Send</string>
+         </property>
+         <property name="text">
+          <string>➤</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
      </item>
     </layout>
    </item>
@@ -277,32 +416,12 @@
   </customwidget>
   <customwidget>
    <class>Mattermost::OutgoingPostCreator</class>
-   <extends>QWidget</extends>
+   <extends>QTextEdit</extends>
    <header>chat-area/outgoing-post/OutgoingPostCreator.h</header>
-   <container>1</container>
-  </customwidget>
-  <customwidget>
-   <class>Mattermost::OutgoingPostPanel</class>
-   <extends>QWidget</extends>
-   <header>chat-area/outgoing-post/OutgoingPostPanel.h</header>
-   <container>1</container>
   </customwidget>
  </customwidgets>
  <resources>
   <include location="../../resource.qrc"/>
  </resources>
- <connections>
-  <connection>
-   <sender>listWidget</sender>
-   <signal>rangeRequested(int,int,Mattermost::LongListWidget::RequestReason,quint64)</signal>
-   <receiver>outgoingPostPanel</receiver>
-   <slot>beginMessageLoading()</slot>
-  </connection>
-  <connection>
-   <sender>listWidget</sender>
-   <signal>rangeRequestFinished(int,int)</signal>
-   <receiver>outgoingPostPanel</receiver>
-   <slot>endMessageLoading()</slot>
-  </connection>
- </connections>
+ <connections/>
 </ui>

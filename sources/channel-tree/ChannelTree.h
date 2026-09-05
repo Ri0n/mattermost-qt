@@ -77,6 +77,11 @@ public:
 	bool isChannelActive (const BackendChannel& channel);
 	Backend* backendInstance() const { return backendForSidebar; }
 
+    // ChannelItemDelegate requests this lazily when a group-DM row becomes
+    // visible. Keeping the request on the tree side avoids backend/network work
+    // inside paint() and keeps the delegate independently testable.
+    Q_INVOKABLE void ensureGroupChannelDisplayName(const QString& channelId);
+
 	void addTeam (Backend& backend, BackendTeam& team);
 	void populateSidebars(Backend& backend);
 
@@ -89,6 +94,10 @@ public:
 	ChatArea* getCurrentPage ();
 
 	void openChannel (QString channelID);
+	// Programmatic navigation may target a valid channel that is currently
+	// outside the visible DM/GM sidebar limit. Materialize its server-category
+	// row first, then activate it through the same path as an ordinary click.
+	void openStoredChannel(QString channelID);
 	void addChannelToItem (QString channelID, QTreeWidgetItem* item);
 	void removeChannelToItem (QString channelID, QTreeWidgetItem* item = nullptr);
 

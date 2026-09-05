@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 # Temporary diagnostic pass for the UI/UX batch. Restore strict Werror after
 # collecting cross-platform compiler diagnostics.
 

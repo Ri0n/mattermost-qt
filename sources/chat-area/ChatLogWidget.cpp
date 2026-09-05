@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include <QLoggingCategory>
+#include <QTimer>
 
 #include "ChatArea.h"
 #include "backend/Backend.h"
@@ -207,6 +208,26 @@ void ChatLogWidget::refreshPost(const QString& postId)
     }
 }
 
+void ChatLogWidget::followOwnPost(const QString& postId)
+{
+    // This policy belongs to the Mattermost-specific list, not to the generic
+    // LongListWidget: a locally confirmed outgoing post means the user wants the
+    // live edge even if the list was not considered sticky-bottom a moment ago.
+    // Defer one event-loop turn so source insertion and availability signals have
+    // completed before the final content height is used.
+    QTimer::singleShot(0, this, [this, postId] {
+        if (!postSource || postId.isEmpty() || postSource->indexOfPost(postId) < 0) {
+            return;
+        }
+        qCDebug(lcTimelineTrace).nospace()
+            << "FOLLOW_OWN_POST list=" << static_cast<const void*>(this)
+            << " source=" << sourceName(postSource)
+            << " postId=" << postId;
+        clearNavigationLock();
+        scrollToEnd();
+    });
+}
+
 bool ChatLogWidget::lockNavigationToPost(const QString& postId,
                                          Alignment alignment,
                                          int quietPeriodMs)
@@ -374,6 +395,16 @@ void ChatLogWidget::reconnectSource()
             << " first=" << first
             << " count=" << count;
         insertItems(first, count);
+        restoreNavigationTarget();
+    }));
+    sourceConnections.push_back(connect(postSource, &AbstractPostSource::itemsRemoved,
+                                        this, [this](int first, int count) {
+        qCDebug(lcTimelineTrace).nospace()
+            << "SOURCE_REMOVED list=" << static_cast<const void*>(this)
+            << " source=" << sourceName(postSource)
+            << " first=" << first
+            << " count=" << count;
+        removeItems(first, count);
         restoreNavigationTarget();
     }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::rangeAvailable,

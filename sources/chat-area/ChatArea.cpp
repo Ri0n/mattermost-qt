@@ -69,21 +69,22 @@ ChatArea::ChatArea(Backend& backend,
     , treeItem(treeItem)
     , pinnedPostsDockWidget(nullptr)
     , unreadMessagesCount(0)
-    , texteditDefaultHeight(70)
     , isThread(false)
     , initialized(false)
 {
     setAcceptDrops(true);
     ui->setupUi(this);
     ui->listWidget->configure(backend, *this);
+    setupComposerUi();
 
     ui->usersButton->setIcon(getUserButtonIcon());
-    ui->outgoingPostCreator->init(backend, channel, *ui->outgoingPostPanel,
-                                  *ui->listWidget, ui->footerLayout);
+    ui->outgoingPostCreator->init(backend, channel, *ui->listWidget,
+                                  ui->footerLayout, *ui->composerStatusLabel,
+                                  *ui->attachButton, *ui->addEmojiButton,
+                                  *ui->sendButton);
 
     ui->titleLabel->setText(channel.display_name);
     ui->statusLabel->setText(channel.getChannelDescription());
-    setTextEditWidgetHeight(texteditDefaultHeight);
 
     const BackendUser* user = backend.getStorage().getUserById(channel.name);
     if (user) {
@@ -139,7 +140,6 @@ ChatArea::ChatArea(Backend& backend,
     , treeItem(nullptr)
     , pinnedPostsDockWidget(nullptr)
     , unreadMessagesCount(0)
-    , texteditDefaultHeight(70)
     , isThread(true)
     , initialized(false)
     , root_id(std::move(rootId))
@@ -148,14 +148,16 @@ ChatArea::ChatArea(Backend& backend,
     setAcceptDrops(true);
     ui->setupUi(this);
     ui->listWidget->configure(backend, *this);
+    setupComposerUi();
 
-    ui->outgoingPostCreator->init(backend, channel, *ui->outgoingPostPanel,
-                                  *ui->listWidget, ui->footerLayout);
+    ui->outgoingPostCreator->init(backend, channel, *ui->listWidget,
+                                  ui->footerLayout, *ui->composerStatusLabel,
+                                  *ui->attachButton, *ui->addEmojiButton,
+                                  *ui->sendButton);
     ui->outgoingPostCreator->setRootId(root_id);
 
     ui->titleLabel->setText(channel.display_name);
     ui->statusLabel->setText(channel.getChannelDescription());
-    setTextEditWidgetHeight(texteditDefaultHeight);
     ui->userAvatar->hide();
 
     init();
@@ -351,20 +353,21 @@ void ChatArea::init()
         }));
     }
 
+    auto& composer = *ui->outgoingPostCreator;
     signalConnections.push_back(connect(&channel, &BackendChannel::onNewPost,
-                                        ui->outgoingPostCreator,
+                                        &composer,
                                         &OutgoingPostCreator::onPostReceived));
     signalConnections.push_back(connect(&channel, &BackendChannel::onPostEdited,
-                                        ui->outgoingPostCreator,
+                                        &composer,
                                         &OutgoingPostCreator::onPostReceived));
     signalConnections.push_back(connect(&channel, &BackendChannel::onUserTyping,
                                         this, &ChatArea::handleUserTyping));
 
     signalConnections.push_back(connect(ui->listWidget,
                                         &ChatLogWidget::postEditInitiated,
-                                        ui->outgoingPostCreator,
+                                        &composer,
                                         &OutgoingPostCreator::postEditInitiated));
-    signalConnections.push_back(connect(ui->outgoingPostCreator,
+    signalConnections.push_back(connect(&composer,
                                         &OutgoingPostCreator::postEditFinished,
                                         ui->listWidget,
                                         &ChatLogWidget::postEditFinished));
@@ -373,20 +376,6 @@ void ChatArea::init()
                                         &LongListWidget::materializedRangeChanged,
                                         this, [this](int, int) {
         finishPendingNavigation();
-    }));
-
-    signalConnections.push_back(connect(ui->splitter, &QSplitter::splitterMoved,
-                                        this, [this] {
-        const QList<int> sizes = ui->splitter->sizes();
-        if (sizes.size() > 1) {
-            texteditDefaultHeight = sizes.at(1);
-        }
-    }));
-
-    signalConnections.push_back(connect(ui->outgoingPostCreator,
-                                        &OutgoingPostCreator::heightChanged,
-                                        this, [this](int height) {
-        setTextEditWidgetHeight(std::max(height, texteditDefaultHeight));
     }));
 
     ui->loadOldPosts->hide();
@@ -599,11 +588,6 @@ void ChatArea::goToPost(const QString& postId)
 
     pendingPostId = postId;
     finishPendingNavigation();
-}
-
-void ChatArea::setTextEditWidgetHeight(int height)
-{
-    ui->splitter->setSizes({1, height});
 }
 
 } /* namespace Mattermost */

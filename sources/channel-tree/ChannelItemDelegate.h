@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QSet>
 #include <QStyledItemDelegate>
 
 namespace Mattermost {
@@ -15,6 +16,9 @@ public:
     void paint(QPainter* painter,
                const QStyleOptionViewItem& option,
                const QModelIndex& index) const override;
+
+private:
+    mutable QSet<QString> requestedGroupChannels;
 };
 
 } // namespace Mattermost

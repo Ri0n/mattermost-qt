@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -34,6 +34,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 
+#include "LocalPostDeleteTracker.h"
 #include "QByteArrayCreator.h"
 #include "Settings.h"
 #include "log.h"
@@ -81,6 +82,7 @@ void HTTPConnector::reset ()
 	lowPriorityRequests.clear ();
 	globalActiveRequests = qMax(0, globalActiveRequests - activeRequests);
 	activeRequests = 0;
+    LocalPostDeleteTracker::clear();
 
 	qnetworkManager.reset(new QNetworkAccessManager());
 	qnetworkManager->setCache (createDiskCache ());
@@ -141,6 +143,12 @@ void HTTPConnector::del (QNetworkRequest& request)
 		request.setPriority(QNetworkRequest::HighPriority);
 	}
 	request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+
+    // Preserve the distinction the official client makes between a deletion
+    // initiated here and the same post_deleted event received from another
+    // client. Only exact DELETE /posts/{id} requests are recorded; unrelated
+    // DELETE endpoints (thread unfollow, channel membership, etc.) are ignored.
+    LocalPostDeleteTracker::noteRequest(request.url());
 
 	enqueue(PendingRequest {
 		Method::Delete,
@@ -241,6 +249,11 @@ void HTTPConnector::setProcessReply (QNetworkReply* reply,
 
 			const int statusCode = reply->error();
 			auto data = reply->readAll();
+
+            if (reply->operation() == QNetworkAccessManager::DeleteOperation
+                && reply->error() != QNetworkReply::NoError) {
+                LocalPostDeleteTracker::clearFailedRequest(reply->request().url());
+            }
 
 			responseHandler(statusCode, qMove(data), *reply);
 			reply->deleteLater();

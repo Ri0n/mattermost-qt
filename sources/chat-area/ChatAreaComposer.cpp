@@ -1,16 +1,11 @@
 /**
- * @file OutgoingPostPanel.cpp
- * @brief
- * @author Lyubomir Filipov
- * @date Mar 04, 2022
- *
- * Copyright 2021, 2022 Lyubomir Filipov
+ * Copyright 2026 Sergei Ilinykh
  *
  * This file is part of Mattermost-QT.
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -19,10 +14,10 @@
  * GNU Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with Mattermost-QT. if not, see https://www.gnu.org/licenses/.
+ * along with Mattermost-QT. If not, see https://www.gnu.org/licenses/.
  */
 
-#include "OutgoingPostPanel.h"
+#include "ChatArea.h"
 
 #include <algorithm>
 
@@ -30,20 +25,17 @@
 #include <QFont>
 #include <QGraphicsOpacityEffect>
 #include <QHideEvent>
-#include <QIcon>
-#include <QLabel>
 #include <QPainter>
 #include <QPalette>
+#include <QPointer>
 #include <QPushButton>
 #include <QShowEvent>
-#include <QSizePolicy>
 #include <QTimer>
 
-#include "MessageTextEditWidget.h"
-#include "OutgoingPostCreator.h"
+#include "ChatLogWidget.h"
 #include "ui/IconUtils.h"
 #include "ui/ThemeDebug.h"
-#include "ui_OutgoingPostPanel.h"
+#include "ui_ChatArea.h"
 
 namespace Mattermost {
 namespace {
@@ -110,19 +102,14 @@ private:
 
 } // namespace
 
-OutgoingPostPanel::OutgoingPostPanel(QWidget *parent)
-:QWidget(parent)
-,ui(new Ui::OutgoingPostPanel)
+void ChatArea::setupComposerUi()
 {
-    ui->setupUi(this);
-
     auto configureActionButton = [](QPushButton& button) {
         button.setFlat(true);
         button.setFixedSize(ActionButtonExtent, ActionButtonExtent);
         button.setCursor(Qt::PointingHandCursor);
         // Breeze still paints a hover frame for flat QPushButton. Keep styling
-        // local to the button so the rest of the widget tree remains fully
-        // palette-driven while the action itself stays visually borderless.
+        // local to the button so palette propagation through ChatArea stays native.
         button.setStyleSheet(QStringLiteral(
             "QPushButton { border: none; background: transparent; padding: 0px; margin: 0px; }"));
     };
@@ -151,10 +138,16 @@ OutgoingPostPanel::OutgoingPostPanel(QWidget *parent)
     sendOpacity->setOpacity(RestingIconOpacity);
     ui->sendButton->setGraphicsEffect(sendOpacity);
 
+    // The editor is the only vertically growing child. The other controls are
+    // bottom-aligned in ChatArea.ui, so new lines grow upward from the action row.
+    const int verticalPadding = std::max(
+        2, ui->outgoingPostCreator->fontMetrics().lineSpacing() * 2 / 5);
+    ui->composerLayout->setContentsMargins(0, verticalPadding, 0, verticalPadding);
+
     refreshActionIcons();
 
     loadingIndicator = new LoadingIndicator(this);
-    ui->horizontalLayout->insertWidget(0, loadingIndicator, 0, Qt::AlignVCenter);
+    ui->composerLayout->insertWidget(0, loadingIndicator, 0, Qt::AlignBottom);
 
     loadingDelayTimer = new QTimer(this);
     loadingDelayTimer->setSingleShot(true);
@@ -164,34 +157,25 @@ OutgoingPostPanel::OutgoingPostPanel(QWidget *parent)
             loadingIndicator->show();
         }
     });
+
+    connect(ui->listWidget, &LongListWidget::rangeRequested, this,
+            [this](int, int, LongListWidget::RequestReason, quint64) {
+        beginMessageLoading();
+    });
+    connect(ui->listWidget, &LongListWidget::rangeRequestFinished, this,
+            [this](int, int) {
+        endMessageLoading();
+    });
 }
 
-OutgoingPostPanel::~OutgoingPostPanel()
+void ChatArea::focusComposer()
 {
-    delete ui;
+    if (ui && ui->outgoingPostCreator) {
+        ui->outgoingPostCreator->setFocus(Qt::OtherFocusReason);
+    }
 }
 
-QPushButton& OutgoingPostPanel::attachButton ()
-{
-	return *ui->attachButton;
-}
-
-QPushButton& OutgoingPostPanel::addEmojiButton ()
-{
-	return *ui->addEmojiButton;
-}
-
-QPushButton& OutgoingPostPanel::sendButton ()
-{
-	return *ui->sendButton;
-}
-
-QLabel& OutgoingPostPanel::label ()
-{
-	return *ui->label;
-}
-
-void OutgoingPostPanel::beginMessageLoading()
+void ChatArea::beginMessageLoading()
 {
     ++pendingMessageLoads;
     if (pendingMessageLoads == 1 && loadingIndicator && !loadingIndicator->isVisible()) {
@@ -199,7 +183,7 @@ void OutgoingPostPanel::beginMessageLoading()
     }
 }
 
-void OutgoingPostPanel::endMessageLoading()
+void ChatArea::endMessageLoading()
 {
     if (pendingMessageLoads <= 0) {
         return;
@@ -216,7 +200,7 @@ void OutgoingPostPanel::endMessageLoading()
     }
 }
 
-void OutgoingPostPanel::changeEvent(QEvent* event)
+void ChatArea::changeEvent(QEvent* event)
 {
     QWidget::changeEvent(event);
     if (!event) {
@@ -224,22 +208,50 @@ void OutgoingPostPanel::changeEvent(QEvent* event)
     }
 
     if (event->type() == QEvent::PaletteChange
-        || event->type() == QEvent::ApplicationPaletteChange) {
-        ThemeDebug::logWidgetState("OUTGOING_CHANGE_HANDLER", this, event->type());
-        if (loadingIndicator) {
-            loadingIndicator->update();
-        }
+        || event->type() == QEvent::ApplicationPaletteChange
+        || event->type() == QEvent::StyleChange) {
+        ThemeDebug::logWidgetState("CHAT_AREA_CHANGE_HANDLER", this, event->type());
+
+        // Palette events are delivered top-down. At this point a child button
+        // may still expose its previous palette, which is why rebuilding a
+        // tinted pixmap synchronously leaves the old light/dark colour cached.
+        // Rebuild after the event queue has propagated the new palette through
+        // all composer children.
+        QPointer<ChatArea> guard(this);
+        QTimer::singleShot(0, this, [guard] {
+            if (!guard || !guard->ui) {
+                return;
+            }
+            guard->refreshActionIcons();
+            if (guard->loadingIndicator) {
+                guard->loadingIndicator->update();
+            }
+        });
     }
 }
 
-bool OutgoingPostPanel::eventFilter(QObject* watched, QEvent* event)
+bool ChatArea::eventFilter(QObject* watched, QEvent* event)
 {
     if (!event) {
         return QWidget::eventFilter(watched, event);
     }
 
-    const bool iconVisualChanged = event->type() == QEvent::PaletteChange
-        || event->type() == QEvent::EnabledChange
+    const bool paletteChanged = event->type() == QEvent::PaletteChange
+        || event->type() == QEvent::ApplicationPaletteChange
+        || event->type() == QEvent::StyleChange;
+    if (paletteChanged) {
+        // Event filters run before the watched widget processes PaletteChange.
+        // Use a queued refresh rather than tinting from the stale button palette.
+        QPointer<ChatArea> guard(this);
+        QTimer::singleShot(0, this, [guard] {
+            if (guard && guard->ui) {
+                guard->refreshActionIcons();
+            }
+        });
+        return QWidget::eventFilter(watched, event);
+    }
+
+    const bool iconVisualChanged = event->type() == QEvent::EnabledChange
         || event->type() == QEvent::Enter
         || event->type() == QEvent::Leave;
 
@@ -256,12 +268,12 @@ bool OutgoingPostPanel::eventFilter(QObject* watched, QEvent* event)
         if (watched == ui->addEmojiButton) {
             refreshActionIcon(*ui->addEmojiButton,
                               QStringLiteral(":/icons/emoji"),
-                              "OUTGOING_ICON_REFRESH_EMOJI",
+                              "CHAT_AREA_ICON_REFRESH_EMOJI",
                               hovered);
         } else if (watched == ui->attachButton) {
             refreshActionIcon(*ui->attachButton,
                               QStringLiteral(":/icons/paperclip"),
-                              "OUTGOING_ICON_REFRESH_ATTACH",
+                              "CHAT_AREA_ICON_REFRESH_ATTACH",
                               hovered);
         } else if (watched == ui->sendButton) {
             if (auto* effect = qobject_cast<QGraphicsOpacityEffect*>(
@@ -275,75 +287,22 @@ bool OutgoingPostPanel::eventFilter(QObject* watched, QEvent* event)
     return QWidget::eventFilter(watched, event);
 }
 
-void OutgoingPostPanel::showEvent(QShowEvent* event)
+void ChatArea::refreshActionIcons()
 {
-    QWidget::showEvent(event);
-    adoptComposerWidget();
-    focusComposer();
-}
-
-void OutgoingPostPanel::adoptComposerWidget()
-{
-    if (composerWidget || !ui || !parentWidget()) {
-        return;
-    }
-
-    auto* composer = parentWidget()->findChild<OutgoingPostCreator*>(
-        QString(), Qt::FindDirectChildrenOnly);
-    if (!composer) {
-        return;
-    }
-
-    composerWidget = composer;
-    composerWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-
-    // Status/loading stay at the far left. The actual compose controls are
-    // ordered like Telegram: attach | editor | emoji | send.
-    ui->horizontalLayout->removeWidget(ui->attachButton);
-    ui->horizontalLayout->removeWidget(ui->addEmojiButton);
-    ui->horizontalLayout->removeWidget(ui->sendButton);
-    ui->horizontalLayout->addWidget(ui->attachButton, 0, Qt::AlignVCenter);
-    ui->horizontalLayout->addWidget(composerWidget, 1, Qt::AlignVCenter);
-    ui->horizontalLayout->addWidget(ui->addEmojiButton, 0, Qt::AlignVCenter);
-    ui->horizontalLayout->addWidget(ui->sendButton, 0, Qt::AlignVCenter);
-
-    // 40% of line height is 20% less than the previous half-line padding.
-    const int verticalPadding = std::max(
-        2, composerWidget->fontMetrics().lineSpacing() * 2 / 5);
-    ui->horizontalLayout->setContentsMargins(0, verticalPadding, 0, verticalPadding);
-}
-
-void OutgoingPostPanel::focusComposer()
-{
-    if (!composerWidget) {
-        return;
-    }
-
-    if (auto* editor = composerWidget->findChild<MessageTextEditWidget*>()) {
-        editor->setFocus(Qt::OtherFocusReason);
-    }
-}
-
-void OutgoingPostPanel::refreshActionIcons()
-{
-    if (!ui) {
-        return;
-    }
-
     refreshActionIcon(*ui->addEmojiButton,
                       QStringLiteral(":/icons/emoji"),
-                      "OUTGOING_ICON_REFRESH_EMOJI",
+                      "CHAT_AREA_ICON_REFRESH_EMOJI",
                       ui->addEmojiButton->underMouse());
     refreshActionIcon(*ui->attachButton,
                       QStringLiteral(":/icons/paperclip"),
-                      "OUTGOING_ICON_REFRESH_ATTACH",
+                      "CHAT_AREA_ICON_REFRESH_ATTACH",
                       ui->attachButton->underMouse());
 }
 
-void OutgoingPostPanel::refreshActionIcon(QPushButton& button,
-                                          const QString& resourcePath,
-                                          const char* debugMarker,
-                                          bool hovered)
+void ChatArea::refreshActionIcon(QPushButton& button,
+                                 const QString& resourcePath,
+                                 const char* debugMarker,
+                                 bool hovered)
 {
     ThemeDebug::logWidgetState(debugMarker, &button, QEvent::None);
 
@@ -354,4 +313,4 @@ void OutgoingPostPanel::refreshActionIcon(QPushButton& button,
     button.setIcon(IconUtils::tintedSymbolicIcon(resourcePath, color));
 }
 
-} /* namespace Mattermost */
+} // namespace Mattermost
