@@ -2,7 +2,6 @@
 
 #include <algorithm>
 
-#include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -31,6 +30,7 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     bar = new QFrame(this);
     bar->setFixedWidth(3);
     bar->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    bar->setBackgroundRole(QPalette::Mid);
     bar->setAutoFillBackground(true);
     layout->addWidget(bar);
 
@@ -44,6 +44,10 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     authorLabel->setFont(authorFont);
     authorLabel->setTextFormat(Qt::PlainText);
     authorLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    // Keep the semantic palette role instead of copying the current color into
+    // a local palette. A copied color becomes stale when an already-materialized
+    // timeline row survives a light/dark theme switch.
+    authorLabel->setForegroundRole(QPalette::PlaceholderText);
 
     messageLabel = new QLabel(this);
     messageLabel->setTextFormat(Qt::PlainText);
@@ -51,12 +55,11 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     messageLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     messageLabel->setMaximumHeight(
         messageLabel->fontMetrics().lineSpacing() * maximumLines + 2);
+    messageLabel->setForegroundRole(QPalette::PlaceholderText);
 
     textLayout->addWidget(authorLabel);
     textLayout->addWidget(messageLabel);
     layout->addLayout(textLayout, 1);
-
-    refreshPalette();
 }
 
 void QuotedPostPreview::setPost(const BackendPost& post)
@@ -74,15 +77,6 @@ void QuotedPostPreview::setActivatedCallback(std::function<void()> callback)
     setCursor(activatedCallback ? Qt::PointingHandCursor : Qt::ArrowCursor);
 }
 
-void QuotedPostPreview::changeEvent(QEvent* event)
-{
-    QFrame::changeEvent(event);
-    if (event && (event->type() == QEvent::PaletteChange
-                  || event->type() == QEvent::ApplicationPaletteChange)) {
-        refreshPalette();
-    }
-}
-
 void QuotedPostPreview::mouseReleaseEvent(QMouseEvent* event)
 {
     if (event && event->button() == Qt::LeftButton && activatedCallback) {
@@ -97,27 +91,6 @@ void QuotedPostPreview::resizeEvent(QResizeEvent* event)
 {
     QFrame::resizeEvent(event);
     refreshText();
-}
-
-void QuotedPostPreview::refreshPalette()
-{
-    const QPalette source = palette();
-
-    QPalette barPalette = bar->palette();
-    barPalette.setColor(QPalette::Window, source.color(QPalette::Mid));
-    bar->setPalette(barPalette);
-
-    // PlaceholderText is the palette's semantic secondary/muted foreground.
-    // Disabled/Text is not suitable here: styles are allowed to make it equal
-    // to normal WindowText, which made log quotes look like primary content.
-    const QColor muted = source.color(QPalette::PlaceholderText);
-    QPalette authorPalette = authorLabel->palette();
-    authorPalette.setColor(QPalette::WindowText, muted);
-    authorLabel->setPalette(authorPalette);
-
-    QPalette messagePalette = messageLabel->palette();
-    messagePalette.setColor(QPalette::WindowText, muted);
-    messageLabel->setPalette(messagePalette);
 }
 
 void QuotedPostPreview::refreshText()
