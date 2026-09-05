@@ -203,6 +203,17 @@ void OutgoingPostPanel::refreshActionIcons()
         IconUtils::tintedSymbolicIcon(QStringLiteral(":/icons/emoji"), emojiColor));
     ui->attachButton->setIcon(
         IconUtils::tintedSymbolicIcon(QStringLiteral(":/icons/paperclip"), attachColor));
+
+    // The send control is still a text glyph (arrow/checkmark), not an icon.
+    // Keep the disabled state semantically disabled, but do not let the style
+    // replace the glyph with a washed-out Disabled/ButtonText color. Resolve
+    // only that one palette role so every other role continues to inherit from
+    // the current desktop theme.
+    const QColor sendColor = ui->sendButton->palette().color(QPalette::Active,
+                                                              QPalette::ButtonText);
+    QPalette sendPalette;
+    sendPalette.setColor(QPalette::Disabled, QPalette::ButtonText, sendColor);
+    ui->sendButton->setPalette(sendPalette);
 }
 
 } /* namespace Mattermost */
