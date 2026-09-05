@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -21,11 +21,14 @@
 
 #include <algorithm>
 
+#include <QApplication>
+#include <QPalette>
 #include <QRegularExpression>
 #include <QTextBlock>
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QWidget>
 
 namespace Mattermost {
 
@@ -41,11 +44,11 @@ inline const QRegularExpression& mentionExpression()
     return expression;
 }
 
-inline bool isUserMention(const QString& username)
+inline bool isSpecialMention(const QString& name)
 {
-    return username.compare(QStringLiteral("all"), Qt::CaseInsensitive) != 0
-        && username.compare(QStringLiteral("channel"), Qt::CaseInsensitive) != 0
-        && username.compare(QStringLiteral("here"), Qt::CaseInsensitive) != 0;
+    return name.compare(QStringLiteral("all"), Qt::CaseInsensitive) == 0
+        || name.compare(QStringLiteral("channel"), Qt::CaseInsensitive) == 0
+        || name.compare(QStringLiteral("here"), Qt::CaseInsensitive) == 0;
 }
 
 inline QString mentionHref(const QString& username)
@@ -66,12 +69,45 @@ inline bool rangeAlreadyLinkedOrCode(QTextDocument& document, int position, int 
     return false;
 }
 
+inline QPalette documentPalette(const QTextDocument& document)
+{
+    if (const auto* widget = qobject_cast<const QWidget*>(document.parent())) {
+        return widget->palette();
+    }
+    return QApplication::palette();
+}
+
+inline QTextCharFormat userMentionFormat(const QPalette& palette, const QString& username)
+{
+    QTextCharFormat format;
+    format.setAnchor(true);
+    format.setAnchorHref(mentionHref(username));
+    format.setForeground(palette.color(QPalette::Link));
+    format.setFontUnderline(false);
+    return format;
+}
+
+inline QTextCharFormat specialMentionFormat(const QPalette& palette)
+{
+    QTextCharFormat format;
+    QColor background = palette.color(QPalette::Highlight);
+    // Keep special mentions visibly selection-like without making a normal
+    // message look as if the user currently selected the text.
+    background.setAlphaF(std::min<qreal>(background.alphaF(), 0.45));
+    format.setBackground(background);
+    format.setForeground(palette.color(QPalette::Text));
+    format.setFontUnderline(false);
+    format.setAnchor(false);
+    return format;
+}
+
 inline void linkify(QTextDocument& document)
 {
     struct Replacement {
         int position = 0;
         int length = 0;
         QString username;
+        bool special = false;
     };
 
     QList<Replacement> replacements;
@@ -80,16 +116,12 @@ inline void linkify(QTextDocument& document)
         while (matches.hasNext()) {
             const QRegularExpressionMatch match = matches.next();
             const QString username = match.captured(1);
-            if (!isUserMention(username)) {
-                continue;
-            }
-
             const int position = block.position() + static_cast<int>(match.capturedStart(0));
             const int length = static_cast<int>(match.capturedLength(0));
             if (rangeAlreadyLinkedOrCode(document, position, length)) {
                 continue;
             }
-            replacements.push_back({position, length, username});
+            replacements.push_back({position, length, username, isSpecialMention(username)});
         }
     }
 
@@ -98,16 +130,15 @@ inline void linkify(QTextDocument& document)
         return lhs.position > rhs.position;
     });
 
+    const QPalette palette = documentPalette(document);
     for (const Replacement& replacement : replacements) {
         QTextCursor cursor(&document);
         cursor.setPosition(replacement.position);
         cursor.setPosition(replacement.position + replacement.length,
                            QTextCursor::KeepAnchor);
-        QTextCharFormat format;
-        format.setAnchor(true);
-        format.setAnchorHref(mentionHref(replacement.username));
-        format.setFontUnderline(true);
-        cursor.mergeCharFormat(format);
+        cursor.mergeCharFormat(replacement.special
+                                   ? specialMentionFormat(palette)
+                                   : userMentionFormat(palette, replacement.username));
     }
 }
 
@@ -119,14 +150,15 @@ inline QString linkifyHtmlTextSegment(const QString& text)
     while (matches.hasNext()) {
         const QRegularExpressionMatch match = matches.next();
         const QString username = match.captured(1);
-        if (!isUserMention(username)) {
+        if (isSpecialMention(username)) {
             continue;
         }
 
         result += text.mid(position, static_cast<int>(match.capturedStart(0)) - position);
         const QString mention = match.captured(0);
         result += QStringLiteral("<a href=\"") + mentionHref(username)
-            + QStringLiteral("\">") + mention + QStringLiteral("</a>");
+            + QStringLiteral("\" style=\"text-decoration:none\">") + mention
+            + QStringLiteral("</a>");
         position = static_cast<int>(match.capturedEnd(0));
     }
     result += text.mid(position);
