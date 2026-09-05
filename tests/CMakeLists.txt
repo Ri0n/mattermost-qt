@@ -20,7 +20,6 @@ set_tests_properties(long-list-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFO
 add_executable(long-list-widget-removal-test
     LongListWidgetRemovalTest.cpp
     "${CMAKE_SOURCE_DIR}/sources/widgets/LongListWidget.cpp"
-    "${CMAKE_SOURCE_DIR}/sources/widgets/LongListWidgetRemoval.cpp"
 )
 
 target_include_directories(long-list-widget-removal-test
