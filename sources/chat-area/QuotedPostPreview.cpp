@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include <QContextMenuEvent>
+#include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -32,6 +34,7 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     bar->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     bar->setBackgroundRole(QPalette::Mid);
     bar->setAutoFillBackground(true);
+    bar->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     layout->addWidget(bar);
 
     auto* textLayout = new QVBoxLayout;
@@ -44,10 +47,7 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     authorLabel->setFont(authorFont);
     authorLabel->setTextFormat(Qt::PlainText);
     authorLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    // Keep the semantic palette role instead of copying the current color into
-    // a local palette. A copied color becomes stale when an already-materialized
-    // timeline row survives a light/dark theme switch.
-    authorLabel->setForegroundRole(QPalette::PlaceholderText);
+    authorLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
     messageLabel = new QLabel(this);
     messageLabel->setTextFormat(Qt::PlainText);
@@ -55,11 +55,13 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     messageLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     messageLabel->setMaximumHeight(
         messageLabel->fontMetrics().lineSpacing() * maximumLines + 2);
-    messageLabel->setForegroundRole(QPalette::PlaceholderText);
+    messageLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
     textLayout->addWidget(authorLabel);
     textLayout->addWidget(messageLabel);
     layout->addLayout(textLayout, 1);
+
+    refreshPalette();
 }
 
 void QuotedPostPreview::setPost(const BackendPost& post)
@@ -77,6 +79,26 @@ void QuotedPostPreview::setActivatedCallback(std::function<void()> callback)
     setCursor(activatedCallback ? Qt::PointingHandCursor : Qt::ArrowCursor);
 }
 
+void QuotedPostPreview::changeEvent(QEvent* event)
+{
+    QFrame::changeEvent(event);
+    if (event && (event->type() == QEvent::PaletteChange
+                  || event->type() == QEvent::ApplicationPaletteChange
+                  || event->type() == QEvent::StyleChange)) {
+        refreshPalette();
+    }
+}
+
+void QuotedPostPreview::contextMenuEvent(QContextMenuEvent* event)
+{
+    // The preview is semantically part of the post. Do not consume the context
+    // menu gesture here: let Qt propagate it to PostWidget so right-clicking a
+    // quoted reply opens the same post menu as right-clicking the message body.
+    if (event) {
+        event->ignore();
+    }
+}
+
 void QuotedPostPreview::mouseReleaseEvent(QMouseEvent* event)
 {
     if (event && event->button() == Qt::LeftButton && activatedCallback) {
@@ -91,6 +113,32 @@ void QuotedPostPreview::resizeEvent(QResizeEvent* event)
 {
     QFrame::resizeEvent(event);
     refreshText();
+}
+
+void QuotedPostPreview::refreshPalette()
+{
+    if (!authorLabel || !messageLabel) {
+        return;
+    }
+
+    const QColor textColor = palette().color(QPalette::Text);
+    QColor mutedColor = palette().color(QPalette::PlaceholderText);
+
+    // PlaceholderText is the semantic secondary-text role, but a few desktop
+    // themes map it to exactly the ordinary text colour. Keep quoted previews
+    // visibly secondary in that case while still deriving the colour from the
+    // current palette on every theme switch.
+    if (!mutedColor.isValid() || mutedColor.rgba() == textColor.rgba()) {
+        mutedColor = textColor;
+        mutedColor.setAlphaF(mutedColor.alphaF() * 0.65);
+    }
+
+    QPalette mutedPalette = palette();
+    mutedPalette.setColor(QPalette::WindowText, mutedColor);
+    authorLabel->setForegroundRole(QPalette::WindowText);
+    messageLabel->setForegroundRole(QPalette::WindowText);
+    authorLabel->setPalette(mutedPalette);
+    messageLabel->setPalette(mutedPalette);
 }
 
 void QuotedPostPreview::refreshText()
