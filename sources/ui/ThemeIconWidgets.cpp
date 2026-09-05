@@ -6,21 +6,19 @@
 
 #include "ThemeIconWidgets.h"
 
-#include <utility>
-
 #include <QApplication>
 #include <QColor>
+#include <QEvent>
 #include <QIcon>
 #include <QPainter>
 #include <QPalette>
 
 #include "IconUtils.h"
-#include "ThemeDebug.h"
 
 namespace Mattermost {
 namespace {
 
-constexpr qreal RestingIconOpacity = 0.8;
+constexpr qreal RestingOpacity = 0.8;
 
 QString tintKey(const QColor& color)
 {
@@ -32,6 +30,7 @@ QString tintKey(const QColor& color)
 ThemeIconButton::ThemeIconButton(QWidget* parent)
     : QPushButton(parent)
 {
+    setCursor(Qt::PointingHandCursor);
 }
 
 QString ThemeIconButton::symbolicResource() const
@@ -45,65 +44,57 @@ QString ThemeIconButton::symbolicResource() const
     return {};
 }
 
-void ThemeIconButton::paintEvent(QPaintEvent* event)
+bool ThemeIconButton::event(QEvent* event)
 {
-    const QString resource = symbolicResource();
-    if (!resource.isEmpty()) {
-        QColor desired = qApp
-            ? qApp->palette().color(QPalette::ButtonText)
-            : palette().color(QPalette::ButtonText);
-        if (!underMouse()) {
-            desired.setAlphaF(desired.alphaF() * RestingIconOpacity);
-        }
-
-        const QString desiredTint = tintKey(desired);
-        const bool externalIconReplacement = renderedIconCacheKey != 0
-            && icon().cacheKey() != renderedIconCacheKey;
-        if (renderedTint != desiredTint || externalIconReplacement) {
-            ThemeDebug::logWidgetState(
-                objectName() == QStringLiteral("addEmojiButton")
-                    ? "CHAT_AREA_ICON_PAINT_REBUILD_EMOJI"
-                    : "CHAT_AREA_ICON_PAINT_REBUILD_ATTACH",
-                this, QEvent::Paint);
-
-            const QIcon rebuilt = IconUtils::tintedSymbolicIcon(resource, desired);
-            QPushButton::setIcon(rebuilt);
-            renderedTint = desiredTint;
-            renderedIconCacheKey = rebuilt.cacheKey();
-        }
+    const bool result = QPushButton::event(event);
+    if (event && (event->type() == QEvent::Enter
+                  || event->type() == QEvent::Leave
+                  || event->type() == QEvent::EnabledChange
+                  || event->type() == QEvent::PaletteChange
+                  || event->type() == QEvent::ApplicationPaletteChange
+                  || event->type() == QEvent::StyleChange)) {
+        update();
     }
-
-    QPushButton::paintEvent(event);
+    return result;
 }
 
-ThemeSymbolicIconLabel::ThemeSymbolicIconLabel(QString resourcePathValue,
-                                               QWidget* parent)
-    : QLabel(parent)
-    , resourcePath(std::move(resourcePathValue))
-{
-}
-
-void ThemeSymbolicIconLabel::paintEvent(QPaintEvent* event)
+void ThemeIconButton::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
 
-    const QColor desired = qApp
-        ? qApp->palette().color(QPalette::WindowText)
-        : palette().color(QPalette::WindowText);
-    const QString desiredTint = tintKey(desired);
-    if (renderedTint != desiredTint || renderedPixmap.size() != size()) {
-        ThemeDebug::logWidgetState("THREAD_ICON_PAINT_REBUILD", this, QEvent::Paint);
-        const QIcon icon = IconUtils::tintedSymbolicIcon(resourcePath, desired);
-        renderedPixmap = icon.pixmap(size());
-        renderedTint = desiredTint;
+    const QPalette currentPalette = qApp ? qApp->palette() : palette();
+    const QPalette::ColorGroup group = isEnabled()
+        ? QPalette::Active : QPalette::Disabled;
+    QColor color = currentPalette.color(group, QPalette::ButtonText);
+    if (!underMouse()) {
+        color.setAlphaF(color.alphaF() * RestingOpacity);
     }
 
     QPainter painter(this);
-    if (!renderedPixmap.isNull()) {
-        const QPoint topLeft((width() - renderedPixmap.width()) / 2,
-                             (height() - renderedPixmap.height()) / 2);
-        painter.drawPixmap(topLeft, renderedPixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+
+    const QString resource = symbolicResource();
+    if (!resource.isEmpty()) {
+        const QSize targetSize = iconSize().isValid() ? iconSize() : QSize(24, 24);
+        const QString desiredTint = tintKey(color);
+        if (renderedTint != desiredTint || renderedSize != targetSize) {
+            renderedPixmap = IconUtils::tintedSymbolicIcon(resource, color).pixmap(targetSize);
+            renderedTint = desiredTint;
+            renderedSize = targetSize;
+        }
+
+        if (!renderedPixmap.isNull()) {
+            const QPoint topLeft((width() - renderedPixmap.width()) / 2,
+                                 (height() - renderedPixmap.height()) / 2);
+            painter.drawPixmap(topLeft, renderedPixmap);
+        }
+        return;
     }
+
+    painter.setPen(color);
+    painter.setFont(font());
+    painter.drawText(rect(), Qt::AlignCenter, text());
 }
 
 } // namespace Mattermost
