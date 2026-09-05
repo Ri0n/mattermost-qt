@@ -24,10 +24,6 @@
 
 #include "OutgoingPostCreator.h"
 
-#include <algorithm>
-#include <cmath>
-
-#include <QAbstractTextDocumentLayout>
 #include <QColor>
 #include <QDebug>
 #include <QDragMoveEvent>
@@ -38,11 +34,9 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QTextCursor>
-#include <QTextDocument>
 
 #include "NewPollDialog.h"
 #include "OutgoingAttachmentList.h"
-#include "OutgoingPostPanel.h"
 #include "backend/Backend.h"
 #include "chat-area/ChatLogWidget.h"
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
@@ -70,14 +64,20 @@ OutgoingPostCreator::OutgoingPostCreator(QWidget* parent)
 
 void OutgoingPostCreator::init(Backend& backendInstance,
                                BackendChannel& channelInstance,
-                               OutgoingPostPanel& panelInstance,
                                ChatLogWidget& chatLogWidget,
-                               QBoxLayout* attachmentParentLayout)
+                               QBoxLayout* attachmentParentLayout,
+                               QLabel& statusLabelInstance,
+                               QPushButton& attachButtonInstance,
+                               QPushButton& addEmojiButtonInstance,
+                               QPushButton& sendButtonInstance)
 {
 	backend = &backendInstance;
 	channel = &channelInstance;
-	panel = &panelInstance;
 	attachmentParent = attachmentParentLayout;
+	statusLabel = &statusLabelInstance;
+	attachButton = &attachButtonInstance;
+	addEmojiButton = &addEmojiButtonInstance;
+	sendButton = &sendButtonInstance;
 
 	connect(ui->textEdit, &MessageTextEditWidget::escapePressed, [this] {
 		ui->textEdit->clear();
@@ -89,27 +89,17 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 	connect(ui->textEdit, &MessageTextEditWidget::upArrowPressed,
 	        &chatLogWidget, &ChatLogWidget::editLastOwnPost);
 
-	connect(ui->textEdit, &MessageTextEditWidget::textChanged, [this] {
-		updateSendButtonState();
-		// QTextDocument finishes laying out the newly inserted block after the
-		// key event. Re-measure on the next turn so Shift+Enter grows the composer
-		// immediately instead of waiting for an unrelated resize/scroll event.
-		QTimer::singleShot(0, this, &OutgoingPostCreator::updateEditorHeight);
-	});
-	connect(ui->textEdit->document()->documentLayout(),
-	        &QAbstractTextDocumentLayout::documentSizeChanged,
-	        this, [this](const QSizeF&) {
-		updateEditorHeight();
-	});
+	connect(ui->textEdit, &MessageTextEditWidget::textChanged,
+	        this, &OutgoingPostCreator::updateSendButtonState);
 
-	connect(&panelInstance.sendButton(), &QPushButton::clicked,
+	connect(sendButton, &QPushButton::clicked,
 	        this, &OutgoingPostCreator::sendPostButtonAction);
 	connect(ui->textEdit, &MessageTextEditWidget::enterPressed,
 	        this, &OutgoingPostCreator::sendPostButtonAction);
-	connect(&panelInstance.attachButton(), &QPushButton::clicked,
+	connect(attachButton, &QPushButton::clicked,
 	        this, &OutgoingPostCreator::onAttachButtonClick);
 
-	connect(&panelInstance.addEmojiButton(), &QPushButton::clicked, [this] {
+	connect(addEmojiButton, &QPushButton::clicked, [this] {
 		showEmojiDialog([this](Emoji emoji) {
 			auto* textEdit = ui->textEdit;
 			textEdit->insertPlainText(" :" + emoji.name + ": ");
@@ -119,7 +109,6 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 
 	setEditingVisual(false);
 	updateSendButtonState();
-	QTimer::singleShot(0, this, &OutgoingPostCreator::updateEditorHeight);
 
 	connectLambda(&backendInstance, &Backend::onWebSocketConnect, [this] {
 		isConnected = true;
@@ -147,7 +136,9 @@ OutgoingPostCreator::~OutgoingPostCreator()
 
 void OutgoingPostCreator::setStatusLabelText(const QString& string)
 {
-	panel->label().setText(string);
+	if (statusLabel) {
+		statusLabel->setText(string);
+	}
 }
 
 void OutgoingPostCreator::onAttachButtonClick()
@@ -177,7 +168,7 @@ void OutgoingPostCreator::postEditInitiated(BackendPost& post)
 
 void OutgoingPostCreator::setEditingVisual(bool editing)
 {
-	if (!panel) {
+	if (!statusLabel) {
 		return;
 	}
 
@@ -187,14 +178,14 @@ void OutgoingPostCreator::setEditingVisual(bool editing)
 		ui->textEdit->setStyleSheet(
 			QStringLiteral("QTextEdit { border: 2px solid %1; border-radius: 4px; padding: 2px; }")
 				.arg(accent.name()));
-		panel->label().setText(tr("Editing message · Esc to cancel"));
-		panel->label().setStyleSheet(QStringLiteral("font-weight: 600;"));
+		statusLabel->setText(tr("Editing message · Esc to cancel"));
+		statusLabel->setStyleSheet(QStringLiteral("font-weight: 600;"));
 	} else {
 		ui->textEdit->setPlaceholderText(tr("Write a message"));
 		ui->textEdit->setStyleSheet(QString());
-		panel->label().setStyleSheet(QString());
+		statusLabel->setStyleSheet(QString());
 		if (!outgoingPostData) {
-			panel->label().clear();
+			statusLabel->clear();
 		}
 	}
 
@@ -426,13 +417,13 @@ void OutgoingPostCreator::createAttachmentList(QStringList& files)
 
 void OutgoingPostCreator::updateSendButtonState()
 {
-	if (!panel) {
+	if (!sendButton || !attachButton) {
 		return;
 	}
 
 	const bool editing = isEditingPost();
-	panel->sendButton().setText(editing ? QStringLiteral("✓") : QStringLiteral("➤"));
-	panel->sendButton().setAccessibleName(editing ? tr("Save edited message") : tr("Send"));
+	sendButton->setText(editing ? QStringLiteral("✓") : QStringLiteral("➤"));
+	sendButton->setAccessibleName(editing ? tr("Save edited message") : tr("Send"));
 
 	bool sendButtonEnabled = true;
 	QString tooltipText;
@@ -448,8 +439,8 @@ void OutgoingPostCreator::updateSendButtonState()
 		tooltipText = editing ? tr("Saving edited message") : tr("Waiting for server response");
 	}
 
-	panel->attachButton().setDisabled(!sendButtonEnabled);
-	panel->attachButton().setToolTip(tooltipText.isEmpty() ? tr("Attach File") : tooltipText);
+	attachButton->setDisabled(!sendButtonEnabled);
+	attachButton->setToolTip(tooltipText.isEmpty() ? tr("Attach File") : tooltipText);
 
 	if (sendButtonEnabled && !isCreatingPost()) {
 		sendButtonEnabled = false;
@@ -462,40 +453,8 @@ void OutgoingPostCreator::updateSendButtonState()
 		tooltipText = tr("Send");
 	}
 
-	panel->sendButton().setDisabled(!sendButtonEnabled);
-	panel->sendButton().setToolTip(tooltipText);
-}
-
-void OutgoingPostCreator::updateEditorHeight()
-{
-	if (!ui || !ui->textEdit || !ui->textEdit->document()) {
-		return;
-	}
-
-	const QTextDocument* document = ui->textEdit->document();
-	const QMargins margins = ui->textEdit->contentsMargins();
-	const int chromeHeight = margins.top() + margins.bottom()
-		+ 2 * ui->textEdit->frameWidth();
-	const int documentMargins = static_cast<int>(std::ceil(document->documentMargin() * 2.0));
-	const int lineHeight = ui->textEdit->fontMetrics().lineSpacing();
-	const int oneLineHeight = lineHeight + documentMargins + chromeHeight;
-	const int laidOutHeight = static_cast<int>(std::ceil(
-		document->documentLayout()->documentSize().height())) + chromeHeight;
-	const int explicitLineHeight = std::max(1, document->blockCount()) * lineHeight
-		+ documentMargins + chromeHeight;
-	const int maximumHeight = std::max(oneLineHeight,
-		std::min(300, ui->textEdit->maximumHeight()));
-	const int wantedHeight = std::clamp(
-		std::max({oneLineHeight, laidOutHeight, explicitLineHeight}),
-		oneLineHeight, maximumHeight);
-
-	if (ui->textEdit->height() != wantedHeight) {
-		ui->textEdit->setFixedHeight(wantedHeight);
-	}
-	if (height() != wantedHeight) {
-		setFixedHeight(wantedHeight);
-	}
-	updateGeometry();
+	sendButton->setDisabled(!sendButtonEnabled);
+	sendButton->setToolTip(tooltipText);
 }
 
 bool OutgoingPostCreator::isCreatingPost()
@@ -517,3 +476,5 @@ void OutgoingPostCreator::setRootId(QString id)
 {
 	root_id = std::move(id);
 }
+
+} /* namespace Mattermost */
