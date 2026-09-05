@@ -8,6 +8,7 @@
 #include <QIcon>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPalette>
 #include <QPointer>
 #include <QSet>
 
@@ -19,6 +20,7 @@
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendUser.h"
 #include "ui/AvatarUtils.h"
+#include "ui/IconUtils.h"
 
 namespace Mattermost {
 
@@ -50,13 +52,11 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
     chip->setAccessibleName(tr("Open thread"));
     chip->installEventFilter(this);
 
-    auto* icon = new QLabel(chip);
-    icon->setFixedSize(ReactionChipStyle::IconExtent, ReactionChipStyle::IconExtent);
-    icon->setAlignment(Qt::AlignCenter);
-    icon->setPixmap(QIcon(QStringLiteral(":/icons/message-balloon")).pixmap(
-        ReactionChipStyle::IconExtent, ReactionChipStyle::IconExtent));
-    icon->setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    chipLayout->addWidget(icon, 0, Qt::AlignVCenter);
+    chipIcon = new QLabel(chip);
+    chipIcon->setFixedSize(ReactionChipStyle::IconExtent, ReactionChipStyle::IconExtent);
+    chipIcon->setAlignment(Qt::AlignCenter);
+    chipIcon->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    chipLayout->addWidget(chipIcon, 0, Qt::AlignVCenter);
 
     chipCount = new QLabel(chip);
     chipCount->setMaximumSize(20, ReactionChipStyle::IconExtent);
@@ -66,6 +66,7 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
     chipCount->setFont(countFont);
     chipCount->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     chipLayout->addWidget(chipCount, 0, Qt::AlignBottom);
+    refreshTheme();
 
     connect(&channel, &BackendChannel::onPostEdited, this,
             [this](BackendPost& edited) {
@@ -93,6 +94,27 @@ bool ThreadSummaryWidget::eventFilter(QObject* watched, QEvent* event)
         }
     }
     return QWidget::eventFilter(watched, event);
+}
+
+void ThreadSummaryWidget::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if (event && (event->type() == QEvent::PaletteChange
+                  || event->type() == QEvent::ApplicationPaletteChange)) {
+        refreshTheme();
+    }
+}
+
+void ThreadSummaryWidget::refreshTheme()
+{
+    if (!chipIcon || !chip) {
+        return;
+    }
+    const QColor color = chip->palette().color(QPalette::WindowText);
+    const QIcon icon = IconUtils::tintedSymbolicIcon(
+        QStringLiteral(":/icons/message-balloon"), color);
+    chipIcon->setPixmap(icon.pixmap(ReactionChipStyle::IconExtent,
+                                    ReactionChipStyle::IconExtent));
 }
 
 void ThreadSummaryWidget::refresh()
