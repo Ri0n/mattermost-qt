@@ -105,11 +105,19 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
 
 bool ThreadSummaryWidget::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == chip && event && event->type() == QEvent::MouseButtonRelease) {
-        auto* mouseEvent = static_cast<QMouseEvent*>(event);
-        if (mouseEvent->button() == Qt::LeftButton) {
-            emit clicked();
-            return true;
+    if (watched == chip && event) {
+        // ThreadSummaryWidget receives its PaletteChange before the styled chip
+        // gets its own resolved palette. Rebuild the cached symbolic pixmap when
+        // the actual color-owning widget changes instead of relying on a later
+        // scroll/rematerialization to recreate the summary.
+        if (event->type() == QEvent::PaletteChange) {
+            refreshTheme();
+        } else if (event->type() == QEvent::MouseButtonRelease) {
+            auto* mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->button() == Qt::LeftButton) {
+                emit clicked();
+                return true;
+            }
         }
     }
     return QWidget::eventFilter(watched, event);
