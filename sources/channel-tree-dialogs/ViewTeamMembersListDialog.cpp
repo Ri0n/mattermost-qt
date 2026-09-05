@@ -39,6 +39,7 @@ ViewTeamMembersListDialog::ViewTeamMembersListDialog (Backend& backend, BackendT
 ,team (team)
 ,backend (backend)
 {
+    setProfileBackend(&backend);
 	refreshMembers();
 
 	QPointer<ViewTeamMembersListDialog> guard(this);
