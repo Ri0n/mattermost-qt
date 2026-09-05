@@ -23,29 +23,46 @@
 #include <QNetworkRequest>
 #include <QPixmap>
 #include <QPointer>
+#include <QPushButton>
 
+#include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
+#include "backend/Storage.h"
 #include "backend/types/BackendUser.h"
+#include "navigation/AppNavigationService.h"
 
 namespace Mattermost {
 
-static QString getString (const QString& str)
+static QString getString(const QString& str)
 {
-	return str.isEmpty() ? "N/A" : str;
+    return str.isEmpty() ? QStringLiteral("N/A") : str;
 }
 
-UserProfileDialog::UserProfileDialog (const BackendUser& user, QWidget *parent)
-:QDialog(parent)
-,ui(new Ui::UserProfileDialog)
+UserProfileDialog::UserProfileDialog(const BackendUser& user, QWidget* parent)
+    : UserProfileDialog(nullptr, user, parent)
+{
+}
+
+UserProfileDialog::UserProfileDialog(Backend& backend, const BackendUser& user, QWidget* parent)
+    : UserProfileDialog(&backend, user, parent)
+{
+}
+
+UserProfileDialog::UserProfileDialog(Backend* backendInstance,
+                                     const BackendUser& user,
+                                     QWidget* parent)
+    : QDialog(parent)
+    , ui(new Ui::UserProfileDialog)
+    , backend(backendInstance)
+    , userId(user.id)
 {
     ui->setupUi(this);
 
-    setWindowTitle ("Profile for " + user.getDisplayName() + " - Mattermost");
+    setWindowTitle(QStringLiteral("Profile for ") + user.getDisplayName()
+                   + QStringLiteral(" - Mattermost"));
 
     constexpr int ProfileAvatarSize = 128;
     if (!user.avatar.isNull()) {
-        // Show the normal cached chat/sidebar avatar immediately while the
-        // original profile image is loaded below.
         ui->avatar->setPixmap(user.avatar.scaled(ProfileAvatarSize,
                                                   ProfileAvatarSize,
                                                   Qt::KeepAspectRatio,
@@ -83,18 +100,50 @@ UserProfileDialog::UserProfileDialog (const BackendUser& user, QWidget *parent)
             }));
     }
 
-    ui->fullnameValue->setText (user.first_name + " " + user.last_name);
-    ui->nicknameValue->setText (getString (user.nickname));
-    ui->usernameValue->setText (user.username);
-    ui->emailValue->setText (user.email);
-    ui->positionValue->setText (getString (user.position));
-    ui->statusValue->setText (user.status);
-    ui->timezoneValue->setText (user.timezone.automaticTimezone);
+    ui->fullnameValue->setText(user.first_name + QLatin1Char(' ') + user.last_name);
+    ui->nicknameValue->setText(getString(user.nickname));
+    ui->usernameValue->setText(user.username);
+    ui->emailValue->setText(user.email);
+    ui->positionValue->setText(getString(user.position));
+    ui->statusValue->setText(user.status);
+    ui->timezoneValue->setText(user.timezone.automaticTimezone);
+
+    ui->messageButton->setVisible(backend != nullptr && !user.id.isEmpty());
+    if (backend) {
+        connect(ui->messageButton, &QPushButton::clicked,
+                this, &UserProfileDialog::startDirectMessage);
+    }
 }
 
 UserProfileDialog::~UserProfileDialog()
 {
     delete ui;
+}
+
+void UserProfileDialog::startDirectMessage()
+{
+    if (!backend || userId.isEmpty()) {
+        return;
+    }
+
+    BackendUser* user = backend->getStorage().getUserById(userId);
+    if (!user) {
+        return;
+    }
+
+    if (BackendChannel* channel = backend->getStorage().getDirectChannelByUserId(userId)) {
+        AppNavigationService::instance(*backend).openChannel(channel->id);
+        accept();
+        return;
+    }
+
+    // The legacy Backend API completes DM creation through the normal server/
+    // websocket channel path. Starting the request here is sufficient for a new
+    // conversation; once the channel arrives it becomes available in Direct Messages.
+    ui->messageButton->setEnabled(false);
+    ui->messageButton->setText(tr("Starting…"));
+    backend->createDirectChannel(*user);
+    accept();
 }
 
 } /* namespace Mattermost */
