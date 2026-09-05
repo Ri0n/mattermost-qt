@@ -3,11 +3,16 @@
 #include <QApplication>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPointer>
 #include <QStyle>
 #include <QStyleOptionViewItem>
 
 #include "ChannelIcons.h"
+#include "ChannelTree.h"
 #include "SidebarItem.h"
+#include "backend/Backend.h"
+#include "backend/Storage.h"
+#include "backend/UserProfileService.h"
 #include "backend/types/BackendChannel.h"
 #include "ui/AvatarUtils.h"
 
@@ -55,9 +60,42 @@ void ChannelItemDelegate::paint(QPainter* painter,
 
     QStyleOptionViewItem base(option);
     initStyleOption(&base, index);
-    const QString text = base.text;
+    QString text = base.text;
     QIcon icon = base.icon;
     const int type = channelType(index);
+
+    if (type == BackendChannel::groupChannel) {
+        auto* tree = qobject_cast<ChannelTree*>(parent());
+        Backend* backend = tree ? tree->backendInstance() : nullptr;
+        const QString channelId = index.data(SidebarItem::IdRole).toString();
+        BackendChannel* channel = backend
+            ? backend->getStorage().getChannelById(channelId) : nullptr;
+
+        if (channel) {
+            if (!channel->display_name.isEmpty()) {
+                text = channel->display_name;
+            }
+
+            if (!resolvedGroupChannels.contains(channelId)) {
+                resolvedGroupChannels.insert(channelId);
+
+                // The row delegate is already the point where we know a group
+                // DM is actually visible. Resolve its tiny member set here rather
+                // than reintroducing an eager global user-directory preload.
+                // Keep rendering tied to BackendChannel::display_name so the same
+                // value is also consumed by ChatArea's existing onUpdated path.
+                QPointer<ChannelTree> treeGuard(tree);
+                QObject::connect(channel, &BackendChannel::onUpdated,
+                                 const_cast<ChannelItemDelegate*>(this),
+                                 [treeGuard] {
+                    if (treeGuard && treeGuard->viewport()) {
+                        treeGuard->viewport()->update();
+                    }
+                });
+                UserProfileService::instance(*backend).ensureGroupChannelMembers(*channel);
+            }
+        }
+    }
 
     if (icon.isNull()) {
         if (type == BackendChannel::groupChannel) {
