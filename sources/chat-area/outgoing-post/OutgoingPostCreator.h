@@ -33,6 +33,7 @@ class QBoxLayout;
 class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
+class QEvent;
 class QLabel;
 class QPushButton;
 
@@ -65,6 +66,8 @@ public:
 	void onDropEvent (QDropEvent* event);
 	void setStatusLabelText (const QString& string);
 
+	QSize sizeHint() const override;
+
 public slots:
 	void onAttachButtonClick ();
 	void onPostReceived (BackendPost& post);
@@ -74,7 +77,11 @@ public slots:
 signals:
 	void postEditFinished ();
 
+protected:
+	bool event(QEvent* event) override;
+
 private:
+	int editorHeightHint() const;
 	void createAttachmentList (QStringList& files);
 	void updateSendButtonState ();
 	void setEditingVisual(bool editing);
