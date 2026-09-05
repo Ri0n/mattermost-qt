@@ -36,7 +36,6 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QShowEvent>
-#include <QSizePolicy>
 #include <QTimer>
 
 #include "MessageTextEditWidget.h"
@@ -151,10 +150,17 @@ OutgoingPostPanel::OutgoingPostPanel(QWidget *parent)
     sendOpacity->setOpacity(RestingIconOpacity);
     ui->sendButton->setGraphicsEffect(sendOpacity);
 
+    // The editor is the only vertically growing child. All action controls are
+    // bottom-aligned by the .ui layout, so adding lines grows upward while the
+    // buttons stay on the last line of the composer.
+    const int verticalPadding = std::max(
+        2, ui->composer->fontMetrics().lineSpacing() * 2 / 5);
+    ui->horizontalLayout->setContentsMargins(0, verticalPadding, 0, verticalPadding);
+
     refreshActionIcons();
 
     loadingIndicator = new LoadingIndicator(this);
-    ui->horizontalLayout->insertWidget(0, loadingIndicator, 0, Qt::AlignVCenter);
+    ui->horizontalLayout->insertWidget(0, loadingIndicator, 0, Qt::AlignBottom);
 
     loadingDelayTimer = new QTimer(this);
     loadingDelayTimer->setSingleShot(true);
@@ -169,6 +175,11 @@ OutgoingPostPanel::OutgoingPostPanel(QWidget *parent)
 OutgoingPostPanel::~OutgoingPostPanel()
 {
     delete ui;
+}
+
+OutgoingPostCreator& OutgoingPostPanel::composer()
+{
+    return *ui->composer;
 }
 
 QPushButton& OutgoingPostPanel::attachButton ()
@@ -278,71 +289,12 @@ bool OutgoingPostPanel::eventFilter(QObject* watched, QEvent* event)
 void OutgoingPostPanel::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
-    adoptComposerWidget();
     focusComposer();
-}
-
-void OutgoingPostPanel::adoptComposerWidget()
-{
-    if (composerWidget || !ui || !parentWidget()) {
-        return;
-    }
-
-    auto* composer = parentWidget()->findChild<OutgoingPostCreator*>(
-        QString(), Qt::FindDirectChildrenOnly);
-    if (!composer) {
-        return;
-    }
-
-    composerWidget = composer;
-    composerWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-
-    // Status/loading stay at the far left. The actual compose controls are
-    // ordered like Telegram: attach | editor | emoji | send.
-    ui->horizontalLayout->removeWidget(ui->attachButton);
-    ui->horizontalLayout->removeWidget(ui->addEmojiButton);
-    ui->horizontalLayout->removeWidget(ui->sendButton);
-    ui->horizontalLayout->addWidget(ui->attachButton, 0, Qt::AlignVCenter);
-    ui->horizontalLayout->addWidget(composerWidget, 1, Qt::AlignVCenter);
-    ui->horizontalLayout->addWidget(ui->addEmojiButton, 0, Qt::AlignVCenter);
-    ui->horizontalLayout->addWidget(ui->sendButton, 0, Qt::AlignVCenter);
-
-    // 40% of line height is 20% less than the previous half-line padding.
-    const int verticalPadding = std::max(
-        2, composerWidget->fontMetrics().lineSpacing() * 2 / 5);
-    ui->horizontalLayout->setContentsMargins(0, verticalPadding, 0, verticalPadding);
-
-    auto resizePanelToComposer = [this](int composerHeight) {
-        if (!ui) {
-            return;
-        }
-
-        const QMargins margins = ui->horizontalLayout->contentsMargins();
-        const int controlsHeight = std::max(ActionButtonExtent, composerHeight);
-        const int wantedHeight = controlsHeight + margins.top() + margins.bottom();
-        if (height() != wantedHeight) {
-            setFixedHeight(wantedHeight);
-        }
-        updateGeometry();
-    };
-
-    connect(composerWidget, &OutgoingPostCreator::heightChanged,
-            this, resizePanelToComposer);
-
-    if (auto* editor = composerWidget->findChild<MessageTextEditWidget*>()) {
-        resizePanelToComposer(editor->height());
-    } else {
-        resizePanelToComposer(composerWidget->height());
-    }
 }
 
 void OutgoingPostPanel::focusComposer()
 {
-    if (!composerWidget) {
-        return;
-    }
-
-    if (auto* editor = composerWidget->findChild<MessageTextEditWidget*>()) {
+    if (auto* editor = ui->composer->findChild<MessageTextEditWidget*>()) {
         editor->setFocus(Qt::OtherFocusReason);
     }
 }
