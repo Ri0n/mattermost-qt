@@ -2,10 +2,7 @@
 
 #include <QJsonObject>
 #include <QList>
-#include <QObject>
 #include <QString>
-
-#include "HTTPConnector.h"
 
 namespace Mattermost {
 
@@ -13,13 +10,13 @@ class Backend;
 class BackendChannel;
 
 /**
- * Post creation path that preserves the existing Backend::addPost behaviour
- * while allowing structured Mattermost post props when the caller needs them.
+ * Lightweight adapter used by the composer for metadata-capable post creation.
+ * Backend remains the sole owner of the HTTP post creation path.
  */
-class PostCreateService final : public QObject
+class PostCreateService final
 {
 public:
-    static PostCreateService& instance(Backend& backend);
+    static PostCreateService instance(Backend& backend);
 
     void createPost(BackendChannel& channel,
                     const QString& message,
@@ -31,7 +28,6 @@ private:
     explicit PostCreateService(Backend& backend);
 
     Backend& backend;
-    HTTPConnector httpConnector;
 };
 
 } // namespace Mattermost
