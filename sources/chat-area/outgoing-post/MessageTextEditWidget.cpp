@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -37,6 +37,11 @@
 #include <QTimer>
 
 namespace Mattermost {
+namespace {
+
+constexpr int ComposerMaximumHeight = 300;
+
+} // namespace
 
 MessageTextEditWidget::MessageTextEditWidget(QWidget* parent)
     : QTextEdit(parent)
@@ -113,12 +118,15 @@ void MessageTextEditWidget::updateHeightToContents()
         document()->documentLayout()->documentSize().height())) + chromeHeight;
     const int explicitLineHeight = std::max(1, document()->blockCount()) * lineHeight
         + documentMargins + chromeHeight;
-    const int maxHeight = std::max(oneLineHeight, std::min(300, QTextEdit::maximumHeight()));
     const int wantedHeight = std::clamp(
         std::max({oneLineHeight, laidOutHeight, explicitLineHeight}),
-        oneLineHeight, maxHeight);
+        oneLineHeight, ComposerMaximumHeight);
 
     if (height() != wantedHeight) {
+        // Do not derive the next height limit from maximumHeight():
+        // setFixedHeight() deliberately changes maximumHeight() to the current
+        // value, which would otherwise permanently cap the editor at its first
+        // one-line measurement.
         setFixedHeight(wantedHeight);
         updateGeometry();
     }
