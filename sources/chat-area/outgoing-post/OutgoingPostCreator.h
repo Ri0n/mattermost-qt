@@ -26,27 +26,23 @@
 
 #include <memory>
 #include <QTimer>
-#include <QWidget>
+
+#include "MessageTextEditWidget.h"
 #include "fwd.h"
 
 class QBoxLayout;
 class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
-class QEvent;
 class QLabel;
 class QPushButton;
-
-namespace Ui {
-class OutgoingPostCreator;
-}
 
 namespace Mattermost {
 
 struct OutgoingPostData;
 class ChatLogWidget;
 
-class OutgoingPostCreator: public QWidget {
+class OutgoingPostCreator: public MessageTextEditWidget {
 	Q_OBJECT
 public:
 	explicit OutgoingPostCreator (QWidget *parent = nullptr);
@@ -66,8 +62,6 @@ public:
 	void onDropEvent (QDropEvent* event);
 	void setStatusLabelText (const QString& string);
 
-	QSize sizeHint() const override;
-
 public slots:
 	void onAttachButtonClick ();
 	void onPostReceived (BackendPost& post);
@@ -77,11 +71,7 @@ public slots:
 signals:
 	void postEditFinished ();
 
-protected:
-	bool event(QEvent* event) override;
-
 private:
-	int editorHeightHint() const;
 	void createAttachmentList (QStringList& files);
 	void updateSendButtonState ();
 	void setEditingVisual(bool editing);
@@ -100,7 +90,6 @@ private:
 	}
 
 private:
-	Ui::OutgoingPostCreator*			ui;
 	Backend*							backend = nullptr;
 	BackendChannel*						channel = nullptr;
 	QLabel*								statusLabel = nullptr;
