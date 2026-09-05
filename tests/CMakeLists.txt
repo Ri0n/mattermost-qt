@@ -173,3 +173,22 @@ target_link_libraries(post-navigation-window-test
 )
 
 add_test(NAME post-navigation-window-test COMMAND post-navigation-window-test)
+
+add_executable(message-text-edit-widget-test
+    MessageTextEditWidgetTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/chat-area/outgoing-post/MessageTextEditWidget.cpp"
+)
+
+target_include_directories(message-text-edit-widget-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(message-text-edit-widget-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+add_test(NAME message-text-edit-widget-test COMMAND message-text-edit-widget-test)
+set_tests_properties(message-text-edit-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
