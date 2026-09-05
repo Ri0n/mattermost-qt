@@ -44,10 +44,13 @@
 #include "attachments/PostPoll.h"
 #include "backend/Backend.h"
 #include "backend/MentionGroupService.h"
+#include "backend/PostProps.h"
+#include "backend/PostRepository.h"
 #include "backend/UserProfileService.h"
 #include "backend/emoji/EmojiInfo.h"
 #include "backend/types/BackendPost.h"
 #include "chat-area/ChatArea.h"
+#include "chat-area/QuotedReplyController.h"
 #include "chat-area/ThreadWindowTitle.h"
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
 #include "info-dialogs/UserProfileDialog.h"
@@ -133,7 +136,52 @@ PostWidget::PostWidget(Backend& backend,
 			});
 	}
 
-	if (post.rootPost && post.rootPost != lastRootPost) {
+    const QString quotedPostId = post.props.toObject()
+        .value(QString::fromLatin1(PostProps::ReplyToPostId)).toString();
+    if (!quotedPostId.isEmpty() && parentChatArea) {
+        BackendPost* quotedPost = parentChatArea->channel.postIdToPost.value(quotedPostId, nullptr);
+        if (quotedPost && quotedPost != &post) {
+            quoteFrame = std::make_unique<PostQuoteFrame>(*quotedPost,
+                                                          backend.getStorage(), this);
+            quoteFrame->setHeaderText(tr("Replying to %1").arg(quotedPost->getDisplayAuthorName()));
+            ui->verticalLayout->insertWidget(1, quoteFrame.get(), 0, Qt::AlignLeft);
+            connect(quoteFrame.get(), &PostQuoteFrame::postClicked,
+                    this, [this, quotedPostId] {
+                if (parentChatArea) {
+                    parentChatArea->goToPost(quotedPostId);
+                }
+            });
+        } else {
+            QPointer<PostWidget> guard(this);
+            PostRepository::instance(backend).loadPost(
+                quotedPostId,
+                [guard, quotedPostId](const PostRepository::PostResult& result) {
+                    if (!guard || !result.success || !guard->parentChatArea
+                        || guard->quoteFrame) {
+                        return;
+                    }
+                    BackendPost* loaded = guard->parentChatArea->channel.postIdToPost
+                        .value(quotedPostId, nullptr);
+                    if (!loaded || loaded == &guard->post) {
+                        return;
+                    }
+
+                    guard->quoteFrame = std::make_unique<PostQuoteFrame>(
+                        *loaded, guard->backend.getStorage(), guard);
+                    guard->quoteFrame->setHeaderText(
+                        guard->tr("Replying to %1").arg(loaded->getDisplayAuthorName()));
+                    guard->ui->verticalLayout->insertWidget(
+                        1, guard->quoteFrame.get(), 0, Qt::AlignLeft);
+                    QObject::connect(guard->quoteFrame.get(), &PostQuoteFrame::postClicked,
+                                     guard, [guard, quotedPostId] {
+                        if (guard && guard->parentChatArea) {
+                            guard->parentChatArea->goToPost(quotedPostId);
+                        }
+                    });
+                    emit guard->dimensionsChanged();
+                });
+        }
+	} else if (post.rootPost && post.rootPost != lastRootPost) {
 		quoteFrame = std::make_unique<PostQuoteFrame>(*post.rootPost,
 		                                              backend.getStorage(), this);
 		ui->verticalLayout->insertWidget(1, quoteFrame.get(), 0, Qt::AlignLeft);
@@ -218,39 +266,63 @@ void PostWidget::showPostContextMenu(const QPoint& globalPos)
 
     QMenu menu(this);
 
+    if (parentChatArea) {
+        QAction* replyAction = menu.addAction(tr("Reply"));
+        connect(replyAction, &QAction::triggered, this, [this] {
+            if (parentChatArea) {
+                QuotedReplyController::instance(*parentChatArea).begin(post);
+            }
+        });
+
+        if (!parentChatArea->isThread) {
+            QAction* threadAction = menu.addAction(tr("Reply in thread"));
+            connect(threadAction, &QAction::triggered,
+                    this, &PostWidget::openThreadWindow);
+        }
+        menu.addSeparator();
+    }
+
     if (post.isOwnPost()) {
         if (parentChatArea) {
-            menu.addAction(tr("Edit"), this, [this] {
+            QAction* editAction = menu.addAction(tr("Edit"));
+            connect(editAction, &QAction::triggered, this, [this] {
                 parentChatArea->editPost(post);
             });
         }
-        menu.addAction(tr("Delete"), this, [this] {
+        QAction* deleteAction = menu.addAction(tr("Delete"));
+        connect(deleteAction, &QAction::triggered, this, [this] {
             backend.deletePost(post.id);
         });
         menu.addSeparator();
     }
 
     if (!hoveredLink.isEmpty()) {
-        menu.addAction(tr("Copy link to clipboard"), this, [this] {
+        QAction* copyLinkAction = menu.addAction(tr("Copy link to clipboard"));
+        connect(copyLinkAction, &QAction::triggered, this, [this] {
             QApplication::clipboard()->setText(hoveredLink);
         });
     }
 
     const QString selectedText = getSelectedText();
     if (!selectedText.isEmpty()) {
-        menu.addAction(tr("Copy selected text"), this, [selectedText] {
+        QAction* copySelectedAction = menu.addAction(tr("Copy selected text"));
+        connect(copySelectedAction, &QAction::triggered, this, [selectedText] {
             QApplication::clipboard()->setText(selectedText);
         });
     }
 
-    menu.addAction(tr("Copy entire post (formatted)"), this, [this] {
+    QAction* copyEntireAction = menu.addAction(tr("Copy entire post (formatted)"));
+    connect(copyEntireAction, &QAction::triggered, this, [this] {
         QApplication::clipboard()->setText(formatForClipboardSelection(entirePost));
     });
-    menu.addAction(tr("Copy post message"), this, [this] {
+
+    QAction* copyMessageAction = menu.addAction(tr("Copy post message"));
+    connect(copyMessageAction, &QAction::triggered, this, [this] {
         QApplication::clipboard()->setText(formatForClipboardSelection(messageOnly));
     });
 
-    menu.addAction(tr("Add emoji reaction"), this, [this] {
+    QAction* reactionAction = menu.addAction(tr("Add emoji reaction"));
+    connect(reactionAction, &QAction::triggered, this, [this] {
         showEmojiDialog([this](Emoji emoji) {
             backend.addPostReaction(post.id, emoji.name);
         });
@@ -258,8 +330,9 @@ void PostWidget::showPostContextMenu(const QPoint& globalPos)
 
     if (post.author) {
         menu.addSeparator();
-        menu.addAction(tr("View %1's profile").arg(post.author->getDisplayName()),
-                       this, [this] {
+        QAction* profileAction = menu.addAction(
+            tr("View %1's profile").arg(post.author->getDisplayName()));
+        connect(profileAction, &QAction::triggered, this, [this] {
             if (!post.author) {
                 return;
             }
@@ -367,8 +440,7 @@ void PostWidget::connectMessageLinks()
 		browser->setOpenLinks(false);
 		browser->setOpenExternalLinks(false);
         browser->setContextMenuPolicy(Qt::CustomContextMenu);
-        disconnect(browser, &QTextBrowser::anchorClicked, this, nullptr);
-        disconnect(browser, &QWidget::customContextMenuRequested, this, nullptr);
+        QObject::disconnect(browser, nullptr, this, nullptr);
 		connect(browser, &QTextBrowser::anchorClicked, this,
 		        [this](const QUrl& url) {
             if (url.scheme() == QStringLiteral("mattermost-user")) {
@@ -399,7 +471,7 @@ void PostWidget::connectMessageLinks()
             continue;
         }
         editor->setContextMenuPolicy(Qt::CustomContextMenu);
-        disconnect(editor, &QWidget::customContextMenuRequested, this, nullptr);
+        QObject::disconnect(editor, nullptr, this, nullptr);
         connect(editor, &QWidget::customContextMenuRequested, this,
                 [this, editor](const QPoint& pos) {
             showPostContextMenu(editor->viewport()->mapToGlobal(pos));
