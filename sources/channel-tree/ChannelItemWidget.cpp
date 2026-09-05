@@ -87,15 +87,12 @@ void ChannelItemWidget::refreshTheme()
     ui->mutedIcon->setPixmap(style()->standardIcon(QStyle::SP_MediaVolumeMuted).pixmap(16, 16));
     ui->mutedIcon->setVisible(muted);
 
-    // Do not cache a fully resolved palette: that freezes the foreground from
-    // whichever desktop theme was active when this row was constructed.
-    ui->label->setPalette(QPalette());
-    if (!muted) {
-        return;
+    // Rebuild from the row's current palette instead of preserving the palette
+    // from construction time across a desktop theme switch.
+    QPalette labelPalette = palette();
+    if (muted) {
+        labelPalette.setColor(QPalette::WindowText,
+                              palette().color(QPalette::Disabled, QPalette::WindowText));
     }
-
-    QPalette mutedOverride;
-    mutedOverride.setColor(QPalette::WindowText,
-                           palette().color(QPalette::Disabled, QPalette::WindowText));
-    ui->label->setPalette(mutedOverride);
+    ui->label->setPalette(labelPalette);
 }
