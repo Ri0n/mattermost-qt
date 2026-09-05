@@ -31,7 +31,6 @@
 #include <QTimer>
 
 #include "ChatLogWidget.h"
-#include "ui/ThemeDebug.h"
 #include "ui_ChatArea.h"
 
 namespace Mattermost {
@@ -196,7 +195,6 @@ void ChatArea::changeEvent(QEvent* event)
     if (event->type() == QEvent::PaletteChange
         || event->type() == QEvent::ApplicationPaletteChange
         || event->type() == QEvent::StyleChange) {
-        ThemeDebug::logWidgetState("CHAT_AREA_CHANGE_HANDLER", this, event->type());
         if (ui) {
             ui->addEmojiButton->update();
             ui->attachButton->update();
