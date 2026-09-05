@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -87,9 +87,9 @@ void ChannelItemWidget::refreshTheme()
     ui->mutedIcon->setPixmap(style()->standardIcon(QStyle::SP_MediaVolumeMuted).pixmap(16, 16));
     ui->mutedIcon->setVisible(muted);
 
-    // Rebuild from the row's current palette instead of preserving the palette
-    // from construction time across a desktop theme switch.
-    QPalette labelPalette = palette();
+    // Leave the normal row completely inherited. For a muted row resolve only
+    // the foreground role that intentionally differs from the current theme.
+    QPalette labelPalette;
     if (muted) {
         labelPalette.setColor(QPalette::WindowText,
                               palette().color(QPalette::Disabled, QPalette::WindowText));
