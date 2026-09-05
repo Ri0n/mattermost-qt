@@ -28,28 +28,24 @@
 
 namespace Mattermost {
 
-namespace {
-
-void refreshThreadTitle(ChatArea& area)
+void ChatArea::updateThreadWindowTitle()
 {
-    if (!area.isThread || area.root_id.isEmpty()) {
+    if (!isThread || root_id.isEmpty()) {
         return;
     }
 
-    BackendPost* rootPost = area.channel.postIdToPost.value(area.root_id, nullptr);
+    BackendPost* rootPost = channel.postIdToPost.value(root_id, nullptr);
     if (rootPost) {
-        area.setWindowTitle(threadWindowTitle(area.channel, *rootPost));
+        setWindowTitle(threadWindowTitle(channel, *rootPost));
         return;
     }
 
-    QString channelName = area.channel.display_name.trimmed();
+    QString channelName = channel.display_name.trimmed();
     if (channelName.isEmpty()) {
         channelName = QStringLiteral("Mattermost");
     }
-    area.setWindowTitle(channelName + QStringLiteral(" — Thread"));
+    setWindowTitle(channelName + QStringLiteral(" — Thread"));
 }
-
-} // namespace
 
 void ChatArea::showEvent(QShowEvent* event)
 {
@@ -58,7 +54,7 @@ void ChatArea::showEvent(QShowEvent* event)
         return;
     }
 
-    refreshThreadTitle(*this);
+    updateThreadWindowTitle();
 
     // A permalink can create the thread window before the root post itself has
     // reached the local channel cache. The ThreadPostSource already owns that
@@ -67,11 +63,11 @@ void ChatArea::showEvent(QShowEvent* event)
     if (postSource && !property("threadTitleSourceConnected").toBool()) {
         setProperty("threadTitleSourceConnected", true);
         connect(postSource, &AbstractPostSource::rangeAvailable, this,
-                [this](int, int) { refreshThreadTitle(*this); });
+                [this](int, int) { updateThreadWindowTitle(); });
         connect(postSource, &AbstractPostSource::itemsChanged, this,
-                [this](int, int) { refreshThreadTitle(*this); });
+                [this](int, int) { updateThreadWindowTitle(); });
         connect(postSource, &AbstractPostSource::itemCountChanged, this,
-                [this](int) { refreshThreadTitle(*this); });
+                [this](int) { updateThreadWindowTitle(); });
     }
 }
 
