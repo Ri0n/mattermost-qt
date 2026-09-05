@@ -19,12 +19,16 @@
 
 #include "PostWidget.h"
 
+#include <QApplication>
+#include <QClipboard>
+#include <QContextMenuEvent>
 #include <QCursor>
 #include <QDateTime>
 #include <QDebug>
 #include <QEvent>
 #include <QMenu>
 #include <QPalette>
+#include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -45,6 +49,7 @@
 #include "backend/types/BackendPost.h"
 #include "chat-area/ChatArea.h"
 #include "chat-area/ThreadWindowTitle.h"
+#include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
 #include "info-dialogs/UserProfileDialog.h"
 #include "navigation/AppNavigationService.h"
 #include "reactions/PostReactionList.h"
@@ -196,6 +201,77 @@ void PostWidget::changeEvent(QEvent* event)
     }
 }
 
+void PostWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    if (!event) {
+        return;
+    }
+    showPostContextMenu(event->globalPos());
+    event->accept();
+}
+
+void PostWidget::showPostContextMenu(const QPoint& globalPos)
+{
+    if (post.isDeleted) {
+        return;
+    }
+
+    QMenu menu(this);
+
+    if (post.isOwnPost()) {
+        if (parentChatArea) {
+            menu.addAction(tr("Edit"), this, [this] {
+                parentChatArea->editPost(post);
+            });
+        }
+        menu.addAction(tr("Delete"), this, [this] {
+            backend.deletePost(post.id);
+        });
+        menu.addSeparator();
+    }
+
+    if (!hoveredLink.isEmpty()) {
+        menu.addAction(tr("Copy link to clipboard"), this, [this] {
+            QApplication::clipboard()->setText(hoveredLink);
+        });
+    }
+
+    const QString selectedText = getSelectedText();
+    if (!selectedText.isEmpty()) {
+        menu.addAction(tr("Copy selected text"), this, [selectedText] {
+            QApplication::clipboard()->setText(selectedText);
+        });
+    }
+
+    menu.addAction(tr("Copy entire post (formatted)"), this, [this] {
+        QApplication::clipboard()->setText(formatForClipboardSelection(entirePost));
+    });
+    menu.addAction(tr("Copy post message"), this, [this] {
+        QApplication::clipboard()->setText(formatForClipboardSelection(messageOnly));
+    });
+
+    menu.addAction(tr("Add emoji reaction"), this, [this] {
+        showEmojiDialog([this](Emoji emoji) {
+            backend.addPostReaction(post.id, emoji.name);
+        });
+    });
+
+    if (post.author) {
+        menu.addSeparator();
+        menu.addAction(tr("View %1's profile").arg(post.author->getDisplayName()),
+                       this, [this] {
+            if (!post.author) {
+                return;
+            }
+            auto* dialog = new UserProfileDialog(backend, *post.author, this);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->show();
+        });
+    }
+
+    menu.exec(globalPos);
+}
+
 void PostWidget::setAuthor(Backend& backendInstance, const BackendUser* user)
 {
 	if (!user) {
@@ -290,6 +366,9 @@ void PostWidget::connectMessageLinks()
 
 		browser->setOpenLinks(false);
 		browser->setOpenExternalLinks(false);
+        browser->setContextMenuPolicy(Qt::CustomContextMenu);
+        disconnect(browser, &QTextBrowser::anchorClicked, this, nullptr);
+        disconnect(browser, &QWidget::customContextMenuRequested, this, nullptr);
 		connect(browser, &QTextBrowser::anchorClicked, this,
 		        [this](const QUrl& url) {
             if (url.scheme() == QStringLiteral("mattermost-user")) {
@@ -308,7 +387,24 @@ void PostWidget::connectMessageLinks()
             }
 			AppNavigationService::instance(backend).openUrl(url);
 		});
+        connect(browser, &QWidget::customContextMenuRequested, this,
+                [this, browser](const QPoint& pos) {
+            showPostContextMenu(browser->viewport()->mapToGlobal(pos));
+        });
 	}
+
+    const auto codeEditors = messageContent->findChildren<QPlainTextEdit*>();
+    for (QPlainTextEdit* editor : codeEditors) {
+        if (!editor) {
+            continue;
+        }
+        editor->setContextMenuPolicy(Qt::CustomContextMenu);
+        disconnect(editor, &QWidget::customContextMenuRequested, this, nullptr);
+        connect(editor, &QWidget::customContextMenuRequested, this,
+                [this, editor](const QPoint& pos) {
+            showPostContextMenu(editor->viewport()->mapToGlobal(pos));
+        });
+    }
 }
 
 void PostWidget::openUserProfile(const QString& username)
