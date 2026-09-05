@@ -26,6 +26,7 @@
 
 #include <QWidget>
 
+class QEvent;
 class QLabel;
 class QPushButton;
 class QTimer;
@@ -53,7 +54,12 @@ public slots:
     /** Complete one LongList range request. Overlapping requests are reference-counted. */
     void endMessageLoading();
 
+protected:
+    void changeEvent(QEvent* event) override;
+
 private:
+    void refreshActionIcons();
+
     Ui::OutgoingPostPanel *ui;
     QWidget* loadingIndicator = nullptr;
     QTimer* loadingDelayTimer = nullptr;
