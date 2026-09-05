@@ -6,9 +6,15 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>400</width>
+    <width>640</width>
     <height>42</height>
    </rect>
+  </property>
+  <property name="sizePolicy">
+   <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+    <horstretch>0</horstretch>
+    <verstretch>0</verstretch>
+   </sizepolicy>
   </property>
   <property name="windowTitle">
    <string>Form</string>
@@ -29,14 +35,14 @@
    <property name="bottomMargin">
     <number>0</number>
    </property>
-   <item>
+   <item alignment="Qt::AlignBottom">
     <widget class="QLabel" name="label">
      <property name="text">
       <string/>
      </property>
     </widget>
    </item>
-   <item>
+   <item alignment="Qt::AlignBottom">
     <widget class="QPushButton" name="attachButton">
      <property name="minimumSize">
       <size>
@@ -67,6 +73,16 @@
     </widget>
    </item>
    <item>
+    <widget class="Mattermost::OutgoingPostCreator" name="composer" native="true">
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+       <horstretch>1</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+    </widget>
+   </item>
+   <item alignment="Qt::AlignBottom">
     <widget class="QPushButton" name="addEmojiButton">
      <property name="minimumSize">
       <size>
@@ -96,7 +112,7 @@
      </property>
     </widget>
    </item>
-   <item>
+   <item alignment="Qt::AlignBottom">
     <widget class="QPushButton" name="sendButton">
      <property name="minimumSize">
       <size>
@@ -128,6 +144,13 @@
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>Mattermost::OutgoingPostCreator</class>
+   <extends>QWidget</extends>
+   <header>chat-area/outgoing-post/OutgoingPostCreator.h</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>
