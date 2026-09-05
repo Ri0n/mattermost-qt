@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -78,7 +78,7 @@ OutgoingPostCreator::OutgoingPostCreator(QWidget* parent)
 
 void OutgoingPostCreator::init(Backend& backendInstance,
                                BackendChannel& channelInstance,
-                               ChatLogWidget& chatLogWidget,
+                               ChatLogWidget& chatLogWidgetInstance,
                                QBoxLayout* attachmentParentLayout,
                                QLabel& statusLabelInstance,
                                QPushButton& attachButtonInstance,
@@ -87,6 +87,7 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 {
 	backend = &backendInstance;
 	channel = &channelInstance;
+	chatLogWidget = &chatLogWidgetInstance;
 	attachmentParent = attachmentParentLayout;
 	statusLabel = &statusLabelInstance;
 	attachButton = &attachButtonInstance;
@@ -106,7 +107,7 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 	});
 
 	connect(this, &MessageTextEditWidget::upArrowPressed,
-	        &chatLogWidget, &ChatLogWidget::editLastOwnPost);
+	        &chatLogWidgetInstance, &ChatLogWidget::editLastOwnPost);
 
 	connect(this, &QTextEdit::textChanged,
 	        this, &OutgoingPostCreator::updateSendButtonState);
@@ -431,6 +432,7 @@ void OutgoingPostCreator::onPostReceived(BackendPost& post)
 
 	sendRetryTimer.stop();
 	const bool wasEdit = outgoingPostData->postToEdit != nullptr;
+	const QString confirmedPostId = post.id;
 
 	if (wasEdit) {
 		emit postEditFinished();
@@ -449,6 +451,10 @@ void OutgoingPostCreator::onPostReceived(BackendPost& post)
 	setEditingVisual(false);
 	setStatusLabelText(QString());
 	updateSendButtonState();
+
+	if (!wasEdit && chatLogWidget) {
+		chatLogWidget->followOwnPost(confirmedPostId);
+	}
 }
 
 void OutgoingPostCreator::createAttachmentList(QStringList& files)
