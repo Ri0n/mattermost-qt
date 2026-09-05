@@ -37,6 +37,8 @@
 #include <QSizePolicy>
 #include <QTimer>
 
+#include "MessageTextEditWidget.h"
+#include "OutgoingPostCreator.h"
 #include "ui/IconUtils.h"
 #include "ui/ThemeDebug.h"
 #include "ui_OutgoingPostPanel.h"
@@ -256,9 +258,9 @@ void OutgoingPostPanel::adoptComposerWidget()
         return;
     }
 
-    QWidget* composer = parentWidget()->findChild<QWidget*>(
-        QStringLiteral("outgoingPostCreator"), Qt::FindDirectChildrenOnly);
-    if (!composer || composer == this) {
+    auto* composer = parentWidget()->findChild<OutgoingPostCreator*>(
+        QString(), Qt::FindDirectChildrenOnly);
+    if (!composer) {
         return;
     }
 
@@ -279,7 +281,7 @@ void OutgoingPostPanel::focusComposer()
         return;
     }
 
-    if (QWidget* editor = composerWidget->findChild<QWidget*>(QStringLiteral("textEdit"))) {
+    if (auto* editor = composerWidget->findChild<MessageTextEditWidget*>()) {
         editor->setFocus(Qt::OtherFocusReason);
     }
 }
