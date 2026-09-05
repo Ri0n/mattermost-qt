@@ -80,7 +80,8 @@ private:
     bool placeNavigationContext(const QString& targetPostId,
                                 const QStringList& chronologicalIds,
                                 bool reachedOldest,
-                                bool reachedNewest);
+                                bool reachedNewest,
+                                int exactFirstHint = -1);
     bool requestTouchesProvisionalWindow(int first, int last) const;
     void requestProvisionalRange(int first, int last);
     void finishProvisionalRequests();
