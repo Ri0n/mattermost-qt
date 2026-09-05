@@ -24,6 +24,8 @@
 
 #include "OutgoingPostPanel.h"
 
+#include <algorithm>
+
 #include <QEvent>
 #include <QHideEvent>
 #include <QIcon>
@@ -32,6 +34,7 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QShowEvent>
+#include <QSizePolicy>
 #include <QTimer>
 
 #include "ui/IconUtils.h"
@@ -44,6 +47,7 @@ namespace {
 constexpr int LoadingIndicatorDelayMs = 150;
 constexpr int LoadingIndicatorExtent = 18;
 constexpr int LoadingAnimationIntervalMs = 70;
+constexpr qreal RestingIconOpacity = 0.8;
 
 class LoadingIndicator final : public QWidget
 {
@@ -108,11 +112,19 @@ OutgoingPostPanel::OutgoingPostPanel(QWidget *parent)
 
     ui->addEmojiButton->setText(QString());
     ui->addEmojiButton->setIconSize(QSize(18, 18));
+    ui->addEmojiButton->setFlat(true);
+    ui->addEmojiButton->setCursor(Qt::PointingHandCursor);
     ui->addEmojiButton->installEventFilter(this);
 
     ui->attachButton->setText(QString());
     ui->attachButton->setIconSize(QSize(18, 18));
+    ui->attachButton->setFlat(true);
+    ui->attachButton->setCursor(Qt::PointingHandCursor);
     ui->attachButton->installEventFilter(this);
+
+    ui->sendButton->setFlat(true);
+    ui->sendButton->setCursor(Qt::PointingHandCursor);
+
     refreshActionIcons();
 
     loadingIndicator = new LoadingIndicator(this);
@@ -196,19 +208,80 @@ void OutgoingPostPanel::changeEvent(QEvent* event)
 
 bool OutgoingPostPanel::eventFilter(QObject* watched, QEvent* event)
 {
-    if (event && event->type() == QEvent::PaletteChange) {
+    if (!event) {
+        return QWidget::eventFilter(watched, event);
+    }
+
+    const bool iconVisualChanged = event->type() == QEvent::PaletteChange
+        || event->type() == QEvent::EnabledChange
+        || event->type() == QEvent::Enter
+        || event->type() == QEvent::Leave;
+
+    if (iconVisualChanged) {
+        bool hovered = false;
+        if (event->type() == QEvent::Enter) {
+            hovered = true;
+        } else if (event->type() != QEvent::Leave) {
+            if (auto* button = qobject_cast<QPushButton*>(watched)) {
+                hovered = button->underMouse();
+            }
+        }
+
         if (watched == ui->addEmojiButton) {
             refreshActionIcon(*ui->addEmojiButton,
                               QStringLiteral(":/icons/emoji"),
-                              "OUTGOING_ICON_REFRESH_EMOJI");
+                              "OUTGOING_ICON_REFRESH_EMOJI",
+                              hovered);
         } else if (watched == ui->attachButton) {
             refreshActionIcon(*ui->attachButton,
                               QStringLiteral(":/icons/paperclip"),
-                              "OUTGOING_ICON_REFRESH_ATTACH");
+                              "OUTGOING_ICON_REFRESH_ATTACH",
+                              hovered);
         }
     }
 
     return QWidget::eventFilter(watched, event);
+}
+
+void OutgoingPostPanel::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    adoptComposerWidget();
+    focusComposer();
+}
+
+void OutgoingPostPanel::adoptComposerWidget()
+{
+    if (composerWidget || !ui || !parentWidget()) {
+        return;
+    }
+
+    QWidget* composer = parentWidget()->findChild<QWidget*>(
+        QStringLiteral("outgoingPostCreator"), Qt::FindDirectChildrenOnly);
+    if (!composer || composer == this) {
+        return;
+    }
+
+    composerWidget = composer;
+    composerWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+
+    const int attachIndex = ui->horizontalLayout->indexOf(ui->attachButton);
+    ui->horizontalLayout->insertWidget(
+        attachIndex + 1, composerWidget, 1, Qt::AlignVCenter);
+
+    const int verticalPadding = std::max(2, composerWidget->fontMetrics().lineSpacing() / 2);
+    ui->horizontalLayout->setContentsMargins(0, verticalPadding, 0, verticalPadding);
+}
+
+void OutgoingPostPanel::focusComposer()
+{
+    if (!composerWidget) {
+        return;
+    }
+
+    if (QWidget* editor = composerWidget->findChild<QWidget*>(QStringLiteral("textEdit"))) {
+        editor->setFocus(Qt::OtherFocusReason);
+    }
 }
 
 void OutgoingPostPanel::refreshActionIcons()
@@ -219,19 +292,26 @@ void OutgoingPostPanel::refreshActionIcons()
 
     refreshActionIcon(*ui->addEmojiButton,
                       QStringLiteral(":/icons/emoji"),
-                      "OUTGOING_ICON_REFRESH_EMOJI");
+                      "OUTGOING_ICON_REFRESH_EMOJI",
+                      ui->addEmojiButton->underMouse());
     refreshActionIcon(*ui->attachButton,
                       QStringLiteral(":/icons/paperclip"),
-                      "OUTGOING_ICON_REFRESH_ATTACH");
+                      "OUTGOING_ICON_REFRESH_ATTACH",
+                      ui->attachButton->underMouse());
 }
 
 void OutgoingPostPanel::refreshActionIcon(QPushButton& button,
                                           const QString& resourcePath,
-                                          const char* debugMarker)
+                                          const char* debugMarker,
+                                          bool hovered)
 {
     ThemeDebug::logWidgetState(debugMarker, &button, QEvent::None);
-    button.setIcon(IconUtils::tintedSymbolicIcon(
-        resourcePath, button.palette().color(QPalette::ButtonText)));
+
+    QColor color = button.palette().color(QPalette::ButtonText);
+    if (!hovered) {
+        color.setAlphaF(color.alphaF() * RestingIconOpacity);
+    }
+    button.setIcon(IconUtils::tintedSymbolicIcon(resourcePath, color));
 }
 
 } /* namespace Mattermost */
