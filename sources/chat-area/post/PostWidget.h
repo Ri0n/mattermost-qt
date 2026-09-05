@@ -89,6 +89,7 @@ private:
     void updateAuthorAvatar();
     void connectReactionActions();
     void connectMessageLinks();
+    void openUserProfile(const QString& username);
 
     Backend&                            backend;
     Ui::PostWidget*						ui;
