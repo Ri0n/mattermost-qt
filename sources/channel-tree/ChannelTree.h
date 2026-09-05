@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -76,6 +76,11 @@ public:
 public:
 	bool isChannelActive (const BackendChannel& channel);
 	Backend* backendInstance() const { return backendForSidebar; }
+
+    // ChannelItemDelegate requests this lazily when a group-DM row becomes
+    // visible. Keeping the request on the tree side avoids backend/network work
+    // inside paint() and keeps the delegate independently testable.
+    Q_INVOKABLE void ensureGroupChannelDisplayName(const QString& channelId);
 
 	void addTeam (Backend& backend, BackendTeam& team);
 	void populateSidebars(Backend& backend);
