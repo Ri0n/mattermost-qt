@@ -17,6 +17,26 @@ target_link_libraries(long-list-widget-test
 add_test(NAME long-list-widget-test COMMAND long-list-widget-test)
 set_tests_properties(long-list-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+add_executable(long-list-widget-removal-test
+    LongListWidgetRemovalTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/widgets/LongListWidget.cpp"
+    "${CMAKE_SOURCE_DIR}/sources/widgets/LongListWidgetRemoval.cpp"
+)
+
+target_include_directories(long-list-widget-removal-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(long-list-widget-removal-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+add_test(NAME long-list-widget-removal-test COMMAND long-list-widget-removal-test)
+set_tests_properties(long-list-widget-removal-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(message-formatter-test
     MessageFormatterTest.cpp
     "${CMAKE_SOURCE_DIR}/sources/chat-area/post/MessageFormatter.cpp"
