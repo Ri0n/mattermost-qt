@@ -457,7 +457,7 @@ void OutgoingPostCreator::updateSendButtonState()
 	}
 
 	if (sendButtonEnabled && editing) {
-		tooltipText = tr("Save edited message · Esc to cancel"));
+		tooltipText = tr("Save edited message · Esc to cancel");
 	} else if (sendButtonEnabled && tooltipText.isEmpty()) {
 		tooltipText = tr("Send");
 	}
