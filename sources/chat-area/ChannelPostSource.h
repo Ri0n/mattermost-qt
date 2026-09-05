@@ -1,8 +1,8 @@
 #pragma once
 
-#include <limits>
-
 #include <QHash>
+#include <QPair>
+#include <QSet>
 #include <QStringList>
 #include <QVector>
 
@@ -28,6 +28,18 @@ public:
     int indexOfPost(const QString& postId) const override;
     int ensurePostIndex(const QString& postId) override;
 
+    /**
+     * Atomically adopt a server-provided chronological context around a semantic
+     * target. The context is placed exactly when it intersects an authoritative
+     * row (or a confirmed channel boundary); otherwise its target gets a
+     * timestamp-based estimated absolute position and the whole context remains
+     * provisional until a later cursor expansion intersects authoritative data.
+     */
+    bool adoptNavigationContext(const QString& targetPostId,
+                                const QStringList& chronologicalIds,
+                                bool reachedOldest,
+                                bool reachedNewest);
+
     void requestRange(int first,
                       int last,
                       RequestReason reason,
@@ -39,10 +51,39 @@ public:
 private:
     static constexpr int ServerPageSize = 10;
 
+    struct ProvisionalWindow {
+        QString targetPostId;
+        QStringList postIds;
+        int first = -1;
+        bool reachedOldest = false;
+        bool reachedNewest = false;
+
+        bool isValid() const { return first >= 0 && !postIds.isEmpty(); }
+        int last() const { return first + static_cast<int>(postIds.size()) - 1; }
+        void clear()
+        {
+            targetPostId.clear();
+            postIds.clear();
+            first = -1;
+            reachedOldest = false;
+            reachedNewest = false;
+        }
+    };
+
     int currentLogicalCount() const;
     int pageForIndex(int index) const;
     int estimateIndexForPost(const BackendPost& post) const;
-    int nearestEmptyIndex(int preferred) const;
+    int findFreeWindowFirst(const QVector<QString>& ids,
+                            int windowSize,
+                            int preferredFirst) const;
+    bool isAuthoritativePost(const QString& postId) const;
+    bool placeNavigationContext(const QString& targetPostId,
+                                const QStringList& chronologicalIds,
+                                bool reachedOldest,
+                                bool reachedNewest);
+    bool requestTouchesProvisionalWindow(int first, int last) const;
+    void requestProvisionalRange(int first, int last);
+    void finishProvisionalRequests();
     void seedCachedPosts();
     void seedUnknownNewestPost();
     void rebuildIndex();
@@ -58,6 +99,11 @@ private:
     const bool exactRootCount;
     bool moreBeforeFirst = false;
     bool beforeRequestInFlight = false;
+
+    ProvisionalWindow provisionalWindow;
+    QSet<QString> provisionalPostIds;
+    bool provisionalRequestInFlight = false;
+    QVector<QPair<int, int>> pendingProvisionalRequests;
 };
 
 } // namespace Mattermost
