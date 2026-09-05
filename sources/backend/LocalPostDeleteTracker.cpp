@@ -39,7 +39,7 @@ void clearFailedRequest(const QUrl& url)
 
 bool take(const QString& postId)
 {
-    return !postId.isEmpty() && pendingPostIds.remove(postId) > 0;
+    return !postId.isEmpty() && pendingPostIds.remove(postId);
 }
 
 void clear()
