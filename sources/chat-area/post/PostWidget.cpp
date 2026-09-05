@@ -19,9 +19,11 @@
 
 #include "PostWidget.h"
 
+#include <QCursor>
 #include <QDateTime>
 #include <QDebug>
 #include <QEvent>
+#include <QMenu>
 #include <QPalette>
 #include <QPointer>
 #include <QPushButton>
@@ -37,6 +39,7 @@
 #include "attachments/PostAttachmentList.h"
 #include "attachments/PostPoll.h"
 #include "backend/Backend.h"
+#include "backend/MentionGroupService.h"
 #include "backend/UserProfileService.h"
 #include "backend/emoji/EmojiInfo.h"
 #include "backend/types/BackendPost.h"
@@ -49,6 +52,19 @@
 #include "ui_PostWidget.h"
 
 namespace Mattermost {
+
+namespace {
+
+QString internalLinkValue(const QUrl& url)
+{
+    QString value = url.path();
+    while (value.startsWith(QLatin1Char('/'))) {
+        value.remove(0, 1);
+    }
+    return value;
+}
+
+} // namespace
 
 PostWidget::PostWidget(Backend& backend,
                        BackendPost& post,
@@ -87,6 +103,18 @@ PostWidget::PostWidget(Backend& backend,
 		qDebug() << "Link hovered:" << link;
 		hoveredLink = link;
 	});
+
+    const QString teamId = mentionTeamId();
+    if (!teamId.isEmpty()) {
+        auto& groupService = MentionGroupService::instance(backend);
+        connect(&groupService, &MentionGroupService::groupsChanged,
+                this, [this, teamId](const QString& changedTeamId) {
+            if (changedTeamId == teamId) {
+                refreshMentionLinks();
+            }
+        });
+        groupService.ensureTeamGroups(teamId);
+    }
 
 	if (post.author) {
 		setAuthor(backend, post.author);
@@ -155,6 +183,7 @@ void PostWidget::changeEvent(QEvent* event)
     }
 
     updateAuthorAvatar();
+    refreshMentionLinks();
     update();
     const auto childWidgets = findChildren<QWidget*>();
     for (QWidget* child : childWidgets) {
@@ -228,30 +257,52 @@ void PostWidget::setEdited(const QString& message)
 	}
 }
 
+QString PostWidget::mentionTeamId() const
+{
+    return parentChatArea && parentChatArea->channel.team
+        ? parentChatArea->channel.team->id : QString();
+}
+
+void PostWidget::refreshMentionLinks()
+{
+    if (!messageContent || post.poll || post.isDeleted) {
+        return;
+    }
+    messageContent->setMessage(post.message);
+    connectMessageLinks();
+}
+
 void PostWidget::connectMessageLinks()
 {
+    QHash<QString, QString> groupMentionIds;
+    const QString teamId = mentionTeamId();
+    if (!teamId.isEmpty()) {
+        groupMentionIds = MentionGroupService::instance(backend).mentionIds(teamId);
+    }
+
 	const auto browsers = messageContent->findChildren<QTextBrowser*>();
 	for (QTextBrowser* browser : browsers) {
 		if (!browser) {
 			continue;
 		}
 
-        // Apply Mattermost @username semantics after Markdown/HTML parsing. This
-        // works for both the Qt 6 markdown renderer and the Qt 5 compatibility
-        // path, and deliberately leaves existing links and code untouched.
-        UserMentionLinkifier::linkify(*browser->document());
+        UserMentionLinkifier::linkify(*browser->document(), groupMentionIds);
 
 		browser->setOpenLinks(false);
 		browser->setOpenExternalLinks(false);
 		connect(browser, &QTextBrowser::anchorClicked, this,
 		        [this](const QUrl& url) {
             if (url.scheme() == QStringLiteral("mattermost-user")) {
-                QString username = url.path();
-                while (username.startsWith(QLatin1Char('/'))) {
-                    username.remove(0, 1);
-                }
+                const QString username = internalLinkValue(url);
                 if (!username.isEmpty()) {
                     openUserProfile(username);
+                }
+                return;
+            }
+            if (url.scheme() == QStringLiteral("mattermost-group")) {
+                const QString groupId = internalLinkValue(url);
+                if (!groupId.isEmpty()) {
+                    openGroupMention(groupId);
                 }
                 return;
             }
@@ -295,6 +346,57 @@ void PostWidget::openUserProfile(const QString& username)
                     return;
                 }
             }
+        });
+}
+
+void PostWidget::openGroupMention(const QString& groupId)
+{
+    const QString teamId = mentionTeamId();
+    if (teamId.isEmpty()) {
+        return;
+    }
+
+    auto& service = MentionGroupService::instance(backend);
+    const MentionGroup* group = service.groupById(teamId, groupId);
+    const QString title = group && !group->displayName.isEmpty()
+        ? group->displayName : QStringLiteral("@") + (group ? group->name : QString());
+
+    QPointer<PostWidget> guard(this);
+    service.retrieveMembers(groupId,
+        [guard, title](QVector<MentionGroupMember> members) {
+            if (!guard) {
+                return;
+            }
+
+            auto* menu = new QMenu(guard);
+            menu->setAttribute(Qt::WA_DeleteOnClose);
+            if (!title.isEmpty()) {
+                QAction* titleAction = menu->addAction(title);
+                titleAction->setEnabled(false);
+                menu->addSeparator();
+            }
+
+            if (members.isEmpty()) {
+                QAction* emptyAction = menu->addAction(guard->tr("No members"));
+                emptyAction->setEnabled(false);
+            } else {
+                for (const MentionGroupMember& member : members) {
+                    QString label = member.displayName;
+                    if (!member.username.isEmpty()
+                        && member.displayName.compare(member.username, Qt::CaseInsensitive) != 0) {
+                        label += QStringLiteral(" (@") + member.username + QLatin1Char(')');
+                    }
+                    QAction* action = menu->addAction(label);
+                    const QString username = member.username;
+                    QObject::connect(action, &QAction::triggered, guard,
+                                     [guard, username] {
+                        if (guard && !username.isEmpty()) {
+                            guard->openUserProfile(username);
+                        }
+                    });
+                }
+            }
+            menu->popup(QCursor::pos());
         });
 }
 
