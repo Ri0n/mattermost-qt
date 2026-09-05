@@ -3,8 +3,6 @@
 #include <QObject>
 
 class QEvent;
-class QFrame;
-class QLabel;
 class QToolButton;
 class QWidget;
 
@@ -13,6 +11,7 @@ namespace Mattermost {
 class BackendPost;
 class ChatArea;
 class OutgoingPostCreator;
+class QuotedPostPreview;
 
 /** Owns the UI-only quoted-reply state around the composer QTextEdit. */
 class QuotedReplyController final : public QObject
@@ -33,9 +32,8 @@ private:
 
     ChatArea& area;
     QWidget* wrapper = nullptr;
-    QFrame* preview = nullptr;
-    QLabel* authorLabel = nullptr;
-    QLabel* messageLabel = nullptr;
+    QWidget* previewRow = nullptr;
+    QuotedPostPreview* preview = nullptr;
     QToolButton* cancelButton = nullptr;
     OutgoingPostCreator* editor = nullptr;
 };
