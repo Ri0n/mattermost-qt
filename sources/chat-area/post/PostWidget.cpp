@@ -50,7 +50,9 @@
 #include "backend/emoji/EmojiInfo.h"
 #include "backend/types/BackendPost.h"
 #include "chat-area/ChatArea.h"
+#include "chat-area/QuotedPostPreview.h"
 #include "chat-area/QuotedReplyController.h"
+#include "chat-area/QuotedReplyFormat.h"
 #include "chat-area/ThreadWindowTitle.h"
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
 #include "info-dialogs/UserProfileDialog.h"
@@ -70,6 +72,22 @@ QString internalLinkValue(const QUrl& url)
         value.remove(0, 1);
     }
     return value;
+}
+
+QString quotedPostId(const BackendPost& post)
+{
+    return post.props.toObject()
+        .value(QString::fromLatin1(PostProps::ReplyToPostId)).toString();
+}
+
+QString displayMessage(const BackendPost& post, const QString& wireMessage)
+{
+    if (post.isDeleted) {
+        return post.poll ? QStringLiteral("(Poll deleted)")
+                         : QStringLiteral("(Message deleted)");
+    }
+    return quotedPostId(post).isEmpty()
+        ? wireMessage : QuotedReplyFormat::stripFallback(wireMessage);
 }
 
 } // namespace
@@ -102,7 +120,7 @@ PostWidget::PostWidget(Backend& backend,
 	ui->verticalLayout->insertWidget(messageIndex, messageContent);
 	connect(messageContent, &MessageContentWidget::dimensionsChanged,
 	        this, &PostWidget::dimensionsChanged);
-	messageContent->setMessage(post.message);
+	messageContent->setMessage(displayMessage(post, post.message));
 	connectMessageLinks();
 	ui->time->setText(getMessageTimeString(post.create_at));
 
@@ -136,52 +154,48 @@ PostWidget::PostWidget(Backend& backend,
 			});
 	}
 
-    const QString quotedPostId = post.props.toObject()
-        .value(QString::fromLatin1(PostProps::ReplyToPostId)).toString();
-    if (!quotedPostId.isEmpty() && parentChatArea) {
-        BackendPost* quotedPost = parentChatArea->channel.postIdToPost.value(quotedPostId, nullptr);
+    const QString replyPostId = quotedPostId(post);
+    if (!post.isDeleted && !replyPostId.isEmpty() && parentChatArea) {
+        BackendPost* quotedPost = parentChatArea->channel.postIdToPost.value(replyPostId, nullptr);
         if (quotedPost && quotedPost != &post) {
-            quoteFrame = std::make_unique<PostQuoteFrame>(*quotedPost,
-                                                          backend.getStorage(), this);
-            quoteFrame->setHeaderText(tr("Replying to %1").arg(quotedPost->getDisplayAuthorName()));
-            ui->verticalLayout->insertWidget(1, quoteFrame.get(), 0, Qt::AlignLeft);
-            connect(quoteFrame.get(), &PostQuoteFrame::postClicked,
-                    this, [this, quotedPostId] {
+            quotedReplyPreview = std::make_unique<QuotedPostPreview>(this, 2);
+            quotedReplyPreview->setPost(*quotedPost);
+            quotedReplyPreview->setActivatedCallback([this, replyPostId] {
                 if (parentChatArea) {
-                    parentChatArea->goToPost(quotedPostId);
+                    parentChatArea->goToPost(replyPostId);
                 }
             });
+            ui->verticalLayout->insertWidget(1, quotedReplyPreview.get());
         } else {
             QPointer<PostWidget> guard(this);
             PostRepository::instance(backend).loadPost(
-                quotedPostId,
-                [guard, quotedPostId](const PostRepository::PostResult& result) {
+                replyPostId,
+                [guard, replyPostId](const PostRepository::PostResult& result) {
                     if (!guard || !result.success || !guard->parentChatArea
-                        || guard->quoteFrame) {
+                        || guard->quotedReplyPreview || guard->post.isDeleted) {
                         return;
                     }
                     BackendPost* loaded = guard->parentChatArea->channel.postIdToPost
-                        .value(quotedPostId, nullptr);
+                        .value(replyPostId, nullptr);
                     if (!loaded || loaded == &guard->post) {
                         return;
                     }
 
-                    guard->quoteFrame = std::make_unique<PostQuoteFrame>(
-                        *loaded, guard->backend.getStorage(), guard);
-                    guard->quoteFrame->setHeaderText(
-                        guard->tr("Replying to %1").arg(loaded->getDisplayAuthorName()));
+                    guard->quotedReplyPreview =
+                        std::make_unique<QuotedPostPreview>(guard, 2);
+                    guard->quotedReplyPreview->setPost(*loaded);
+                    guard->quotedReplyPreview->setActivatedCallback(
+                        [guard, replyPostId] {
+                            if (guard && guard->parentChatArea) {
+                                guard->parentChatArea->goToPost(replyPostId);
+                            }
+                        });
                     guard->ui->verticalLayout->insertWidget(
-                        1, guard->quoteFrame.get(), 0, Qt::AlignLeft);
-                    QObject::connect(guard->quoteFrame.get(), &PostQuoteFrame::postClicked,
-                                     guard, [guard, quotedPostId] {
-                        if (guard && guard->parentChatArea) {
-                            guard->parentChatArea->goToPost(quotedPostId);
-                        }
-                    });
+                        1, guard->quotedReplyPreview.get());
                     emit guard->dimensionsChanged();
                 });
         }
-	} else if (post.rootPost && post.rootPost != lastRootPost) {
+	} else if (!post.isDeleted && post.rootPost && post.rootPost != lastRootPost) {
 		quoteFrame = std::make_unique<PostQuoteFrame>(*post.rootPost,
 		                                              backend.getStorage(), this);
 		ui->verticalLayout->insertWidget(1, quoteFrame.get(), 0, Qt::AlignLeft);
@@ -190,7 +204,7 @@ PostWidget::PostWidget(Backend& backend,
 		});
 	}
 
-	if (!post.files.empty()) {
+	if (!post.isDeleted && !post.files.empty()) {
 		attachments = std::make_unique<PostAttachmentList>(backend, this);
 		connect(attachments.get(), &PostAttachmentList::dimensionsChanged,
 		        this, &PostWidget::dimensionsChanged);
@@ -200,7 +214,7 @@ PostWidget::PostWidget(Backend& backend,
 		}
 	}
 
-	if (!post.reactions.empty()) {
+	if (!post.isDeleted && !post.reactions.empty()) {
 		reactions = std::make_unique<PostReactionList>(this);
 		for (auto& it : post.reactions) {
 			const EmojiID emojiID = it.first;
@@ -211,7 +225,7 @@ PostWidget::PostWidget(Backend& backend,
 		ui->verticalLayout->addWidget(reactions.get(), 0, Qt::AlignLeft);
 	}
 
-	if (post.poll) {
+	if (!post.isDeleted && post.poll) {
 		clearMessageText();
 		poll = std::make_unique<PostPoll>(backend, post, *post.poll, this);
 		ui->verticalLayout->addWidget(poll.get(), 0, Qt::AlignLeft);
@@ -394,7 +408,7 @@ void PostWidget::updateAuthorAvatar()
 
 void PostWidget::setEdited(const QString& message)
 {
-	messageContent->setMessage(message);
+	messageContent->setMessage(displayMessage(post, message));
 	connectMessageLinks();
 
 	if (post.poll) {
@@ -417,7 +431,7 @@ void PostWidget::refreshMentionLinks()
     if (!messageContent || post.poll || post.isDeleted) {
         return;
     }
-    messageContent->setMessage(post.message);
+    messageContent->setMessage(displayMessage(post, post.message));
     connectMessageLinks();
 }
 
@@ -574,6 +588,10 @@ void PostWidget::updateReactions()
 		reactions.reset();
 	}
 
+	if (post.isDeleted) {
+		return;
+	}
+
 	if (!post.reactions.empty()) {
 		reactions = std::make_unique<PostReactionList>(this);
 		for (auto& it : post.reactions) {
@@ -654,15 +672,19 @@ void PostWidget::openThreadWindow()
 
 void PostWidget::markAsDeleted()
 {
-	attachments.reset(nullptr);
 	post.isDeleted = true;
+	quoteFrame.reset();
+	quotedReplyPreview.reset();
+	attachments.reset();
+	reactions.reset();
 	if (poll) {
 		ui->verticalLayout->removeWidget(poll.get());
-		poll.reset(nullptr);
+		poll.reset();
 		messageContent->setMessage(QStringLiteral("(Poll deleted)"));
 	} else {
 		messageContent->setMessage(QStringLiteral("(Message deleted)"));
 	}
+	emit dimensionsChanged();
 }
 
 QString PostWidget::getSelectedText()
@@ -696,12 +718,13 @@ QString PostWidget::getMessageTimeString(uint64_t timestamp)
 
 QString PostWidget::formatForClipboardSelection(FormatType formatType) const
 {
+	const QString visibleMessage = displayMessage(post, post.message);
 	if (formatType == messageOnly) {
-		return post.message;
+		return visibleMessage;
 	}
 
 	QString ret(post.getDisplayAuthorName() + "\t[" + ui->time->text() + "]\n");
-	ret += " " + post.message + "\n\n";
+	ret += " " + visibleMessage + "\n\n";
 	return ret;
 }
 
