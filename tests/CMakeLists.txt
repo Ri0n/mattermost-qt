@@ -192,3 +192,21 @@ target_link_libraries(message-text-edit-widget-test
 
 add_test(NAME message-text-edit-widget-test COMMAND message-text-edit-widget-test)
 set_tests_properties(message-text-edit-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(quoted-reply-format-test
+    QuotedReplyFormatTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/chat-area/QuotedReplyFormat.cpp"
+)
+
+target_include_directories(quoted-reply-format-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(quoted-reply-format-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME quoted-reply-format-test COMMAND quoted-reply-format-test)
