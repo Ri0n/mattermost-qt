@@ -1,6 +1,7 @@
 #include "QuotedPostPreview.h"
 
 #include <algorithm>
+#include <utility>
 
 #include <QEvent>
 #include <QFont>
@@ -62,8 +63,9 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
 void QuotedPostPreview::setPost(const BackendPost& post)
 {
     authorLabel->setText(QObject::tr("Replying to %1").arg(post.getDisplayAuthorName()));
-    fullText = QuotedReplyFormat::compactText(post.message, !post.files.empty(), 500);
-    setToolTip(post.message);
+    const QString visibleBody = QuotedReplyFormat::stripFallback(post.message);
+    fullText = QuotedReplyFormat::compactText(visibleBody, !post.files.empty(), 500);
+    setToolTip(visibleBody);
     refreshText();
 }
 
