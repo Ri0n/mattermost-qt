@@ -6,20 +6,21 @@
 
 #pragma once
 
-#include <QLabel>
 #include <QPixmap>
 #include <QPushButton>
 #include <QString>
 
+class QEvent;
 class QPaintEvent;
 class QWidget;
 
 namespace Mattermost {
 
 /**
- * Composer action button whose symbolic icon is validated at the actual paint
- * boundary against QApplication's current palette. This deliberately avoids
- * depending on PaletteChange delivery order through styled child widgets.
+ * Borderless composer action button. The normal QPushButton style is not
+ * painted at all, so desktop styles cannot reintroduce a hover frame and a
+ * QStyleSheetStyle wrapper is unnecessary. Both symbolic icons and the textual
+ * send glyph are drawn from the same current application palette.
  */
 class ThemeIconButton final : public QPushButton
 {
@@ -27,31 +28,14 @@ public:
     explicit ThemeIconButton(QWidget* parent = nullptr);
 
 protected:
+    bool event(QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
 
 private:
     QString symbolicResource() const;
+
     QString renderedTint;
-    qint64 renderedIconCacheKey = 0;
-};
-
-/**
- * Palette-aware symbolic label. The label paints its own icon rather than
- * exposing a cached QLabel pixmap, so a stale pixmap cannot survive a system
- * theme transition.
- */
-class ThemeSymbolicIconLabel final : public QLabel
-{
-public:
-    explicit ThemeSymbolicIconLabel(QString resourcePath,
-                                    QWidget* parent = nullptr);
-
-protected:
-    void paintEvent(QPaintEvent* event) override;
-
-private:
-    QString resourcePath;
-    QString renderedTint;
+    QSize renderedSize;
     QPixmap renderedPixmap;
 };
 
