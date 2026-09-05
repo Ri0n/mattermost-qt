@@ -15,6 +15,7 @@
 #include <QPointer>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QSignalBlocker>
 
 #include "ChatArea.h"
 #include "PostsListWidget.h"
@@ -29,7 +30,7 @@ namespace Mattermost {
 namespace {
 
 constexpr int ChannelPageSize = 30;
-constexpr int SeekDebounceMs = 120;
+constexpr int SeekDebounceMs = 100;
 constexpr int MeasurementDebounceMs = 180;
 constexpr int GapPrefetchRows = 5;
 constexpr int ContextPostsPerSide = 15;
@@ -157,9 +158,8 @@ ChannelTimelineController::ChannelTimelineController(ChatArea& sourceArea)
     seekTimer.setSingleShot(true);
     seekTimer.setInterval(SeekDebounceMs);
     connect(&seekTimer, &QTimer::timeout, this, [this] {
-        if (pendingSeekIndex >= 0) {
-            requestSeek(pendingSeekIndex);
-        }
+        seekState.markReady();
+        resumeSeekIfReady();
     });
 
     measurementTimer.setSingleShot(true);
@@ -253,6 +253,7 @@ void ChannelTimelineController::start()
     nextOlderPage = 0;
     initialRenderDone = false;
     lastUserViewportAnchor = ViewportAnchor();
+    seekState.reset();
     contextNavigationActive = false;
     contextNavigationPostId.clear();
     contextOldestPostId.clear();
@@ -276,24 +277,16 @@ void ChannelTimelineController::start()
     QScrollBar* scrollBar = area.ui->listWidget->verticalScrollBar();
     connect(scrollBar, &QScrollBar::valueChanged, this,
             [this, scrollBar](int) {
-        // A thumb drag through a sparse gap has no visible PostWidget from which
-        // PostsListWidget can derive its ordinary semantic anchor. Capture the
-        // sparse pixel/logical anchor here so a later page response cannot reuse
-        // the post anchor from before the drag and snap the user back.
+        // During a physical drag the thumb fraction is the authoritative seek
+        // coordinate. Programmatic scrollbar changes caused by rendering, gap
+        // resizing or anchor restoration must never feed back into networking.
         if (scrollBar->isSliderDown()) {
-            lastUserViewportAnchor = captureViewportAnchor();
+            updateSeekTargetFromScrollbar(false);
         }
-        scheduleViewportCheck();
     });
     connect(scrollBar, &QScrollBar::sliderReleased, this,
             [this] {
-        // The final thumb position is authoritative even when it lies entirely
-        // inside a gap. Network/page reconciliation must materialize around this
-        // point rather than restoring the pre-drag viewport.
-        lastUserViewportAnchor = captureViewportAnchor();
-        pendingSeekIndex = -1;
-        seekTimer.stop();
-        scheduleViewportCheck();
+        updateSeekTargetFromScrollbar(true);
         schedulePrune();
     });
     connect(area.ui->listWidget, &PostsListWidget::userViewportChanged, this,
@@ -334,6 +327,7 @@ void ChannelTimelineController::beginContextNavigation(const QString& postId)
     contextReachedOldest = false;
     contextReachedNewest = false;
     lastUserViewportAnchor = ViewportAnchor();
+    seekState.reset();
     pendingSeekIndex = -1;
     seekTimer.stop();
 
@@ -366,6 +360,7 @@ void ChannelTimelineController::deactivate()
     ++pruneGeneration;
     seekTimer.stop();
     measurementTimer.stop();
+    seekState.reset();
     pendingSeekIndex = -1;
     requestInFlight = false;
     contextNavigationActive = false;
@@ -395,16 +390,12 @@ int ChannelTimelineController::authoritativeFirstIndex(int page, int pageSize) c
         return 0;
     }
     const qint64 first = static_cast<qint64>(timeline.totalCount())
-        - static_cast<qint64>(page) * ChannelPageSize - pageSize;
+        - static_cast<qint64>(page) * pageSize - pageSize;
     return static_cast<int>(std::max<qint64>(0, first));
 }
 
 ChannelTimelineController::ViewportAnchor ChannelTimelineController::stableViewportAnchor() const
 {
-    // While the user owns the scrollbar thumb, its physical position is newer
-    // information than any previously committed post anchor. In a large gap the
-    // list may have no visible PostWidget at all, so always derive a sparse gap
-    // anchor directly from the current scrollbar coordinate.
     if (active && area.ui && area.ui->listWidget
         && area.ui->listWidget->verticalScrollBar()->isSliderDown()) {
         return captureViewportAnchor();
@@ -453,6 +444,7 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
 
             if (!result.success) {
                 guard->flushDeferredExternalPosts();
+                guard->resumeSeekIfReady();
                 return;
             }
 
@@ -500,12 +492,18 @@ void ChannelTimelineController::requestPage(int page, int focusLogicalIndex)
 
             if (!guard->initialRenderDone) {
                 guard->continueInitialPrefetch();
+                guard->resumeSeekIfReady();
                 return;
             }
 
-            guard->renderTimeline(QString(), anchor);
+            const bool dragging = guard->area.ui && guard->area.ui->listWidget
+                && guard->area.ui->listWidget->verticalScrollBar()->isSliderDown();
+            if (!dragging) {
+                guard->renderTimeline(QString(), anchor);
+                guard->scheduleViewportCheck();
+            }
             guard->flushDeferredExternalPosts();
-            guard->scheduleViewportCheck();
+            guard->resumeSeekIfReady();
         });
 }
 
@@ -535,6 +533,7 @@ void ChannelTimelineController::requestContextBefore()
             guard->requestInFlight = false;
             if (!result.success || !guard->contextNavigationActive) {
                 guard->flushDeferredExternalPosts();
+                guard->resumeSeekIfReady();
                 return;
             }
 
@@ -577,6 +576,7 @@ void ChannelTimelineController::requestContextBefore()
             guard->renderTimeline(QString(), anchor);
             guard->flushDeferredExternalPosts();
             guard->scheduleViewportCheck();
+            guard->resumeSeekIfReady();
         });
 }
 
@@ -606,6 +606,7 @@ void ChannelTimelineController::requestContextAfter()
             guard->requestInFlight = false;
             if (!result.success || !guard->contextNavigationActive) {
                 guard->flushDeferredExternalPosts();
+                guard->resumeSeekIfReady();
                 return;
             }
 
@@ -644,6 +645,7 @@ void ChannelTimelineController::requestContextAfter()
             guard->renderTimeline(QString(), anchor);
             guard->flushDeferredExternalPosts();
             guard->scheduleViewportCheck();
+            guard->resumeSeekIfReady();
         });
 }
 
@@ -700,12 +702,6 @@ void ChannelTimelineController::requestPageForIndex(int logicalIndex, bool focus
     const int distanceFromNewest = timeline.totalCount() - 1 - logicalIndex;
     const int page = std::max(0, distanceFromNewest / ChannelPageSize);
     requestPage(page);
-}
-
-void ChannelTimelineController::requestSeek(int logicalIndex)
-{
-    pendingSeekIndex = -1;
-    requestPageForIndex(logicalIndex, false);
 }
 
 void ChannelTimelineController::absorbNewPosts(const ChannelNewPosts& newPosts)
@@ -776,29 +772,8 @@ int ChannelTimelineController::estimateLogicalIndex(uint64_t createAt) const
 
 int ChannelTimelineController::gapPlacementForWindow(int estimatedCenter, int count) const
 {
-    if (count <= 0) {
-        return -1;
-    }
-
-    int bestFirst = -1;
-    qint64 bestDistance = LLONG_MAX;
-    for (const PostTimeline::Span& span : timeline.spans()) {
-        if (span.kind != PostTimeline::GapSpan || span.count < count) {
-            continue;
-        }
-
-        const int maxFirst = span.firstIndex + span.count - count;
-        const int idealFirst = estimatedCenter - count / 2;
-        const int first = std::max(span.firstIndex, std::min(maxFirst, idealFirst));
-        const int placedCenter = first + count / 2;
-        const qint64 distance = std::llabs(static_cast<long long>(placedCenter)
-                                          - static_cast<long long>(estimatedCenter));
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            bestFirst = first;
-        }
-    }
-    return bestFirst;
+    const PostTimeline::LogicalWindow window = timeline.gapWindowNear(estimatedCenter, count);
+    return window.isValid() ? window.firstIndex : -1;
 }
 
 void ChannelTimelineController::placeApproximateWindow(const QStringList& postIds,
@@ -973,7 +948,7 @@ void ChannelTimelineController::restoreViewportAnchor(const ViewportAnchor& anch
     if (!focusPostId.isEmpty()) {
         const int row = list->findPostByIndex(focusPostId, 0);
         if (row >= 0) {
-            const int topOffset = std::max(0, list->viewport()->height() / 3);
+            const int topOffset = std::max(0, list->viewport()->height() / 2);
             list->finishTimelineRebuildAtPost(focusPostId, topOffset);
             list->highlightPost(focusPostId);
             return;
@@ -1080,24 +1055,31 @@ int ChannelTimelineController::logicalIndexNearViewport(int prefetchRows,
 
 void ChannelTimelineController::checkViewport()
 {
-    if (!active || requestInFlight || !area.ui || !area.ui->listWidget) {
+    if (!active || !area.ui || !area.ui->listWidget) {
         return;
     }
 
     PostsListWidget* list = area.ui->listWidget;
     if (list->hasTimelineNavigationLock()) {
+        seekState.reset();
         pendingSeekIndex = -1;
         seekTimer.stop();
         return;
     }
 
     QScrollBar* scrollBar = list->verticalScrollBar();
+    if (scrollBar->isSliderDown()) {
+        updateSeekTargetFromScrollbar(false);
+        return;
+    }
+
+    if (requestInFlight) {
+        return;
+    }
 
     bool centerInsideGap = false;
     const int targetIndex = logicalIndexNearViewport(GapPrefetchRows, &centerInsideGap);
     if (targetIndex < 0) {
-        pendingSeekIndex = -1;
-        seekTimer.stop();
         return;
     }
 
@@ -1114,23 +1096,13 @@ void ChannelTimelineController::checkViewport()
             requestContextAfter();
             return;
         }
-        pendingSeekIndex = -1;
-        seekTimer.stop();
         return;
     }
 
-    if (scrollBar->isSliderDown() && centerInsideGap) {
-        // Do not mutate the sparse model/scroll range underneath an active thumb
-        // drag. Remember the target and let sliderReleased() schedule the seek
-        // from the final authoritative coordinate.
-        pendingSeekIndex = targetIndex;
-        seekTimer.stop();
-        return;
-    }
-
-    pendingSeekIndex = -1;
-    seekTimer.stop();
-    requestPageForIndex(targetIndex, false);
+    seekState.setTarget(targetIndex);
+    pendingSeekIndex = targetIndex;
+    seekState.markReady();
+    resumeSeekIfReady();
 }
 
 void ChannelTimelineController::renderTimeline(const QString& focusPostId,
@@ -1149,6 +1121,7 @@ void ChannelTimelineController::renderTimeline(const QString& focusPostId,
     const quint64 renderId = ++renderGeneration;
     PostsListWidget* list = area.ui->listWidget;
     list->setUpdatesEnabled(false);
+    const QSignalBlocker scrollSignals(list->verticalScrollBar());
     list->beginTimelineRebuild();
 
     const QDate currentDate = QDateTime::currentDateTime().date();
@@ -1197,7 +1170,9 @@ void ChannelTimelineController::renderTimeline(const QString& focusPostId,
     scheduleMeasurementPass();
     schedulePrune();
     schedulePaintResume(renderId);
-    QTimer::singleShot(0, this, &ChannelTimelineController::scheduleViewportCheck);
+    // Never schedule another viewport/network check merely because a sparse
+    // reconciliation completed. Only user input or an explicit page/context
+    // callback may advance loading; this breaks the old render->check->fetch loop.
 }
 
 void ChannelTimelineController::schedulePaintResume(quint64 renderId)
@@ -1230,6 +1205,7 @@ void ChannelTimelineController::updateGapHeights()
     bool changed = false;
     const quint64 renderId = ++renderGeneration;
     list->setUpdatesEnabled(false);
+    const QSignalBlocker scrollSignals(list->verticalScrollBar());
     for (int row = 0; row < list->count(); ++row) {
         QListWidgetItem* item = list->item(row);
         if (!PostsListWidget::isGapItem(item)) {

@@ -42,10 +42,12 @@ void PostTimeline::setTotalCount(int totalCount)
     logicalCount = newCount;
     for (auto it = loadedByIndex.lowerBound(logicalCount); it != loadedByIndex.end();) {
         indexByPostId.remove(it.value());
-        measuredHeights.remove(it.value());
         it = loadedByIndex.erase(it);
     }
-    rebuildMeasuredHeightStats();
+
+    // measuredHeights is deliberately not topology-owned. A temporary logical
+    // eviction/count correction must not change the learned average used by all
+    // sparse gaps. reset() is the lifetime boundary for this small cache.
 }
 
 void PostTimeline::setTotalCountPreservingNewest(int totalCount)
@@ -58,7 +60,6 @@ void PostTimeline::setTotalCountPreservingNewest(int totalCount)
     const int delta = newCount - logicalCount;
     QMap<int, QString> shifted;
     QHash<QString, int> shiftedIndexByPostId;
-    QHash<QString, int> keptHeights;
 
     for (auto it = loadedByIndex.cbegin(); it != loadedByIndex.cend(); ++it) {
         const int newIndex = it.key() + delta;
@@ -67,17 +68,11 @@ void PostTimeline::setTotalCountPreservingNewest(int totalCount)
         }
         shifted.insert(newIndex, it.value());
         shiftedIndexByPostId.insert(it.value(), newIndex);
-        const auto heightIt = measuredHeights.constFind(it.value());
-        if (heightIt != measuredHeights.cend()) {
-            keptHeights.insert(it.value(), heightIt.value());
-        }
     }
 
     logicalCount = newCount;
     loadedByIndex = std::move(shifted);
     indexByPostId = std::move(shiftedIndexByPostId);
-    measuredHeights = std::move(keptHeights);
-    rebuildMeasuredHeightStats();
 }
 
 void PostTimeline::placeWindow(int firstIndex, const QStringList& chronologicalPostIds)
@@ -101,13 +96,10 @@ void PostTimeline::placeWindow(int firstIndex, const QStringList& chronologicalP
                                    logicalCount - target);
 
     auto forgetPost = [this](const QString& postId) {
+        // Logical placement is transient. Keep measured height by identity so a
+        // displaced/evicted post can be re-materialized without perturbing the
+        // global sparse gap estimate.
         indexByPostId.remove(postId);
-        const auto measured = measuredHeights.find(postId);
-        if (measured != measuredHeights.end()) {
-            measuredHeightSum -= measured.value();
-            --measuredHeightCount;
-            measuredHeights.erase(measured);
-        }
     };
 
     for (int i = 0; i < available; ++i) {
@@ -205,6 +197,16 @@ int PostTimeline::adjacentGapIndex(int loadedIndex,
 
 QVector<int> PostTimeline::pruneLoadedToNearest(int centerIndex, int maxLoadedPosts)
 {
+    // An inverted protection range means "no hard protection" and keeps the
+    // historical public overload as the same policy implementation.
+    return pruneLoadedToNearest(centerIndex, maxLoadedPosts, 1, 0);
+}
+
+QVector<int> PostTimeline::pruneLoadedToNearest(int centerIndex,
+                                                int maxLoadedPosts,
+                                                int protectedFirstIndex,
+                                                int protectedLastIndex)
+{
     QVector<int> removed;
     const int limit = std::max(0, maxLoadedPosts);
     if (loadedByIndex.size() <= limit) {
@@ -215,17 +217,37 @@ QVector<int> PostTimeline::pruneLoadedToNearest(int centerIndex, int maxLoadedPo
         ? std::max(0, std::min(logicalCount - 1, centerIndex))
         : 0;
 
+    const bool hasProtectedRange = logicalCount > 0
+        && protectedFirstIndex <= protectedLastIndex;
+    int protectedFirst = 0;
+    int protectedLast = -1;
+    if (hasProtectedRange) {
+        protectedFirst = std::max(0,
+            std::min(logicalCount - 1, protectedFirstIndex));
+        protectedLast = std::max(protectedFirst,
+            std::min(logicalCount - 1, protectedLastIndex));
+    }
+
     struct Candidate {
         int index = 0;
         qint64 distance = 0;
     };
 
+    QSet<int> keep;
     QVector<Candidate> candidates;
     candidates.reserve(loadedByIndex.size());
+
     for (auto it = loadedByIndex.cbegin(); it != loadedByIndex.cend(); ++it) {
+        if (hasProtectedRange
+            && it.key() >= protectedFirst && it.key() <= protectedLast) {
+            keep.insert(it.key());
+            continue;
+        }
+
         Candidate candidate;
         candidate.index = it.key();
-        candidate.distance = std::abs(static_cast<qint64>(it.key()) - center);
+        candidate.distance = std::llabs(static_cast<long long>(it.key())
+                                         - static_cast<long long>(center));
         candidates.push_back(candidate);
     }
 
@@ -237,11 +259,12 @@ QVector<int> PostTimeline::pruneLoadedToNearest(int centerIndex, int maxLoadedPo
         return lhs.index < rhs.index;
     });
 
-    QSet<int> keep;
-    keep.reserve(limit);
-    const int candidateCount = static_cast<int>(candidates.size());
-    for (int i = 0; i < limit && i < candidateCount; ++i) {
-        keep.insert(candidates.at(i).index);
+    const int targetKeepCount = std::max(limit, static_cast<int>(keep.size()));
+    for (const Candidate& candidate : candidates) {
+        if (keep.size() >= targetKeepCount) {
+            break;
+        }
+        keep.insert(candidate.index);
     }
 
     for (auto it = loadedByIndex.begin(); it != loadedByIndex.end();) {
@@ -254,17 +277,12 @@ QVector<int> PostTimeline::pruneLoadedToNearest(int centerIndex, int maxLoadedPo
         const QString postId = it.value();
         removed.push_back(logicalIndex);
         indexByPostId.remove(postId);
-
-        const auto measured = measuredHeights.find(postId);
-        if (measured != measuredHeights.end()) {
-            measuredHeightSum -= measured.value();
-            --measuredHeightCount;
-            measuredHeights.erase(measured);
-        }
-
         it = loadedByIndex.erase(it);
     }
 
+    // Do not remove measuredHeights here. Pruning is a QWidget/materialization
+    // policy, not invalidation of what we already learned about message geometry.
+    // Keeping this tiny metadata cache makes gap estimates invariant across prune.
     std::sort(removed.begin(), removed.end());
     return removed;
 }

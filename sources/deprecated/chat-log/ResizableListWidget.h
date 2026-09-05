@@ -47,4 +47,28 @@ protected:
 
     ViewportAnchor captureViewportAnchor() const;
     void restoreViewportAnchor(const ViewportAnchor& anchor);
+
+    /**
+     * PostsListWidget has a stronger semantic viewport owner which knows about
+     * sparse gaps, user scroll generations and navigation locks. Running this
+     * class' independent deferred anchor restoration in parallel can move the
+     * scrollbar after the sparse controller has already committed its anchor.
+     *
+     * The dynamic property is useful to other specialized list subclasses and
+     * to tests; the inherits() check keeps the existing PostsListWidget API free
+     * of a second anchoring switch.
+     */
+    bool usesInternalViewportAnchoring() const;
+
+    /**
+     * Called after an externally anchored list has committed delayed row size
+     * changes to QListView geometry. The external viewport owner can restore its
+     * semantic anchor against the new scrollbar range here.
+     */
+    virtual void externalViewportGeometryChanged() {}
+
+private:
+    void scheduleExternalViewportGeometryCommit();
+
+    bool externalViewportGeometryCommitScheduled = false;
 };

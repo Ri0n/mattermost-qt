@@ -15,6 +15,7 @@
 #include <QTimer>
 
 #include "backend/PostTimeline.h"
+#include "backend/TimelineSeekState.h"
 
 class QEvent;
 
@@ -87,7 +88,16 @@ private:
 
     void scheduleViewportCheck();
     void checkViewport();
-    void requestSeek(int logicalIndex);
+    void updateSeekTargetFromScrollbar(bool readyImmediately);
+    void resumeSeekIfReady();
+    void requestSeek(const TimelineSeekState::Ticket& ticket);
+    void requestSeekExpansion(const TimelineSeekState::Ticket& ticket,
+                              bool afterMeasurement = false);
+    void requestSeekEdge(const TimelineSeekState::Ticket& ticket,
+                         TimelineSeekState::Edge edge);
+    void finishSeek(const TimelineSeekState::Ticket& ticket);
+    QString seekFocusPostId(const TimelineSeekState::Ticket& ticket) const;
+    void renderSeekWindow(const TimelineSeekState::Ticket& ticket);
     int logicalIndexNearViewport(int extraScreens, bool* centerInsideGap) const;
 
     void renderTimeline();
@@ -107,12 +117,14 @@ private:
 
     ChatArea& area;
     PostTimeline timeline;
+    TimelineSeekState seekState;
     QTimer seekTimer;
     QTimer measurementTimer;
     QSet<int> loadedPages;
     QStringList deferredExternalPostIds;
 
     ViewportAnchor lastUserViewportAnchor;
+    ViewportAnchor seekViewportAnchor;
     QString contextNavigationPostId;
     QString contextOldestPostId;
     QString contextNewestPostId;
@@ -137,6 +149,7 @@ private:
     bool contextNavigationActive = false;
     bool contextReachedOldest = false;
     bool contextReachedNewest = false;
+    bool seekPreserveViewport = false;
 };
 
 } // namespace Mattermost

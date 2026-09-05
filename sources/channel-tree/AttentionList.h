@@ -68,6 +68,7 @@ private:
         QString teamId;
         QString authorId;
         QString message;
+        uint64_t lastViewedAt = 0;
         uint64_t lastReplyAt = 0;
         int unreadReplies = 0;
         int unreadMentions = 0;

@@ -24,7 +24,26 @@ void ChannelTimelineController::renderTimeline()
             this, &ChannelTimelineController::materializeLivePost,
             Qt::UniqueConnection);
 
-    renderTimeline(QString(), ViewportAnchor());
+    // This overload is the initial ordinary-channel render. Page 0 is the newest
+    // server page, so make the newest materialized span authoritative even if a
+    // stale/approximate total count temporarily left geometry after it. A normal
+    // channel open must never put the scrollbar at the end of a gap with the
+    // actual newest PostWidgets sitting above that gap.
+    QString newestMaterializedPostId;
+    const QVector<PostTimeline::Span> spans = timeline.spans();
+    for (auto it = spans.crbegin(); it != spans.crend(); ++it) {
+        if (it->kind == PostTimeline::LoadedSpan && !it->postIds.isEmpty()) {
+            newestMaterializedPostId = it->postIds.last();
+            break;
+        }
+    }
+    if (!newestMaterializedPostId.isEmpty()) {
+        timeline.alignLoadedSpanToBoundary(newestMaterializedPostId, false);
+    }
+
+    ViewportAnchor bottomAnchor;
+    bottomAnchor.kind = ViewportAnchor::Bottom;
+    renderTimeline(QString(), bottomAnchor);
 
     // The sparse service deliberately bypasses BackendChannel::onNewPosts and
     // ChatArea::fillChannelPosts(). Restore the two lifecycle effects that used

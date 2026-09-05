@@ -36,6 +36,23 @@ private slots:
         QVERIFY(!threadPageConfirmsNewestBoundary(true, QString(), 7, 30));
         QVERIFY(!threadPageConfirmsNewestBoundary(false, QStringLiteral("next"), 7, 30));
     }
+
+    void compactInitialPageAlreadyContainsNewest()
+    {
+        QVERIFY(threadInitialPageContainsNewest(1, 30));
+        QVERIFY(threadInitialPageContainsNewest(30, 30));
+        QVERIFY(!threadInitialPageContainsNewest(31, 30));
+        QVERIFY(!threadInitialPageContainsNewest(500, 30));
+    }
+
+    void tailWindowIsPinnedToNewestLogicalEdge()
+    {
+        // root is logical row 0, so 30 newest replies in a 101-row thread occupy
+        // exactly rows 71..100 and leave the unloaded history before them.
+        QCOMPARE(threadTailWindowFirstIndex(101, 30), 71);
+        QCOMPARE(threadTailWindowFirstIndex(61, 30), 31);
+        QCOMPARE(threadTailWindowFirstIndex(31, 30), 1);
+    }
 };
 
 QTEST_APPLESS_MAIN(ThreadTimelinePolicyTest)

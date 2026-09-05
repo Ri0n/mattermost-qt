@@ -1,6 +1,7 @@
 #include <QtTest>
 
 #include "backend/PostTimeline.h"
+#include "backend/TimelineSeekState.h"
 
 using namespace Mattermost;
 
@@ -131,9 +132,6 @@ private slots:
         timeline.reset(20);
         timeline.placeWindow(10, {QStringLiteral("p10"), QStringLiteral("p11"), QStringLiteral("p12")});
 
-        // A cursor API may repeat its boundary post. After stripping the cursor,
-        // placing the older rows immediately before it must preserve the loaded
-        // window's logical identity and produce one contiguous span.
         timeline.placeWindow(8, {QStringLiteral("p8"), QStringLiteral("p9")});
 
         QCOMPARE(timeline.indexOf(QStringLiteral("p10")), 10);
@@ -204,12 +202,8 @@ private slots:
         }
         timeline.placeWindow(20, ids);
 
-        // At p25 there are exactly five real messages (p20..p24) still above
-        // the viewport before the unloaded range begins at logical index 19.
         QCOMPARE(timeline.adjacentGapIndex(25, true, 5), 19);
         QCOMPARE(timeline.adjacentGapIndex(26, true, 5), -1);
-
-        // Symmetric behaviour at the newer edge of the same loaded span.
         QCOMPARE(timeline.adjacentGapIndex(44, false, 5), 50);
         QCOMPARE(timeline.adjacentGapIndex(43, false, 5), -1);
     }
@@ -245,9 +239,6 @@ private slots:
         QCOMPARE(before.at(2).firstIndex, 50);
         QCOMPARE(before.at(2).count, 50);
 
-        // A websocket post grows the newest edge. Existing rows must not move,
-        // and the old trailing gap must not grow: the new capacity is consumed
-        // immediately by the new newest materialized post.
         timeline.setTotalCount(101);
         timeline.placeWindow(100, {QStringLiteral("live")});
 
@@ -279,7 +270,6 @@ private slots:
         QCOMPARE(timeline.loadedCount(), 200);
         QCOMPARE(removed.size(), 60);
 
-        // The viewport neighbourhood is never a pruning candidate.
         for (int i = 120; i <= 140; ++i) {
             QCOMPARE(timeline.postIdAt(i), QStringLiteral("p%1").arg(i));
         }
@@ -310,11 +300,61 @@ private slots:
         QCOMPARE(timeline.loadedCount(), 200);
         QVERIFY(timeline.contains(QStringLiteral("mid45")));
 
-        // The middle window is closest to the viewport and remains complete;
-        // pruning consumes the remote windows first.
         for (const QString& id : visibleWindow) {
             QVERIFY(timeline.contains(id));
         }
+    }
+
+    void normalizedThumbPositionMapsToLogicalIndex()
+    {
+        PostTimeline timeline;
+        timeline.reset(10000);
+
+        QCOMPARE(timeline.logicalIndexForScrollPosition(0, 0, 1000), 0);
+        QCOMPARE(timeline.logicalIndexForScrollPosition(500, 0, 1000), 5000);
+        QCOMPARE(timeline.logicalIndexForScrollPosition(1000, 0, 1000), 9999);
+
+        // Measured row heights refine gap geometry, but must not change the
+        // meaning of a physical thumb fraction during random seek.
+        timeline.placeWindow(100, {QStringLiteral("tall")});
+        timeline.recordMeasuredHeight(QStringLiteral("tall"), 1000);
+        QCOMPARE(timeline.logicalIndexForScrollPosition(500, 0, 1000), 5000);
+    }
+
+    void approximateSeekWindowNeverOverwritesLoadedSpan()
+    {
+        PostTimeline timeline;
+        timeline.reset(100);
+        QStringList loaded;
+        for (int i = 40; i < 60; ++i) {
+            loaded.push_back(QStringLiteral("p%1").arg(i));
+        }
+        timeline.placeWindow(40, loaded);
+
+        const PostTimeline::LogicalWindow window = timeline.gapWindowNear(50, 10);
+        QVERIFY(window.isValid());
+        QVERIFY(window.lastIndex() < 40 || window.firstIndex >= 60);
+        QCOMPARE(window.count, 10);
+    }
+
+    void seekGenerationRejectsStaleResponses()
+    {
+        TimelineSeekState state;
+        state.setTarget(5000);
+        state.markReady();
+        const TimelineSeekState::Ticket oldTicket = state.currentTicket();
+        QVERIFY(state.isCurrent(oldTicket));
+        QVERIFY(state.isReady());
+
+        state.setTarget(6000);
+        QVERIFY(!state.isCurrent(oldTicket));
+        QVERIFY(!state.isReady());
+
+        state.markReady();
+        const TimelineSeekState::Ticket current = state.currentTicket();
+        QVERIFY(state.isCurrent(current));
+        state.complete(current);
+        QVERIFY(!state.isReady());
     }
 };
 

@@ -26,6 +26,7 @@
 
 #include <QElapsedTimer>
 #include <QPersistentModelIndex>
+#include <QStringList>
 #include <QTimer>
 #include <QVariantAnimation>
 
@@ -149,6 +150,38 @@ public:
 		return itemType.isValid() && itemType.toInt() == ItemType::gap;
 	}
 
+	// Return concrete post identities that intersect the actual viewport. Sparse
+	// pruning uses this instead of a stale single anchor so the visible logical
+	// range can be protected explicitly before any row is evicted.
+	QStringList visibleTimelinePostIds() const
+	{
+		QStringList result;
+		const QRect viewportRect = viewport()->rect();
+		for (int row = 0; row < count(); ++row) {
+			const QListWidgetItem* listItem = item(row);
+			if (!isPostItem(listItem)) {
+				continue;
+			}
+			const QRect rect = visualItemRect(listItem);
+			if (!rect.isValid() || !rect.intersects(viewportRect)) {
+				continue;
+			}
+			const QString id = listItem->data(ItemRole::postId).toString();
+			if (!id.isEmpty()) {
+				result.push_back(id);
+			}
+		}
+		return result;
+	}
+
+	// QListView applies sizeHint changes lazily. Sparse timeline code must commit
+	// the new row/gap geometry before restoring a semantic viewport anchor;
+	// otherwise the later Qt layout pass can move the scrollbar into a gap.
+	void applyTimelineGeometryNow()
+	{
+		QListWidget::doItemsLayout();
+	}
+
 	void scrollToUnreadPostsOrBottom ();
 	void addDaySeparator (int daysAgo);
 	void addDaySeparator (int insertPos, int daysAgo);
@@ -173,9 +206,37 @@ public:
 	// evicted in the gaps between those events.
 	bool hasRecentUserScroll(int quietPeriodMs) const;
 	// Convert an "at bottom" anchor into the concrete last visible post. This is
-	// used before hiding a chat so messages arriving while it is inactive cannot
-	// silently move the saved reading position to the newer bottom.
+	// used before hiding a chat so messages arriving while the page is inactive
+	// cannot silently move the saved reading position to the newer bottom.
 	void freezeCurrentViewportAnchor();
+
+	// During a full sparse reconciliation the desired controller sequence is
+	// described again, but an already materialized row must keep its PostWidget.
+	// Let PostWidget construction cheaply detect that case before it repeats
+	// Markdown/layout/profile/attachment work for a throwaway duplicate.
+	bool canReuseTimelinePost(const QString& postId) const
+	{
+		if (!timelineReconcileActive || postId.isEmpty()) {
+			return false;
+		}
+		for (int row = timelineReconcileCursor; row < count(); ++row) {
+			const QListWidgetItem* candidate = item(row);
+			if (isPostItem(candidate)
+				&& candidate->data(ItemRole::postId).toString() == postId) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Replace one materialized sparse-timeline post row with gap geometry in
+	 * place. This is used by pruning so remote rows can be evicted without
+	 * describing/reconciling the entire timeline or touching retained widgets.
+	 */
+	bool evictTimelinePostToGap(const QString& postId,
+	                            int logicalIndex,
+	                            int estimatedRowHeight);
 
 	/**
 	 * Sparse controllers still describe the whole desired timeline on every
@@ -208,6 +269,14 @@ signals:
 	// Emitted only for wheel/keyboard/scrollbar input, never for layout-driven
 	// scrollbar movement or automatic anchor restoration.
 	void userViewportChanged (bool atBottom);
+protected:
+	void externalViewportGeometryChanged() override
+	{
+		// ResizableListWidget has committed delayed PostWidget sizeHint changes to
+		// QListView. Restore the already committed sparse semantic anchor against
+		// that new range; never adopt the layout-driven scrollbar position.
+		scheduleSavedScrollAnchorRestore();
+	}
 private:
 	struct SavedScrollAnchor {
 		QString postId;

@@ -2,63 +2,53 @@
 
 #include <QTimer>
 
+#include "AbstractPostSource.h"
+#include "ChatLogWidget.h"
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
 #include "backend/types/BackendChannel.h"
-#include "PostsListWidget.h"
 #include "ui_ChatArea.h"
 
 namespace Mattermost {
 namespace {
 
-bool hasLoadedLatestPost(const BackendChannel& channel)
+bool hasRenderedNewestPost(const ChatLogWidget* list)
 {
-    if (channel.last_post_at == 0) {
-        return true;
-    }
-
-    for (const BackendPost& post : channel.posts) {
-        if (post.create_at >= channel.last_post_at) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool hasRenderedPost(const PostsListWidget* list)
-{
-    if (!list) {
+    if (!list || !list->source()) {
         return false;
     }
 
-    for (int row = 0; row < list->count(); ++row) {
-        if (PostsListWidget::isPostItem(list->item(row))) {
-            return true;
-        }
+    const AbstractPostSource* source = list->source();
+    const int count = source->itemCount();
+    if (count <= 0) {
+        return true;
     }
-    return false;
+
+    const int newest = count - 1;
+    return source->isAvailable(newest) && list->itemWidget(newest) != nullptr;
 }
 
 } // namespace
 
 void ChatArea::requestExplicitReadAcknowledgement()
 {
-    if (isThread) {
+    if (isThread || !ui || !ui->listWidget) {
         return;
     }
 
     explicitReadPending = true;
     QObject::disconnect(explicitReadPostsConnection);
+
+    // The source/network layer is intentionally independent from the old
+    // BackendChannel::onNewPosts rendering signal. A read acknowledgement waits
+    // for the logical newest row to become a concrete PostWidget instead.
     explicitReadPostsConnection = connect(
-        &channel, &BackendChannel::onNewPosts, this,
-        [this](const ChannelNewPosts&) {
-            // fillChannelPosts() is connected to the same signal. Defer one
-            // event-loop turn so the post widgets and final scroll position are
-            // established before we acknowledge the explicit navigation.
+        ui->listWidget, &LongListWidget::materializedRangeChanged, this,
+        [this](int, int) {
             QTimer::singleShot(0, this, &ChatArea::tryExplicitReadAcknowledgement);
         });
 
-    // Already-loaded channels do not emit onNewPosts when merely reselected.
+    // Already-materialized channels need no further range signal.
     QTimer::singleShot(0, this, &ChatArea::tryExplicitReadAcknowledgement);
 }
 
@@ -68,8 +58,8 @@ void ChatArea::tryExplicitReadAcknowledgement()
         return;
     }
 
-    // If the user left before the slow request completed, the original click
-    // must not consume unread state in the background.
+    // If the user left before the async range request completed, the original
+    // click must not consume unread state in the background.
     if (backend.getCurrentChannel() != &channel) {
         explicitReadPending = false;
         QObject::disconnect(explicitReadPostsConnection);
@@ -77,7 +67,7 @@ void ChatArea::tryExplicitReadAcknowledgement()
         return;
     }
 
-    if (!initialized || !hasLoadedLatestPost(channel) || !hasRenderedPost(ui->listWidget)) {
+    if (!initialized || !hasRenderedNewestPost(ui->listWidget)) {
         return;
     }
 

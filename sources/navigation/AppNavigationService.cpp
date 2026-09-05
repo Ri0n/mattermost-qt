@@ -1,17 +1,16 @@
 #include "AppNavigationService.h"
 
 #include <functional>
+#include <utility>
 
 #include <QApplication>
 #include <QDesktopServices>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QMap>
 #include <QPointer>
 
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
-#include "backend/PostNavigationService.h"
+#include "backend/PostRepository.h"
 #include "backend/Storage.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
@@ -31,15 +30,10 @@ AppNavigationService& AppNavigationService::instance(Backend& backend)
     return **it;
 }
 
-AppNavigationService::AppNavigationService(Backend& backend)
-    : QObject(&backend)
-    , backend(backend)
+AppNavigationService::AppNavigationService(Backend& sourceBackend)
+    : QObject(&sourceBackend)
+    , backend(sourceBackend)
 {
-    connect(&httpConnector, &HTTPConnector::onNetworkError,
-            &backend, &Backend::onNetworkError);
-    connect(&httpConnector, &HTTPConnector::onHttpError,
-            &backend, &Backend::onHttpError);
-
     for (QWidget* widget : QApplication::topLevelWidgets()) {
         if (auto* mainWindow = qobject_cast<MainWindow*>(widget)) {
             connect(this, &AppNavigationService::channelRequested,
@@ -119,9 +113,6 @@ void AppNavigationService::openUrl(const QUrl& url)
         }
     }
 
-    // Mattermost direct-message deep links use /<team>/messages/@<username>.
-    // Existing DMs are already represented in Storage; route them without
-    // sending a perfectly local navigation action through the browser.
     if (path.size() >= 3 && path.at(1) == QStringLiteral("messages")) {
         QString username = path.at(2);
         if (username.startsWith(QLatin1Char('@'))) {
@@ -140,8 +131,6 @@ void AppNavigationService::openUrl(const QUrl& url)
         }
     }
 
-    // Both normal permalinks (/<team>/pl/<post>) and Mattermost's
-    // /_redirect/pl/<post> form have "pl" as the second path component.
     if (path.size() >= 3 && path.at(1) == QStringLiteral("pl")) {
         openPost(path.at(2));
         return;
@@ -160,32 +149,106 @@ void AppNavigationService::openPost(const QString& postId)
         return;
     }
 
-    NetworkRequest request(QStringLiteral("posts/") + postId);
     QPointer<AppNavigationService> guard(this);
-    auto handler = std::function<void(const QJsonDocument&)>(
-        [guard, postId](const QJsonDocument& document) {
-            if (!guard || !document.isObject()) {
+    PostRepository::instance(backend).loadPost(
+        postId,
+        [guard, postId](const PostRepository::PostResult& result) {
+            if (!guard || !result.success) {
                 return;
             }
-
-            const QString channelId = document.object()
-                .value(QStringLiteral("channel_id")).toString();
-            BackendChannel* channel = guard->backend.getStorage().getChannelById(channelId);
+            BackendChannel* channel = guard->backend.getStorage().getChannelById(result.channelId);
             if (channel) {
                 guard->openPostInChannel(*channel, postId);
             }
         });
-    httpConnector.get(request, HttpResponseCallback(std::move(handler)));
+}
+
+void AppNavigationService::openThreadAtLastViewed(const QString& channelId,
+                                                  const QString& rootId,
+                                                  uint64_t lastViewedAt,
+                                                  const QString& fallbackPostId,
+                                                  NavigationCallback callback)
+{
+    BackendChannel* channel = backend.getStorage().getChannelById(channelId);
+    if (!channel || rootId.isEmpty()) {
+        if (callback) {
+            callback(false);
+        }
+        return;
+    }
+
+    QPointer<AppNavigationService> guard(this);
+    PostRepository::instance(backend).loadThreadFromTime(
+        *channel, rootId, 30, lastViewedAt,
+        [guard, channelId, rootId, lastViewedAt, fallbackPostId,
+         callback = std::move(callback)](const PostRepository::Page& page) mutable {
+            if (!guard) {
+                return;
+            }
+
+            BackendChannel* currentChannel = guard->backend.getStorage().getChannelById(channelId);
+            QString targetPostId;
+            if (page.success && currentChannel) {
+                for (const QString& postId : page.postIds) {
+                    BackendPost* post = currentChannel->postIdToPost.value(postId, nullptr);
+                    if (post && post->root_id == rootId && post->create_at > lastViewedAt) {
+                        targetPostId = postId;
+                        break;
+                    }
+                }
+            }
+
+            if (targetPostId.isEmpty() && !fallbackPostId.isEmpty()) {
+                targetPostId = fallbackPostId;
+            }
+
+            if (!targetPostId.isEmpty()) {
+                guard->openPost(targetPostId);
+                if (callback) {
+                    callback(true);
+                }
+                return;
+            }
+
+            if (page.success && currentChannel) {
+                emit guard->channelRequested(channelId,
+                                             rootId,
+                                             rootId,
+                                             QStringList(),
+                                             false,
+                                             false);
+                if (callback) {
+                    callback(true);
+                }
+                return;
+            }
+
+            if (callback) {
+                callback(false);
+            }
+        });
 }
 
 void AppNavigationService::openPostInChannel(BackendChannel& channel,
                                              const QString& postId)
 {
+    if (BackendPost* cached = channel.postIdToPost.value(postId, nullptr)) {
+        if (!cached->root_id.isEmpty()) {
+            emit channelRequested(channel.id,
+                                  postId,
+                                  cached->root_id,
+                                  QStringList(),
+                                  false,
+                                  false);
+            return;
+        }
+    }
+
     QPointer<AppNavigationService> guard(this);
     const QString channelId = channel.id;
-    PostNavigationService::instance(backend).loadAround(
+    PostRepository::instance(backend).loadChannelAround(
         channel, postId,
-        [guard, channelId, postId](const PostNavigationService::Context& context) {
+        [guard, channelId, postId](const PostRepository::Context& context) {
             if (!guard || !context.success) {
                 return;
             }

@@ -1,9 +1,11 @@
 #include "ChannelTree.h"
 
 #include <QMouseEvent>
+#include <QPointer>
 #include <QTimer>
 
-#include "backend/types/BackendChannel.h"
+#include "ChannelItem.h"
+#include "backend/Backend.h"
 #include "chat-area/ChatArea.h"
 
 namespace Mattermost {
@@ -28,6 +30,26 @@ void ChannelTree::markChannelViewed(QTreeWidgetItem* item)
 
 void ChannelTree::currentChanged(const QModelIndex& current, const QModelIndex& previous)
 {
+    // Direct-message recency sorting moves existing QTreeWidgetItems with
+    // takeChild()/insertChild(). Taking the current row temporarily detaches it
+    // from the tree and Qt selects a neighbouring row. Treating that transient
+    // model mutation as navigation activates an unrelated ChatArea even though
+    // the user never selected it. Keep the visible conversation authoritative
+    // until its row has been reinserted, then restore the tree current item.
+    ChatArea* activePage = getCurrentPage();
+    if (!renderingSidebar && activePage && activePage->treeItem
+        && activePage->treeItem->treeWidget() != this) {
+        QPointer<ChatArea> activeGuard(activePage);
+        QTimer::singleShot(0, this, [this, activeGuard] {
+            if (!activeGuard || !activeGuard->treeItem
+                || activeGuard->treeItem->treeWidget() != this) {
+                return;
+            }
+            setCurrentItem(activeGuard->treeItem);
+        });
+        return;
+    }
+
     QTreeWidget::currentChanged(current, previous);
 
     // Sidebar rebuilds are programmatic and must never consume unread state.
@@ -44,6 +66,12 @@ void ChannelTree::currentChanged(const QModelIndex& current, const QModelIndex& 
     if (channelId.isEmpty()) {
         return;
     }
+
+    // A normal sidebar selection is navigation to the conversation itself, not
+    // a semantic "first unread" command. The sparse channel controller therefore
+    // opens its newest page at the bottom. Attention/permalink navigation owns
+    // explicit unread/target positioning separately and installs a navigation
+    // lock before its context is materialized.
 
     // currentItemChanged activates/materializes the ChatArea. Defer the read
     // request until that synchronous navigation path has completed, and resolve
@@ -65,10 +93,14 @@ void ChannelTree::mousePressEvent(QMouseEvent* event)
     QTreeWidget::mousePressEvent(event);
 
     // currentChanged() handles normal navigation. A click on the already-current
-    // row has no current-index transition, but is still an explicit read intent.
+    // row has no current-index transition, but is still an explicit navigation
+    // and read intent. Re-activate it as well so a stale stacked-page mismatch
+    // can always be repaired by clicking the selected conversation again.
     if (!renderingSidebar && previousItem && previousItem == currentItem()) {
         QTreeWidgetItem* clickedItem = itemAt(event->pos());
-        if (clickedItem == previousItem) {
+        if (clickedItem == previousItem
+            && clickedItem->data(0, ItemKindRole).toInt() == ChannelItemKind) {
+            activateChannelItem(clickedItem);
             markChannelViewed(clickedItem);
         }
     }

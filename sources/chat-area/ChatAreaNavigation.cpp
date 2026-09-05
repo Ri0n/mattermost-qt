@@ -1,89 +1,17 @@
 #include "ChatArea.h"
 
-#include <QListWidgetItem>
-
-#include "ChannelTimelineController.h"
-#include "PostsListWidget.h"
-#include "ThreadTimelineController.h"
-#include "backend/types/BackendChannel.h"
-#include "backend/types/BackendPost.h"
-#include "post/PostWidget.h"
+#include "ChannelPostSource.h"
+#include "ChatLogWidget.h"
 #include "ui_ChatArea.h"
 
 namespace Mattermost {
-namespace {
-
-bool hasPostRow(const PostsListWidget* list, const QString& postId)
-{
-    if (!list || postId.isEmpty()) {
-        return false;
-    }
-
-    for (int row = 0; row < list->count(); ++row) {
-        const QListWidgetItem* item = list->item(row);
-        if (PostsListWidget::isPostItem(item)
-            && item->data(ItemRole::postId).toString() == postId) {
-            return true;
-        }
-    }
-    return false;
-}
-
-} // namespace
 
 bool ChatArea::ensurePostVisible(const QString& postId)
 {
     if (postId.isEmpty() || !ui || !ui->listWidget) {
         return false;
     }
-
-    PostsListWidget* list = ui->listWidget;
-    if (hasPostRow(list, postId)) {
-        return true;
-    }
-
-    if (isThread) {
-        return threadTimelineController
-            && threadTimelineController->ensurePostVisible(postId);
-    }
-
-    if (channelTimelineController
-        && channelTimelineController->ensurePostVisible(postId)) {
-        return true;
-    }
-
-    // Compatibility fallback for a ChatArea that has not activated its sparse
-    // controller yet (for example during construction/deactivation races).
-    BackendPost* post = channel.postIdToPost.value(postId, nullptr);
-    // Replies are intentionally hidden from the main channel timeline. Permalink
-    // reply navigation is routed to its thread before reaching this fallback.
-    if (!post || post->hidden || !post->root_id.isEmpty()) {
-        return false;
-    }
-
-    int insertRow = list->count();
-    for (int row = 0; row < list->count(); ++row) {
-        QListWidgetItem* item = list->item(row);
-        if (!PostsListWidget::isPostItem(item)) {
-            continue;
-        }
-
-        auto* existing = qobject_cast<PostWidget*>(list->itemWidget(item));
-        if (!existing) {
-            continue;
-        }
-
-        const BackendPost& current = existing->post;
-        if (current.create_at > post->create_at
-            || (current.create_at == post->create_at && current.id > post->id)) {
-            insertRow = row;
-            break;
-        }
-    }
-
-    list->insertPost(insertRow, new PostWidget(backend, *post, list, this, nullptr));
-    list->updateGeometry();
-    return hasPostRow(list, postId);
+    return ui->listWidget->ensurePostVisible(postId);
 }
 
 bool ChatArea::ensurePinnedPostVisible(const QString& postId,
@@ -91,17 +19,20 @@ bool ChatArea::ensurePinnedPostVisible(const QString& postId,
                                        bool reachedOldest,
                                        bool reachedNewest)
 {
-    if (isThread || postId.isEmpty() || !ui || !ui->listWidget) {
+    if (postId.isEmpty() || !ui || !ui->listWidget) {
         return false;
     }
 
-    if (channelTimelineController
-        && channelTimelineController->ensurePinnedPostVisible(
-            postId, contextPostIds, reachedOldest, reachedNewest)) {
-        return true;
+    auto* source = qobject_cast<ChannelPostSource*>(ui->listWidget->source());
+    if (!source) {
+        return ensurePostVisible(postId);
     }
 
-    return ensurePostVisible(postId);
+    // ChannelPostSource owns logical identity placement. Publish the complete
+    // request-local context atomically before LongListWidget is asked to center
+    // or lock the target, so no single guessed row can flash on screen first.
+    return source->adoptNavigationContext(postId, contextPostIds,
+                                          reachedOldest, reachedNewest);
 }
 
 void ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
@@ -109,10 +40,15 @@ void ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
     if (postId.isEmpty() || !ui || !ui->listWidget) {
         return;
     }
-    if (channelTimelineController) {
-        channelTimelineController->beginContextNavigation(postId);
-    }
-    ui->listWidget->lockTimelineNavigationToPost(postId, 0, quietPeriodMs);
+
+    // ChatLogWidget owns only semantic post identity. LongListWidget owns the
+    // actual viewport lock: Center is applied once, then the target post's top
+    // keeps the same screen Y through reflow and the same Y/viewportHeight ratio
+    // through window resize. Authoritative source remaps only change the locked
+    // logical index; they never recenter the post.
+    ui->listWidget->lockNavigationToPost(postId,
+                                         LongListWidget::Alignment::Center,
+                                         quietPeriodMs);
 }
 
 } // namespace Mattermost

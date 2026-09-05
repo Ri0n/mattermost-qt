@@ -28,6 +28,7 @@
 #include <QMessageBox>
 #include <QPointer>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QStyle>
 #include <QSystemTrayIcon>
@@ -42,7 +43,7 @@
 #include "./ui_mainwindow.h"
 #include "SettingsWindow.h"
 #include "backend/Backend.h"
-#include "backend/PostNavigationService.h"
+#include "backend/PostRepository.h"
 #include "backend/SidebarService.h"
 #include "backend/UserProfileService.h"
 #include "backend/types/BackendChannel.h"
@@ -444,8 +445,13 @@ void MainWindow::refreshChannelUnreadFilter()
 
 			// Mattermost's category channel_ids order is not guaranteed to track
 			// live DM activity. Keep the server category membership but display
-			// direct conversations strictly newest-first.
+			// direct conversations strictly newest-first. Reordering a current
+			// QTreeWidgetItem can transiently make Qt select a neighbour, so keep
+			// the model mutation selection-atomic and never expose that temporary
+			// current item as navigation.
 			if (directMessages && categoryItem->childCount() > 1) {
+				QTreeWidgetItem* selectedItem = ui->channelList->currentItem();
+				QSignalBlocker selectionSignals(ui->channelList);
 				QVector<QTreeWidgetItem*> children;
 				children.reserve(categoryItem->childCount());
 				for (int i = 0; i < categoryItem->childCount(); ++i) {
@@ -471,6 +477,9 @@ void MainWindow::refreshChannelUnreadFilter()
 						categoryItem->insertChild(desiredIndex,
 						                          categoryItem->takeChild(currentIndex));
 					}
+				}
+				if (selectedItem && selectedItem->treeWidget() == ui->channelList) {
+					ui->channelList->setCurrentItem(selectedItem);
 				}
 			}
 
@@ -549,10 +558,10 @@ void MainWindow::openAttentionThread(const QString& channelId, const QString& ro
 	}
 
 	QPointer<MainWindow> guard(this);
-	PostNavigationService::instance(backend).loadAround(
+	PostRepository::instance(backend).loadChannelAround(
 		*channel, rootPostId,
-		[guard, channelId, rootPostId](bool success) {
-			if (!guard || !success) {
+		[guard, channelId, rootPostId](const PostRepository::Context& context) {
+			if (!guard || !context.success) {
 				return;
 			}
 
@@ -696,7 +705,7 @@ void MainWindow::initializationComplete()
 
 void MainWindow::messageNotify(BackendChannel& channel, const BackendPost& post)
 {
-	if (post.author && post.author->id == backend.getLoginUser().id) {
+	if (post.isOwnPost()) {
 		return;
 	}
 
@@ -707,7 +716,19 @@ void MainWindow::messageNotify(BackendChannel& channel, const BackendPost& post)
 	if (sidebar.isChannelMuted(channel)) {
 		return;
 	}
-	if (!post.root_id.isEmpty() && !post.currentUserMentioned) {
+
+	const bool directConversation = channel.type == BackendChannel::directChannel
+		|| channel.type == BackendChannel::groupChannel;
+	if (post.root_id.isEmpty()) {
+		// Ordinary activity in public/private channels belongs in unread state,
+		// not in desktop attention. Only mentions and direct/group messages are
+		// actionable enough to flash the taskbar or show a desktop notification.
+		if (!directConversation && !post.currentUserMentioned) {
+			return;
+		}
+	} else if (!post.currentUserMentioned) {
+		// Until full followed-thread desktop notification preferences are modeled,
+		// keep thread notifications mention-driven just as before.
 		return;
 	}
 

@@ -38,4 +38,17 @@ inline bool threadPageConfirmsNewestBoundary(bool hasNext,
         && responseSize < std::max(1, pageSize);
 }
 
+inline bool threadInitialPageContainsNewest(int expectedPostCount, int pageSize)
+{
+    return std::max(1, expectedPostCount) <= std::max(1, pageSize);
+}
+
+inline int threadTailWindowFirstIndex(int expectedPostCount, int tailReplyCount)
+{
+    // Logical index zero is always the root. A tail request returns replies only,
+    // so pin the returned window against the newest logical edge without ever
+    // overwriting the root slot.
+    return std::max(1, std::max(1, expectedPostCount) - std::max(0, tailReplyCount));
+}
+
 } // namespace Mattermost

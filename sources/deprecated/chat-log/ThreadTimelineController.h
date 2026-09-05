@@ -16,13 +16,16 @@
 #include <QTimer>
 
 #include "backend/PostTimeline.h"
+#include "backend/TimelineSeekState.h"
 
 namespace Mattermost {
 
+class BackendPost;
 class ChatArea;
 class ThreadTimelineController;
 
 ThreadTimelineController* createThreadTimelineController(ChatArea& area);
+ThreadTimelineController* createConfiguredThreadTimelineController(ChatArea& area);
 
 class ThreadTimelineController : public QObject
 {
@@ -30,6 +33,9 @@ class ThreadTimelineController : public QObject
 public:
     explicit ThreadTimelineController(ChatArea& area);
     bool ensurePostVisible(const QString& postId);
+    void installIncrementalLiveUpdates();
+    void materializeLivePost(BackendPost& post);
+    void openNewestOnInitialOpen();
 
 private:
     struct ViewportAnchor {
@@ -50,7 +56,17 @@ private:
 
     void start();
     void requestNextPage();
-    void requestSeek(int logicalIndex);
+    void updateSeekTargetFromScrollbar(bool readyImmediately);
+    void resumeSeekIfReady();
+    void requestSeek(const TimelineSeekState::Ticket& ticket);
+    void requestSeekSeed(const TimelineSeekState::Ticket& ticket);
+    void requestSeekExpansion(const TimelineSeekState::Ticket& ticket,
+                              bool afterMeasurement = false);
+    void requestSeekEdge(const TimelineSeekState::Ticket& ticket,
+                         TimelineSeekState::Edge edge);
+    void finishSeek(const TimelineSeekState::Ticket& ticket);
+    QString seekFocusPostId(const TimelineSeekState::Ticket& ticket) const;
+    void renderSeekWindow(const TimelineSeekState::Ticket& ticket);
     void scheduleViewportCheck();
     void checkViewport();
     int logicalIndexNearViewport(int extraScreens, bool* viewportCenterInsideGap) const;
@@ -80,8 +96,10 @@ private:
     QString cursorPostId;
     uint64_t cursorCreateAt = 0;
     PostTimeline timeline;
+    TimelineSeekState seekState;
     QTimer seekTimer;
     QTimer measurementTimer;
+    ViewportAnchor seekViewportAnchor;
     int expectedPostCount = 1;
     int nextLogicalIndex = 0;
     int initialPagesRemaining = 0;
@@ -94,6 +112,9 @@ private:
     bool hasNext = true;
     bool viewportCheckScheduled = false;
     bool rebuilding = false;
+    bool initialNewestRequestInFlight = false;
+    bool initialNewestOpenDone = false;
+    bool seekPreserveViewport = false;
 };
 
 } // namespace Mattermost

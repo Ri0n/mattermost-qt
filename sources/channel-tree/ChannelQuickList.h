@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include <QMap>
 #include <QSet>
 #include <QTreeWidget>
@@ -33,12 +35,19 @@ signals:
     void channelContextMenuRequested(const QString& channelId, const QPoint& globalPos);
 
 private:
+    struct RecentThreadTarget {
+        QString rootPostId;
+        QString fallbackPostId;
+        uint64_t interactionAt = 0;
+    };
+
     void updateDirectUser(const BackendUser& user);
     void ensureDirectUserConnections(BackendChannel& channel);
 
     Backend* backend = nullptr;
     bool refreshing = false;
     QMap<QString, QTreeWidgetItem*> channelItems;
+    QMap<QString, RecentThreadTarget> recentThreadTargets;
     QSet<QString> connectedUsers;
 };
 

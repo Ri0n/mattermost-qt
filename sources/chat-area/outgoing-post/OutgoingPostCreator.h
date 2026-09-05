@@ -41,7 +41,7 @@ class OutgoingPostCreator;
 namespace Mattermost {
 
 struct OutgoingPostData;
-class PostsListWidget;
+class ChatLogWidget;
 class OutgoingPostPanel;
 
 class OutgoingPostCreator: public QWidget {
@@ -50,7 +50,7 @@ public:
 	explicit OutgoingPostCreator (QWidget *parent = nullptr);
 	~OutgoingPostCreator();
 public:
-	void init (Backend& backend, BackendChannel& channel, OutgoingPostPanel& panel, PostsListWidget& postsListWidget, QBoxLayout* attachmentParent);
+	void init (Backend& backend, BackendChannel& channel, OutgoingPostPanel& panel, ChatLogWidget& chatLogWidget, QBoxLayout* attachmentParent);
 	void setRootId(QString id);
 	void onDragEnterEvent (QDragEnterEvent* event);
 	void onDragMoveEvent (QDragMoveEvent* event);

@@ -10,18 +10,28 @@
 
 #include <QHeaderView>
 #include <QIcon>
+#include <QPointer>
 #include <QVector>
 
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
 #include "backend/Storage.h"
+#include "backend/ThreadFollowService.h"
 #include "backend/types/BackendChannel.h"
+#include "backend/types/BackendPost.h"
+#include "backend/types/BackendTeam.h"
 #include "backend/types/BackendUser.h"
 #include "channel-tree/ChannelIcons.h"
 #include "channel-tree/ChannelItemDelegate.h"
 #include "channel-tree/SidebarItem.h"
+#include "navigation/AppNavigationService.h"
 
 namespace Mattermost {
+namespace {
+
+constexpr int RecentPostIdRole = Qt::UserRole + 100;
+
+} // namespace
 
 ChannelQuickList::ChannelQuickList(QWidget* parent)
     : QTreeWidget(parent)
@@ -42,7 +52,46 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
         if (refreshing || !current) {
             return;
         }
+
         const QString channelId = current->data(0, SidebarItem::IdRole).toString();
+        const QString threadId = current->data(0, SidebarItem::ThreadIdRole).toString();
+        const QString fallbackPostId = current->data(0, RecentPostIdRole).toString();
+
+        if (backend && !threadId.isEmpty() && !channelId.isEmpty()) {
+            BackendChannel* channel = backend->getStorage().getChannelById(channelId);
+            const QString teamId = channel && channel->team ? channel->team->id : QString();
+            if (teamId.isEmpty()) {
+                if (!fallbackPostId.isEmpty()) {
+                    AppNavigationService::instance(*backend).openPost(fallbackPostId);
+                }
+                return;
+            }
+
+            // A followed thread has its own read boundary. Query the canonical
+            // ThreadResponse and navigate to the first reply after
+            // last_viewed_at; if the thread is no longer followed, retain the
+            // user's last local interaction as a deterministic fallback target.
+            QPointer<ChannelQuickList> guard(this);
+            ThreadFollowService::instance(*backend).queryThread(
+                teamId, threadId,
+                [guard, channelId, threadId, fallbackPostId](
+                    const ThreadFollowService::ThreadState& state) {
+                    if (!guard || !guard->backend) {
+                        return;
+                    }
+                    auto& navigation = AppNavigationService::instance(*guard->backend);
+                    if (state.available) {
+                        navigation.openThreadAtLastViewed(channelId,
+                                                          threadId,
+                                                          state.lastViewedAt,
+                                                          fallbackPostId);
+                    } else if (!fallbackPostId.isEmpty()) {
+                        navigation.openPost(fallbackPostId);
+                    }
+                });
+            return;
+        }
+
         if (!channelId.isEmpty()) {
             // ChannelTree/ChatArea owns read acknowledgement. It waits until
             // the selected channel's newest content has actually been rendered.
@@ -66,6 +115,32 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
 void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
 {
     backend = &sourceBackend;
+
+    // Mattermost's channel recency represents viewed/opened channels, not every
+    // incoming post. Keep that behavior, but remember the user's latest thread
+    // interaction. When that Recent row is opened, the followed-thread
+    // last_viewed_at boundary is authoritative; the exact reply remains only a
+    // fallback for unfollowed/already-read threads.
+    connect(backend, &Backend::onNewPost, this,
+            [this](BackendChannel& channel, const BackendPost& post) {
+        if (!backend || post.user_id != backend->getLoginUser().id
+            || post.root_id.isEmpty()) {
+            return;
+        }
+
+        RecentThreadTarget target;
+        target.rootPostId = post.root_id;
+        target.fallbackPostId = post.id;
+        target.interactionAt = post.create_at;
+
+        const auto existing = recentThreadTargets.constFind(channel.id);
+        if (existing == recentThreadTargets.cend()
+            || existing->interactionAt <= target.interactionAt) {
+            recentThreadTargets.insert(channel.id, std::move(target));
+        }
+        refresh();
+    });
+
     refresh();
 }
 
@@ -80,6 +155,8 @@ void ChannelQuickList::refresh()
         uint64_t sortTime = 0;
         bool unread = false;
         bool mentioned = false;
+        QString recentPostId;
+        QString recentRootId;
     };
 
     auto& sidebar = SidebarService::instance(*backend);
@@ -93,7 +170,19 @@ void ChannelQuickList::refresh()
             continue;
         }
 
-        const uint64_t sortTime = sidebar.channelRecentTime(*channel);
+        const uint64_t channelRecentTime = sidebar.channelRecentTime(*channel);
+        uint64_t sortTime = channelRecentTime;
+        QString recentPostId;
+        QString recentRootId;
+
+        const auto target = recentThreadTargets.constFind(channel->id);
+        if (target != recentThreadTargets.cend()
+            && target->interactionAt >= channelRecentTime) {
+            sortTime = std::max(sortTime, target->interactionAt);
+            recentPostId = target->fallbackPostId;
+            recentRootId = target->rootPostId;
+        }
+
         if (sortTime == 0) {
             continue;
         }
@@ -103,6 +192,8 @@ void ChannelQuickList::refresh()
             sortTime,
             sidebar.isChannelUnread(*channel),
             sidebar.hasUnreadMention(channel->id),
+            recentPostId,
+            recentRootId,
         });
     }
 
@@ -137,14 +228,35 @@ void ChannelQuickList::refresh()
     for (const Candidate& candidate : candidates) {
         BackendChannel& channel = *candidate.channel;
         auto* item = new QTreeWidgetItem(this);
-        item->setText(0, channel.display_name);
+
+        QString displayName = channel.display_name;
+        if (!candidate.recentPostId.isEmpty()) {
+            displayName.prepend(QStringLiteral("↪ "));
+            BackendPost* root = channel.postIdToPost.value(candidate.recentRootId, nullptr);
+            if (root) {
+                const QString summary = root->message.simplified();
+                if (!summary.isEmpty()) {
+                    displayName += QStringLiteral(" — ") + summary.left(60);
+                }
+            }
+        }
+
+        item->setText(0, displayName);
         item->setData(0, SidebarItem::KindRole, SidebarItem::Channel);
         item->setData(0, SidebarItem::IdRole, channel.id);
+        item->setData(0, SidebarItem::ChannelIdRole, channel.id);
+        item->setData(0, SidebarItem::ThreadIdRole, candidate.recentRootId);
+        item->setData(0, RecentPostIdRole, candidate.recentPostId);
         item->setData(0, SidebarItem::ChannelTypeRole, channel.type);
         item->setData(0, SidebarItem::MutedRole, sidebar.isChannelMuted(channel));
         item->setData(0, SidebarItem::MentionedRole, candidate.mentioned);
         item->setData(0, SidebarItem::UnreadRole, candidate.unread);
-        item->setToolTip(0, channel.getTeamAndChannelName());
+
+        QString tooltip = channel.getTeamAndChannelName();
+        if (!candidate.recentPostId.isEmpty()) {
+            tooltip += tr("\nOpen recent thread interaction");
+        }
+        item->setToolTip(0, tooltip);
 
         if (channel.type == BackendChannel::directChannel) {
             BackendUser* user = backend->getStorage().getUserById(channel.name);

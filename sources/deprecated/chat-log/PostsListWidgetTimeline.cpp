@@ -1,6 +1,7 @@
 #include "PostsListWidget.h"
 
 #include <algorithm>
+#include <climits>
 
 #include <QPointer>
 #include <QScrollBar>
@@ -144,6 +145,78 @@ void PostsListWidget::removeTimelineRow(int rowIndex)
     }
 
     delete takeItem(rowIndex);
+}
+
+bool PostsListWidget::evictTimelinePostToGap(const QString& postId,
+                                             int logicalIndex,
+                                             int estimatedRowHeight)
+{
+    if (postId.isEmpty() || logicalIndex < 0) {
+        return false;
+    }
+
+    int rowIndex = -1;
+    for (int row = 0; row < count(); ++row) {
+        QListWidgetItem* candidate = item(row);
+        if (isPostItem(candidate)
+            && candidate->data(ItemRole::postId).toString() == postId) {
+            rowIndex = row;
+            break;
+        }
+    }
+    if (rowIndex < 0) {
+        return false;
+    }
+
+    removeTimelineRow(rowIndex);
+
+    auto applyGap = [estimatedRowHeight](QListWidgetItem* gap,
+                                         int firstIndex,
+                                         int gapCount) {
+        if (!gap) {
+            return;
+        }
+        const int count = std::max(0, gapCount);
+        gap->setData(Qt::UserRole, ItemType::gap);
+        gap->setData(ItemRole::gapFirstIndex, firstIndex);
+        gap->setData(ItemRole::gapCount, count);
+        gap->setFlags(Qt::NoItemFlags);
+        const qint64 height = static_cast<qint64>(count)
+            * std::max(1, estimatedRowHeight);
+        gap->setSizeHint(QSize(0, static_cast<int>(std::min<qint64>(height, INT_MAX))));
+    };
+
+    QListWidgetItem* left = rowIndex > 0 ? item(rowIndex - 1) : nullptr;
+    QListWidgetItem* right = rowIndex < count() ? item(rowIndex) : nullptr;
+
+    const bool leftContiguous = isGapItem(left)
+        && left->data(ItemRole::gapFirstIndex).toInt()
+            + left->data(ItemRole::gapCount).toInt() == logicalIndex;
+    const bool rightContiguous = isGapItem(right)
+        && right->data(ItemRole::gapFirstIndex).toInt() == logicalIndex + 1;
+
+    if (leftContiguous) {
+        const int leftFirst = left->data(ItemRole::gapFirstIndex).toInt();
+        int mergedCount = left->data(ItemRole::gapCount).toInt() + 1;
+        if (rightContiguous) {
+            mergedCount += right->data(ItemRole::gapCount).toInt();
+            removeTimelineRow(rowIndex);
+        }
+        applyGap(left, leftFirst, mergedCount);
+        return true;
+    }
+
+    if (rightContiguous) {
+        applyGap(right,
+                 logicalIndex,
+                 right->data(ItemRole::gapCount).toInt() + 1);
+        return true;
+    }
+
+    auto* gap = new QListWidgetItem;
+    applyGap(gap, logicalIndex, 1);
+    insertItem(rowIndex, gap);
+    return true;
 }
 
 void PostsListWidget::finishTimelineReconcile()
@@ -348,6 +421,10 @@ void PostsListWidget::finishTimelineRebuildAtBottom()
 {
     Q_ASSERT(QThread::currentThread() == thread());
     finishTimelineReconcile();
+    // Reconciliation changes row identities/size hints. Force QListView to
+    // commit the new scrollbar range before restoring Bottom; otherwise the
+    // later deferred layout pass can strand the viewport inside a gap.
+    applyTimelineGeometryNow();
 
     if (!timelineNavigationPostId.isEmpty()) {
         // A pending semantic jump owns the viewport even before its row exists.
@@ -393,6 +470,7 @@ bool PostsListWidget::finishTimelineRebuildAtPost(const QString& postId,
 {
     Q_ASSERT(QThread::currentThread() == thread());
     finishTimelineReconcile();
+    applyTimelineGeometryNow();
 
     if (!timelineNavigationPostId.isEmpty()) {
         restoringSavedScroll = false;
@@ -463,6 +541,7 @@ void PostsListWidget::finishTimelineRebuildAtPixel(qint64 pixelOffset)
 {
     Q_ASSERT(QThread::currentThread() == thread());
     finishTimelineReconcile();
+    applyTimelineGeometryNow();
 
     if (!timelineNavigationPostId.isEmpty()) {
         restoringSavedScroll = false;

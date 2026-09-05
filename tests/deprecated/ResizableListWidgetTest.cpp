@@ -3,6 +3,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QScrollBar>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include "chat-area/ResizableListWidget.h"
@@ -27,6 +28,59 @@ QListWidgetItem* bottomVisibleItem(QListWidget& list)
     }
     return nullptr;
 }
+
+class VariableHeightRow : public QWidget
+{
+public:
+    explicit VariableHeightRow(int height, QWidget* parent = nullptr)
+        : QWidget(parent)
+        , hintHeight(height)
+    {
+    }
+
+    QSize sizeHint() const override
+    {
+        return QSize(320, hintHeight);
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        return sizeHint();
+    }
+
+    void setHintHeight(int height)
+    {
+        hintHeight = height;
+    }
+
+private:
+    int hintHeight;
+};
+
+class ExternalAnchorResizableList : public ResizableListWidget
+{
+public:
+    using ResizableListWidget::ResizableListWidget;
+
+    void schedulePreservingResize(QListWidgetItem* item, QWidget* widget)
+    {
+        scheduleItemResize(item, widget, true);
+    }
+
+    int committedExternalGeometryChanges() const
+    {
+        return externalGeometryChanges;
+    }
+
+protected:
+    void externalViewportGeometryChanged() override
+    {
+        ++externalGeometryChanges;
+    }
+
+private:
+    int externalGeometryChanges = 0;
+};
 
 } // namespace
 
@@ -125,6 +179,84 @@ private slots:
         QCOMPARE(bottomVisibleItem(list), anchorAfter);
         QVERIFY2(qAbs(bottomOffsetAfter - bottomOffsetBefore) <= 2,
                  "Delayed row growth must preserve the bottom-most visible row and its viewport offset");
+    }
+
+    void externalViewportOwnerIsNotOverriddenByDeferredBaseRestore()
+    {
+        ExternalAnchorResizableList list;
+        list.setProperty("_mattermostExternalViewportAnchor", true);
+        list.resize(360, 180);
+
+        QList<VariableHeightRow*> rows;
+        QList<QListWidgetItem*> items;
+        for (int i = 0; i < 20; ++i) {
+            auto* row = new VariableHeightRow(48);
+            auto* item = new QListWidgetItem;
+            list.addItem(item);
+            list.setItemWidget(item, row);
+            rows.push_back(row);
+            items.push_back(item);
+        }
+
+        list.show();
+        settleEvents();
+        list.verticalScrollBar()->setValue(120);
+        settleEvents();
+
+        rows.first()->setHintHeight(240);
+        list.schedulePreservingResize(items.first(), rows.first());
+
+        int userSelectedValue = -1;
+        // The resize callback runs first and, in the old implementation, queues
+        // a second delayed base-anchor restore. This callback models a later user
+        // wheel/seek intent in between those two stages. An externally anchored
+        // sparse list must retain this newer position instead of being pulled
+        // back by the stale ResizableListWidget anchor.
+        QTimer::singleShot(0, &list, [&list, &userSelectedValue] {
+            userSelectedValue = std::min(260, list.verticalScrollBar()->maximum());
+            list.verticalScrollBar()->setValue(userSelectedValue);
+        });
+
+        settleEvents();
+        QVERIFY(userSelectedValue >= 0);
+        QCOMPARE(list.verticalScrollBar()->value(), userSelectedValue);
+    }
+
+    void externalViewportOwnerSeesCommittedDelayedRowGeometry()
+    {
+        ExternalAnchorResizableList list;
+        list.setProperty("_mattermostExternalViewportAnchor", true);
+        list.resize(360, 180);
+
+        QList<VariableHeightRow*> rows;
+        QList<QListWidgetItem*> items;
+        for (int i = 0; i < 12; ++i) {
+            auto* row = new VariableHeightRow(48);
+            auto* item = new QListWidgetItem;
+            list.addItem(item);
+            list.setItemWidget(item, row);
+            rows.push_back(row);
+            items.push_back(item);
+        }
+
+        list.show();
+        settleEvents();
+
+        QVERIFY2(list.committedExternalGeometryChanges() > 0,
+                 "Initial delayed row sizing must notify the external viewport owner");
+        const int initialMaximum = list.verticalScrollBar()->maximum();
+        const int notificationsBeforeGrowth = list.committedExternalGeometryChanges();
+
+        rows.last()->setHintHeight(260);
+        list.schedulePreservingResize(items.last(), rows.last());
+        settleEvents();
+
+        QVERIFY2(list.committedExternalGeometryChanges() > notificationsBeforeGrowth,
+                 "Late row growth must produce a committed external geometry notification");
+        QVERIFY2(list.visualItemRect(items.last()).height() >= 260,
+                 "The external owner must be notified only after QListView sees the new row height");
+        QVERIFY2(list.verticalScrollBar()->maximum() > initialMaximum,
+                 "The committed geometry notification must observe the updated scrollbar range");
     }
 
     void removedRowInvalidatesPendingResize()

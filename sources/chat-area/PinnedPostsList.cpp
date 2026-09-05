@@ -28,21 +28,22 @@
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
+#include <QListWidgetItem>
 #include <QPointer>
 #include <QShortcut>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include "ChatArea.h"
-#include "backend/PostNavigationService.h"
+#include "backend/PostRepository.h"
 #include "backend/types/BackendChannel.h"
 #include "post/PostWidget.h"
 #include "ui_PinnedPostsList.h"
 
 namespace Mattermost {
 namespace {
-// Zero means semantic navigation remains authoritative until the user actually
-// scrolls. Network/page/image latency must not decide when pinned navigation ends.
+// Zero keeps the semantic target authoritative; LongListWidget, not a timeout,
+// owns the viewport while the target and its neighbours materialize.
 constexpr int PinnedNavigationQuietPeriodMs = 0;
 }
 
@@ -102,8 +103,8 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
     }
 
     const QString postId = postWidget->post.id;
-    // Replies are not rendered as normal channel rows. For those pins navigate
-    // to the root message instead of silently failing to find the hidden reply.
+    // Replies are not normal channel rows. Navigate to their root instead of
+    // asking the channel source to invent a root-level slot for a reply.
     const QString navigationId = postWidget->post.root_id.isEmpty()
         ? postId : postWidget->post.root_id;
 
@@ -124,9 +125,19 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
     rowLayout->addLayout(actionsLayout);
     rowLayout->addWidget(postWidget);
 
-    QListWidgetItem* newItem = new QListWidgetItem();
-    ui->listWidget->addItem (newItem);
-    ui->listWidget->setItemWidget (newItem, rowWidget);
+    auto* newItem = new QListWidgetItem();
+    newItem->setSizeHint(rowWidget->sizeHint());
+    ui->listWidget->addItem(newItem);
+    ui->listWidget->setItemWidget(newItem, rowWidget);
+
+    // This popup is a small concrete list, not a virtual timeline. Keep its
+    // ordinary QListWidgetItem size hint synchronized locally instead of using
+    // the deprecated ResizableListWidget chat-log anchoring machinery.
+    connect(postWidget, &PostWidget::dimensionsChanged, rowWidget,
+            [rowWidget, newItem] {
+        rowWidget->updateGeometry();
+        newItem->setSizeHint(rowWidget->sizeHint());
+    });
 
     connect(goToButton, &QToolButton::clicked, this, [this, navigationId] {
         if (!chatArea || navigationId.isEmpty()) {
@@ -137,23 +148,22 @@ void PinnedPostsList::addPost (PostWidget* postWidget)
         QPointer<ChatArea> guard(chatArea);
         BackendChannel& channel = chatArea->getChannel();
 
-        // Keep the target authoritative before starting any asynchronous context
-        // request. Sparse page materialization and image reflow may continue for
-        // arbitrarily long; only explicit user scrolling ends this navigation.
-        chatArea->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
-
-        chatArea->goToPost(navigationId);
-        PostNavigationService::instance(chatArea->getBackend()).loadAround(
+        // Do not move the viewport to an isolated guessed row. Fetch the local
+        // identity context first; ChannelPostSource publishes it atomically and
+        // only then is LongListWidget allowed to center/lock the target.
+        PostRepository::instance(chatArea->getBackend()).loadChannelAround(
             channel, navigationId,
-            [guard, navigationId](const PostNavigationService::Context& context) {
+            [guard, navigationId](const PostRepository::Context& context) {
                 if (!guard || !context.success) {
                     return;
                 }
+                if (!guard->ensurePinnedPostVisible(navigationId,
+                                                    context.postIds,
+                                                    context.reachedOldest,
+                                                    context.reachedNewest)) {
+                    return;
+                }
                 guard->lockNavigationToPost(navigationId, PinnedNavigationQuietPeriodMs);
-                guard->ensurePinnedPostVisible(navigationId,
-                                               context.postIds,
-                                               context.reachedOldest,
-                                               context.reachedNewest);
                 guard->goToPost(navigationId);
             },
             true);
