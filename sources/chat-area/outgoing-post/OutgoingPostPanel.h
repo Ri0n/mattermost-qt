@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -38,12 +38,15 @@ class OutgoingPostPanel;
 
 namespace Mattermost {
 
+class OutgoingPostCreator;
+
 class OutgoingPostPanel: public QWidget {
     Q_OBJECT
 public:
     explicit OutgoingPostPanel(QWidget *parent = nullptr);
     ~OutgoingPostPanel();
 public:
+    OutgoingPostCreator& composer();
     QPushButton& attachButton();
     QPushButton& addEmojiButton();
     QPushButton& sendButton();
@@ -61,7 +64,6 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 private:
-    void adoptComposerWidget();
     void focusComposer();
     void refreshActionIcons();
     void refreshActionIcon(QPushButton& button,
@@ -71,7 +73,6 @@ private:
 
     Ui::OutgoingPostPanel *ui;
     QWidget* loadingIndicator = nullptr;
-    QWidget* composerWidget = nullptr;
     QTimer* loadingDelayTimer = nullptr;
     int pendingMessageLoads = 0;
 };
