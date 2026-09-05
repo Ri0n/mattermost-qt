@@ -26,7 +26,6 @@
 #include "mainwindow.h"
 #include "backend/Backend.h"
 #include "config/Config.h"
-#include "ui/ThemeDebug.h"
 
 namespace Mattermost {
 
@@ -115,7 +114,6 @@ int main( int argc, char *argv[])
 	QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::Round);
 
 	Mattermost::MattermostApplication app (argc, argv);
-	Mattermost::ThemeDebugProbe themeDebug(&app);
 	app.openLoginWindow ();
 	return app.exec();
 }
