@@ -333,7 +333,9 @@ also requires the cached newest root timestamp to match current channel `last_ro
 the window is retained only as ordinary cached bodies and is not mapped as the current suffix. This
 must not use `last_post_at`, because a thread reply advances general channel activity without changing
 the root-post timeline. Older server payloads that omit `last_root_post_at` fall back to
-`last_post_at` in `BackendChannel`.
+`last_post_at` in `BackendChannel`. Live `posted` events advance both resident channel markers before
+post-body memory admission is evaluated, so even a cold channel cannot later accept a suffix older
+than an already observed WebSocket root post.
 
 Therefore a cached channel window is a **newest-aligned provisional suffix** only:
 

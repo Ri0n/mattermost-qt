@@ -24,6 +24,8 @@
 
 #include "WebSocketEventHandler.h"
 
+#include <algorithm>
+
 #include <QJsonDocument>
 #include "Backend.h"
 #include "PostRepository.h"
@@ -66,6 +68,16 @@ void WebSocketEventHandler::handleEvent (const PostEvent& event)
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 	if (!channel) {
 		return;
+	}
+
+	// Timeline edge metadata must advance even when the channel is outside the
+	// resident-body admission horizon. last_post_at includes replies, while the
+	// root-only chat timeline uses last_root_post_at as its freshness marker.
+	const uint64_t createAt = event.postObject.value(QStringLiteral("create_at"))
+		.toVariant().toULongLong();
+	channel->last_post_at = std::max(channel->last_post_at, createAt);
+	if (event.postObject.value(QStringLiteral("root_id")).toString().isEmpty()) {
+		channel->last_root_post_at = std::max(channel->last_root_post_at, createAt);
 	}
 
 	if (!repository.shouldRetainChannelInMemory(event.channelId)) {
