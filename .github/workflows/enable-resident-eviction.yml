@@ -1,0 +1,44 @@
+name: Enable resident post eviction
+
+on:
+  push:
+    paths:
+      - '.github/workflows/enable-resident-eviction.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+      - name: Apply resident eviction integration
+        run: |
+          python3 .github/scripts/enable-resident-eviction.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('sources/backend/PostRepositoryResidency.cpp')
+          text = path.read_text()
+          text = text.replace(
+              '#include <algorithm>\n#include <utility>\n',
+              '#include <algorithm>\n#include <limits>\n#include <utility>\n',
+              1)
+          text = text.replace(
+              '#include <QDateTime>\n#include <QJsonDocument>\n',
+              '#include <QDateTime>\n#include <QJsonArray>\n#include <QJsonDocument>\n',
+              1)
+          path.write_text(text)
+          PY
+      - name: Remove temporary helper
+        run: rm .github/scripts/enable-resident-eviction.py .github/workflows/enable-resident-eviction.yml
+      - name: Commit result
+        run: |
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add -A
+          git commit -m 'Enable bounded resident post eviction'
+          git push origin HEAD:chatgpt/post-disk-cache
