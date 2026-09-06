@@ -52,8 +52,9 @@ public:
 
 private:
     // Visible/prefetch channel ranges use Mattermost's ten-post absolute pages.
-    // Boundary discovery probes only the first offset of candidate pages with
-    // per_page=1; only the resolved oldest page is materialized with ten posts.
+    // Distant boundary discovery probes only candidate page starts with
+    // per_page=1; small/local boundary checks may materialize useful ten-post
+    // blocks while refining the exact oldest edge.
     static constexpr int ServerPageSize = 10;
     // Heuristic only: correctness never depends on this ratio.
     static constexpr int InitialBoundaryProbePercent = 3;
