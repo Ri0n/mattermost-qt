@@ -212,6 +212,10 @@ private:
                 const QJsonObject& postsObject,
                 quint64 sourceObservation,
                 bool quiet = false);
+    void ingestCached(BackendChannel& channel,
+                      const QJsonObject& postsObject,
+                      quint64 readObservation,
+                      bool quiet = false);
     void noteResidentObservation(const QJsonObject& postObject, quint64 observation);
     void noteResidentPostObservation(const QString& postId, quint64 observation);
     void pruneResidentObservations();

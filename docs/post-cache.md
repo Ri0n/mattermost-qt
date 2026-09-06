@@ -266,8 +266,12 @@ now in place. `BackendChannel::mergePostContext()` refreshes an already-resident
 accepted full JSON snapshot, preserving the stable `BackendPost*` address used by current widgets and
 sources. `BackendPost` replaces all server-backed post fields rather than only the message, while
 preserving separately fetched poll metadata and local annotations absent from raw REST/cache JSON.
-The next read-side step is to serve direct/newest-window cache hits as provisional resident data and
-validate them with newer HTTP observations before granting any absolute-page authority.
+Direct post lookup now has its first cache-read path. An asynchronous SQLite hit may insert an absent
+resident post and satisfy the caller immediately, but it never refreshes an already-resident object and
+never advances the resident server-observation watermark. The normal HTTP request is still dispatched
+and validates/refreshes that object in the background; a failed result is delivered only after both
+cache and HTTP miss. Cached identity/timestamps still have no absolute-page authority. Newest channel
+and thread window hydration remains the next read-side step.
 
 ## Write-through and invalidation
 
@@ -392,10 +396,10 @@ Implemented prerequisites for reads:
 - full in-place refresh semantics when fresh JSON arrives for an already resident `BackendPost`;
 - resident causal fencing against stale HTTP responses.
 
-Still required to enable reads:
+Read-side status:
 
-- direct `loadPost()` cache hit followed by background validation;
-- seed a small newest channel/thread window from SQLite before normal server range fetch.
+- direct `loadPost()` cache hit followed by background HTTP validation is implemented;
+- still required: seed a small newest channel/thread window from SQLite before normal server range fetch.
 
 ### Phase 3 — bounded resident cache
 

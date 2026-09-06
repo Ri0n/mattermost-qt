@@ -42,6 +42,13 @@ struct AroundState {
     bool failed = false;
 };
 
+struct DirectPostState {
+    PostRepository::PostCallback callback;
+    bool cacheDone = false;
+    bool httpDone = false;
+    bool delivered = false;
+};
+
 QStringList sortedPostIds(const QJsonObject& postsObject,
                           const std::function<bool(const QString&, const QString&)>& include)
 {
@@ -273,17 +280,80 @@ void PostRepository::loadPost(const QString& postId, PostCallback callback)
         return;
     }
 
+    const CacheAccount cacheAccount = currentCacheAccount();
+    const quint64 cacheReadObservation = nextObservationSequence();
+    auto state = std::make_shared<DirectPostState>();
+    state->callback = std::move(callback);
     QPointer<PostRepository> guard(this);
+
+    const auto deliverSuccess = [state](const PostResult& result) {
+        if (!state->delivered && result.success && state->callback) {
+            state->delivered = true;
+            state->callback(result);
+        }
+    };
+    const auto deliverFailureIfDone = [state, postId] {
+        if (!state->delivered && state->cacheDone && state->httpDone) {
+            state->delivered = true;
+            if (state->callback) {
+                PostResult result;
+                result.postId = postId;
+                state->callback(result);
+            }
+        }
+    };
+
+    if (cacheAccount.isValid()) {
+        postCache.loadPost(
+            cacheAccount.server, cacheAccount.userId, postId,
+            [guard, state, postId, cacheReadObservation,
+             deliverSuccess, deliverFailureIfDone](QJsonObject postObject) mutable {
+                state->cacheDone = true;
+                if (!guard || postObject.isEmpty()) {
+                    deliverFailureIfDone();
+                    return;
+                }
+
+                PostResult result;
+                result.postId = postId;
+                result.channelId = postObject.value(QStringLiteral("channel_id")).toString();
+                result.rootId = postObject.value(QStringLiteral("root_id")).toString();
+                BackendChannel* channel = guard->backend.getStorage().getChannelById(
+                    result.channelId);
+                if (channel) {
+                    // Cached data is deliberately weaker than resident/server
+                    // data. It may fill an absent identity, but never refresh an
+                    // already resident post. A mutation observed after this read
+                    // started also vetoes the cached insertion.
+                    if (!channel->postIdToPost.contains(postId)) {
+                        const auto watermark = guard->residentObservations.constFind(postId);
+                        if (watermark == guard->residentObservations.cend()
+                            || watermark->sequence <= cacheReadObservation) {
+                            QJsonObject posts;
+                            posts.insert(postId, postObject);
+                            guard->ingestCached(*channel, posts, cacheReadObservation, true);
+                        }
+                    }
+                    result.success = channel->postIdToPost.contains(postId);
+                }
+                deliverSuccess(result);
+                deliverFailureIfDone();
+            });
+    } else {
+        state->cacheDone = true;
+    }
+
+    // HTTP validation always runs, even after a fast cache hit. It keeps normal
+    // request coalescing and carries the physical request's observation sequence.
     coalescedGet(QStringLiteral("posts/") + postId,
-        [guard, postId, callback = std::move(callback)](
+        [guard, state, postId, deliverSuccess, deliverFailureIfDone](
             QVariant status, const QJsonDocument& doc,
             const RequestContext& requestContext) mutable {
+            state->httpDone = true;
             PostResult result;
             result.postId = postId;
             if (!guard || status.toInt() != QNetworkReply::NoError || !doc.isObject()) {
-                if (callback) {
-                    callback(result);
-                }
+                deliverFailureIfDone();
                 return;
             }
 
@@ -302,9 +372,8 @@ void PostRepository::loadPost(const QString& postId, PostCallback callback)
                 result.success = channel->postIdToPost.contains(postId);
             }
 
-            if (callback) {
-                callback(result);
-            }
+            deliverSuccess(result);
+            deliverFailureIfDone();
         });
 }
 
@@ -724,6 +793,46 @@ void PostRepository::ingest(BackendChannel& channel,
         channel.mergePostContext(newestFirst, acceptedPosts);
     }
     pruneResidentObservations();
+}
+
+void PostRepository::ingestCached(BackendChannel& channel,
+                                  const QJsonObject& postsObject,
+                                  quint64 readObservation,
+                                  bool quiet)
+{
+    QJsonObject acceptedPosts;
+    for (auto it = postsObject.constBegin(); it != postsObject.constEnd(); ++it) {
+        if (!it->isObject()) {
+            continue;
+        }
+        const QJsonObject postObject = it->toObject();
+        const QString postId = postObject.value(QStringLiteral("id")).toString(it.key());
+        if (postId.isEmpty() || channel.postIdToPost.contains(postId)) {
+            continue;
+        }
+        const auto watermark = residentObservations.constFind(postId);
+        if (watermark != residentObservations.cend()
+            && watermark->sequence > readObservation) {
+            continue;
+        }
+        acceptedPosts.insert(postId, postObject);
+    }
+
+    if (acceptedPosts.isEmpty()) {
+        return;
+    }
+
+    const QStringList chronological = allChronologicalOrder(acceptedPosts);
+    QJsonArray newestFirst;
+    for (int i = chronological.size() - 1; i >= 0; --i) {
+        newestFirst.push_back(chronological.at(i));
+    }
+    if (quiet) {
+        const QSignalBlocker blocker(&channel);
+        channel.mergePostContext(newestFirst, acceptedPosts);
+    } else {
+        channel.mergePostContext(newestFirst, acceptedPosts);
+    }
 }
 
 void PostRepository::noteResidentObservation(const QJsonObject& postObject,

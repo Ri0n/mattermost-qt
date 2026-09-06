@@ -248,3 +248,23 @@ target_link_libraries(post-cache-store-test
 )
 
 add_test(NAME post-cache-store-test COMMAND post-cache-store-test)
+
+add_executable(post-cache-service-test
+    PostCacheServiceTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/backend/PostCacheService.cpp"
+    "${CMAKE_SOURCE_DIR}/sources/backend/PostCacheStore.cpp"
+)
+
+target_include_directories(post-cache-service-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(post-cache-service-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+        Qt${QT_VERSION_MAJOR}::Sql
+)
+
+add_test(NAME post-cache-service-test COMMAND post-cache-service-test)

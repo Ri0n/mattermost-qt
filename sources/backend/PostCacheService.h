@@ -1,7 +1,10 @@
 #pragma once
 
+#include <functional>
+
 #include <QtGlobal>
 #include <QJsonObject>
+#include <QObject>
 #include <QString>
 #include <QThread>
 
@@ -19,6 +22,8 @@ class PostCacheWorker;
 class PostCacheService final
 {
 public:
+    using ReadCallback = std::function<void(QJsonObject)>;
+
     PostCacheService();
     explicit PostCacheService(QString databasePath);
     ~PostCacheService();
@@ -46,7 +51,29 @@ public:
                     const QString& postId,
                     quint64 observationSequence);
 
+    /** Read one cached post asynchronously; empty object means miss/error. */
+    void loadPost(const QString& server,
+                  const QString& userId,
+                  const QString& postId,
+                  ReadCallback callback);
+
+    /** Read newest cached channel roots asynchronously. */
+    void loadLatestChannelRoots(const QString& server,
+                                const QString& userId,
+                                const QString& channelId,
+                                int limit,
+                                ReadCallback callback);
+
+    /** Read a cached thread root plus newest replies asynchronously. */
+    void loadThread(const QString& server,
+                    const QString& userId,
+                    const QString& channelId,
+                    const QString& rootId,
+                    int limit,
+                    ReadCallback callback);
+
 private:
+    QObject callbackContext;
     QThread workerThread;
     PostCacheWorker* worker = nullptr;
 };

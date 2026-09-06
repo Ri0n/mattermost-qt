@@ -8,6 +8,7 @@
 #include <QDir>
 #include <QHash>
 #include <QMetaObject>
+#include <QPointer>
 #include <QSettings>
 #include <QStandardPaths>
 
@@ -151,6 +152,40 @@ public:
             store->removePost(postId);
         }
         pruneInvalidationWatermarks();
+    }
+
+    QJsonObject loadPost(const QString& server,
+                         const QString& userId,
+                         const QString& postId)
+    {
+        if (postId.isEmpty() || !selectAccount(server, userId)) {
+            return {};
+        }
+        return store->loadPost(postId);
+    }
+
+    QJsonObject loadLatestChannelRoots(const QString& server,
+                                       const QString& userId,
+                                       const QString& channelId,
+                                       int limit)
+    {
+        if (channelId.isEmpty() || limit <= 0 || !selectAccount(server, userId)) {
+            return {};
+        }
+        return store->loadLatestChannelRoots(channelId, limit);
+    }
+
+    QJsonObject loadThread(const QString& server,
+                           const QString& userId,
+                           const QString& channelId,
+                           const QString& rootId,
+                           int limit)
+    {
+        if (channelId.isEmpty() || rootId.isEmpty() || limit <= 0
+            || !selectAccount(server, userId)) {
+            return {};
+        }
+        return store->loadThread(channelId, rootId, limit);
     }
 
     void shutdown()
@@ -300,6 +335,123 @@ void PostCacheService::removePost(const QString& server,
                                                            observationSequence);
                               },
                               Qt::QueuedConnection);
+}
+
+void PostCacheService::loadPost(const QString& server,
+                                const QString& userId,
+                                const QString& postId,
+                                ReadCallback callback)
+{
+    QPointer<QObject> context(&callbackContext);
+    if (!worker || server.trimmed().isEmpty() || userId.trimmed().isEmpty()
+        || postId.isEmpty()) {
+        if (callback) {
+            QMetaObject::invokeMethod(&callbackContext,
+                                      [callback = std::move(callback)]() mutable {
+                                          callback({});
+                                      },
+                                      Qt::QueuedConnection);
+        }
+        return;
+    }
+
+    PostCacheWorker* const currentWorker = worker;
+    QMetaObject::invokeMethod(currentWorker,
+                              [currentWorker, server, userId, postId, context,
+                               callback = std::move(callback)]() mutable {
+                                  QJsonObject result = currentWorker->loadPost(
+                                      server, userId, postId);
+                                  if (!context || !callback) {
+                                      return;
+                                  }
+                                  QMetaObject::invokeMethod(
+                                      context.data(),
+                                      [callback = std::move(callback),
+                                       result = std::move(result)]() mutable {
+                                          callback(std::move(result));
+                                      },
+                                      Qt::QueuedConnection);
+                              },
+                              Qt::QueuedConnection);
+}
+
+void PostCacheService::loadLatestChannelRoots(const QString& server,
+                                              const QString& userId,
+                                              const QString& channelId,
+                                              int limit,
+                                              ReadCallback callback)
+{
+    QPointer<QObject> context(&callbackContext);
+    if (!worker || server.trimmed().isEmpty() || userId.trimmed().isEmpty()
+        || channelId.isEmpty() || limit <= 0) {
+        if (callback) {
+            QMetaObject::invokeMethod(&callbackContext,
+                                      [callback = std::move(callback)]() mutable {
+                                          callback({});
+                                      },
+                                      Qt::QueuedConnection);
+        }
+        return;
+    }
+
+    PostCacheWorker* const currentWorker = worker;
+    QMetaObject::invokeMethod(
+        currentWorker,
+        [currentWorker, server, userId, channelId, limit, context,
+         callback = std::move(callback)]() mutable {
+            QJsonObject result = currentWorker->loadLatestChannelRoots(
+                server, userId, channelId, limit);
+            if (!context || !callback) {
+                return;
+            }
+            QMetaObject::invokeMethod(
+                context.data(),
+                [callback = std::move(callback), result = std::move(result)]() mutable {
+                    callback(std::move(result));
+                },
+                Qt::QueuedConnection);
+        },
+        Qt::QueuedConnection);
+}
+
+void PostCacheService::loadThread(const QString& server,
+                                  const QString& userId,
+                                  const QString& channelId,
+                                  const QString& rootId,
+                                  int limit,
+                                  ReadCallback callback)
+{
+    QPointer<QObject> context(&callbackContext);
+    if (!worker || server.trimmed().isEmpty() || userId.trimmed().isEmpty()
+        || channelId.isEmpty() || rootId.isEmpty() || limit <= 0) {
+        if (callback) {
+            QMetaObject::invokeMethod(&callbackContext,
+                                      [callback = std::move(callback)]() mutable {
+                                          callback({});
+                                      },
+                                      Qt::QueuedConnection);
+        }
+        return;
+    }
+
+    PostCacheWorker* const currentWorker = worker;
+    QMetaObject::invokeMethod(
+        currentWorker,
+        [currentWorker, server, userId, channelId, rootId, limit, context,
+         callback = std::move(callback)]() mutable {
+            QJsonObject result = currentWorker->loadThread(
+                server, userId, channelId, rootId, limit);
+            if (!context || !callback) {
+                return;
+            }
+            QMetaObject::invokeMethod(
+                context.data(),
+                [callback = std::move(callback), result = std::move(result)]() mutable {
+                    callback(std::move(result));
+                },
+                Qt::QueuedConnection);
+        },
+        Qt::QueuedConnection);
 }
 
 } // namespace Mattermost
