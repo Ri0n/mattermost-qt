@@ -1,0 +1,29 @@
+name: Align exact at-end semantics
+
+on:
+  push:
+    paths:
+      - '.github/workflows/align-at-end-semantics.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+      - name: Apply fix
+        run: python3 .github/scripts/align-at-end-semantics.py
+      - name: Remove temporary files
+        run: rm .github/scripts/align-at-end-semantics.py .github/workflows/align-at-end-semantics.yml
+      - name: Commit result
+        run: |
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add -A
+          git commit -m 'Align exact at-end semantics'
+          git push origin HEAD:chatgpt/post-disk-cache
