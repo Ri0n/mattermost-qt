@@ -71,6 +71,10 @@ public:
     {
         return activityTracker.lastViewedTime(channelId);
     }
+    uint64_t channelOpenTime(const QString& channelId) const
+    {
+        return activityTracker.openTime(channelId);
+    }
     QStringList visibleChannelIds(const SidebarCategory& category) const;
     void markChannelViewedLocally(const BackendChannel& channel);
     void synchronizeChannelActivity();
