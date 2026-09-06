@@ -26,8 +26,8 @@ jobs:
           p = Path('.github/apply_sidebar_personal.py')
           s = p.read_text()
           s = s.replace(
-              r'void Backend::createDirectChannel \\(const BackendUser& user\\)\\n\\{.*?\\n\\}\\n\\nvoid Backend::retrieveChannelPosts',
-              r'void Backend::createDirectChannel \\(const BackendUser& user\\)\\n\\{.*?\\n\\}\\n\\nvoid Backend::addUserToChannel')
+              r'void Backend::createDirectChannel \(const BackendUser& user\)\n\{.*?\n\}\n\nvoid Backend::retrieveChannelPosts',
+              r'void Backend::createDirectChannel \(const BackendUser& user\)\n\{.*?\n\}\n\nvoid Backend::addUserToChannel')
           s = s.replace(
               'void Backend::retrieveChannelPosts"""',
               'void Backend::addUserToChannel"""')
