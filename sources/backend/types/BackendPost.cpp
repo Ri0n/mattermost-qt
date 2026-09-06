@@ -271,12 +271,16 @@ bool BackendPost::updatePostEdits (BackendPost& editedPost)
 
 	const bool nextDeleted = editedPost.delete_at != 0 || editedPost.isDeleted;
 	const bool nextHidden = editedPost.hidden || !root_id.isEmpty();
+	const QString nextSenderName = editedPost.sender_name.isEmpty()
+		? sender_name : editedPost.sender_name;
+	const bool nextCurrentUserMentioned = currentUserMentioned
+		|| editedPost.currentUserMentioned;
 	const bool changed = update_at != editedPost.update_at
 		|| edit_at != editedPost.edit_at
 		|| delete_at != editedPost.delete_at
 		|| is_pinned != editedPost.is_pinned
 		|| user_id != editedPost.user_id
-		|| sender_name != editedPost.sender_name
+		|| sender_name != nextSenderName
 		|| author != editedPost.author
 		|| parent_id != editedPost.parent_id
 		|| original_id != editedPost.original_id
@@ -290,7 +294,7 @@ bool BackendPost::updatePostEdits (BackendPost& editedPost)
 		|| reply_count != editedPost.reply_count
 		|| last_reply_at != editedPost.last_reply_at
 		|| threadParticipantUserIds != editedPost.threadParticipantUserIds
-		|| currentUserMentioned != editedPost.currentUserMentioned
+		|| currentUserMentioned != nextCurrentUserMentioned
 		|| has_thread != editedPost.has_thread
 		|| isDeleted != nextDeleted
 		|| hidden != nextHidden
@@ -311,7 +315,7 @@ bool BackendPost::updatePostEdits (BackendPost& editedPost)
 	delete_at = editedPost.delete_at;
 	is_pinned = editedPost.is_pinned;
 	user_id = editedPost.user_id;
-	sender_name = editedPost.sender_name;
+	sender_name = nextSenderName;
 	author = editedPost.author;
 	parent_id = editedPost.parent_id;
 	original_id = editedPost.original_id;
@@ -326,7 +330,7 @@ bool BackendPost::updatePostEdits (BackendPost& editedPost)
 	last_reply_at = editedPost.last_reply_at;
 	threadParticipantUserIds = std::move(editedPost.threadParticipantUserIds);
 	poll = std::move(editedPost.poll);
-	currentUserMentioned = editedPost.currentUserMentioned;
+	currentUserMentioned = nextCurrentUserMentioned;
 	has_thread = editedPost.has_thread;
 	isDeleted = nextDeleted;
 	hidden = nextHidden;
