@@ -287,9 +287,10 @@ ChannelItem* ChannelTree::createPersonalItem(Backend& backend, TeamItem& teamIte
     }
 
     const BackendUser& self = backend.getLoginUser();
-    item->setIcon(self.avatar.isNull()
-        ? QIcon(QStringLiteral(":/img/user-icon.png"))
-        : QIcon(self.avatar));
+    item->setStatus(self.status);
+    if (!self.avatar.isNull()) {
+        item->setIcon(QIcon(self.avatar));
+    }
 
     if (!personalUserConnected) {
         personalUserConnected = true;
@@ -297,6 +298,8 @@ ChannelItem* ChannelTree::createPersonalItem(Backend& backend, TeamItem& teamIte
             backend.retrieveUserAvatar(self.id);
         }
         connect(&self, &BackendUser::onAvatarChanged, this,
+                [this] { refreshPersonalItems(); });
+        connect(&self, &BackendUser::onStatusChanged, this,
                 [this] { refreshPersonalItems(); });
     }
     return item;
@@ -330,9 +333,6 @@ void ChannelTree::refreshPersonalItems()
     }
 
     const BackendUser& self = backendForSidebar->getLoginUser();
-    const QIcon icon = self.avatar.isNull()
-        ? QIcon(QStringLiteral(":/img/user-icon.png"))
-        : QIcon(self.avatar);
     BackendChannel* channel = backendForSidebar->getStorage().getDirectChannelByUserId(self.id);
 
     for (auto it = teamToItemMap.cbegin(); it != teamToItemMap.cend(); ++it) {
@@ -340,7 +340,9 @@ void ChannelTree::refreshPersonalItems()
         if (!row) {
             continue;
         }
-        static_cast<ChannelItem*>(row)->setIcon(icon);
+        auto* personalItem = static_cast<ChannelItem*>(row);
+        personalItem->setStatus(self.status);
+        personalItem->setIcon(self.avatar.isNull() ? QIcon() : QIcon(self.avatar));
         row->setData(0, ItemChannelIdRole, channel ? channel->id : QString());
     }
 }
