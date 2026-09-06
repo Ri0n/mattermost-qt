@@ -57,8 +57,8 @@ private:
     // as both boundary evidence and useful viewport/prefetch materialization.
     static constexpr int ServerPageSize = 10;
     // Large-channel top-edge search starts this far inside the estimated count.
-    // This is a latency heuristic only; outward binary search or inward
-    // exponential fallback preserves correctness.
+    // This is a latency heuristic only; inward/outward boundary search keeps
+    // correctness independent of whether the estimate is high or low.
     static constexpr int InitialBoundaryProbePercent = 3;
 
     struct ProvisionalWindow {
@@ -100,10 +100,14 @@ private:
     void placePage(int page, const QStringList& chronologicalIds);
     void probeEstimatedOldestBoundary(std::function<void()> completion);
     void resolveOldestBoundary(int emptyPage, std::function<void()> completion);
+    void resolveOldestBoundaryFromNonEmpty(int nonEmptyPage,
+                                           std::function<void()> completion);
     void probeOldestBoundary();
     void loadOldestBoundaryPage(int page);
     void finishOldestBoundaryProbe();
     void reconcileRootCount(int actualCount);
+    void ensureMinimumRootCount(int minimumCount);
+    void insertLogicalPrefix(int count);
     void prependDiscovered(const QStringList& chronologicalIds);
     void appendLivePost(BackendPost& post);
 
@@ -112,12 +116,12 @@ private:
     QVector<QString> postIds;
     QHash<QString, int> postIndexes;
 
-    const bool exactRootCount;
-    // total_msg_count_root can overestimate /posts because deleted roots are
-    // omitted. Empty/short absolute pages resolve the real oldest boundary;
-    // keep that correction local so later channel metadata cannot recreate the
-    // phantom logical prefix.
-    int rootCountOverestimate = 0;
+    const bool hasRootCountEstimate;
+    // total_msg_count_root is a message-count estimate, not /posts row count.
+    // Deleted roots can make it too large; count-excluded system roots can
+    // make it too small. Once /posts proves the exact oldest boundary, keep
+    // the signed difference so later metadata refreshes preserve that mapping.
+    int rootCountAdjustment = 0;
     bool moreBeforeFirst = false;
     bool beforeRequestInFlight = false;
 
@@ -129,6 +133,7 @@ private:
     int oldestBoundaryEmptyPage = -1;
     int oldestBoundaryProbeStep = 1;
     int oldestBoundarySearchLimitPage = -1;
+    int oldestBoundaryMaterializedFullPage = -1;
     std::vector<std::function<void()>> oldestBoundaryWaiters;
 
     ProvisionalWindow provisionalWindow;

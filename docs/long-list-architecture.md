@@ -265,29 +265,27 @@ ten-item logical request may intersect two server pages; the source loads both a
 its absolute page number. Once the oldest boundary is known, a jump to any scrollbar position is
 therefore O(1) page requests rather than an identity-cursor walk through history.
 
-`total_msg_count_root` may overestimate the rows returned by `/posts` because deleted roots can be
-omitted from history. If an absolute page calculated from that estimate is successfully fetched but
-empty, the source treats the empty response as boundary evidence instead of leaving a black logical
-range. Boundary search stays in ten-post page coordinates but tests distant candidate pages with one
-root only: candidate page P is probed as `page=P*10&per_page=1`, which asks whether the first offset
-of that ten-post page exists.
+`total_msg_count_root` is only an initial coordinate estimate for `/posts`, not its row count.
+Deleted roots can make the counter larger than visible history, while join/leave and other system
+roots excluded from Mattermost message counts are still returned by `/posts` and can make the counter
+smaller. The source therefore repairs the oldest boundary in both directions. Absolute pages remain
+newest-anchored; count growth inserts empty logical slots at the oldest side so already mapped pages do
+not move relative to the newest edge.
 
-For a large top-edge request the source does not spend a first round trip validating the estimated
-oldest page. Its first one-root probe jumps inward by a heuristic 3% of the estimated root count,
-rounded to ten-post pages. This ratio affects latency only; correctness does not depend on it. If that
-probe is empty, the step grows exponentially farther inward until data is found. If it already finds
-data, binary search walks outward towards the estimated oldest page without assuming that estimate is
-empty; the estimated page itself is fetched only if the search actually reaches it. If the 3% distance
-is no larger than one page, the normal ten-post path is used instead because a small channel is cheap
-to materialize.
+Boundary search stays in ten-post page coordinates but tests distant candidate page starts with one
+root only: candidate page P is probed as `page=P*10&per_page=1`. For a large top-edge request the first
+probe jumps inward by a heuristic 3% of the estimated root count. If it is empty, the step grows
+exponentially farther inward until data is found. If it exists, binary search walks outward to the
+reported boundary. A full reported-boundary page is not accepted as proof: the source first probes the
+adjacent older page and, if that exists too, expands outward exponentially until `/posts` provides an
+empty/short boundary. Small estimates use the normal ten-post path first and enter the same outward
+repair only when their reported oldest page is full.
 
-Near the end of binary search, when at most two unknown ten-post pages remain, the source stops
-spending one-root probes on that tiny interval and fetches the first unknown page with `per_page=10`.
-A short result proves the exact oldest boundary immediately; an empty result tightens the boundary; and
-a full page requires at most one adjacent ten-post page to finish. In every case returned posts are
-already useful viewport/prefetch materialization. The phantom logical prefix is removed once the exact
-count is known and normal ten-post paging continues. No identity cursor is introduced by this
-reconciliation path.
+Near a bounded edge, when at most two unknown ten-post pages remain, the source stops spending
+one-root probes and materializes the first unknown page with `per_page=10`. A short page proves the
+exact count; a full page adjacent to known emptiness proves an exact multiple of ten. Exact
+reconciliation may therefore remove a phantom prefix or insert a missing oldest prefix. The 3% value
+changes latency only, never correctness, and no identity cursor is introduced by this repair path.
 
 This replaces the old controller-level `TimelineSeekState` state machine.
 

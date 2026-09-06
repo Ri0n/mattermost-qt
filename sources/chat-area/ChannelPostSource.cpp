@@ -67,9 +67,9 @@ ChannelPostSource::ChannelPostSource(Backend& backendInstance,
     : AbstractPostSource(parent)
     , backend(backendInstance)
     , channel(channelInstance)
-    , exactRootCount(channelInstance.has_total_msg_count_root)
+    , hasRootCountEstimate(channelInstance.has_total_msg_count_root)
 {
-    if (exactRootCount) {
+    if (hasRootCountEstimate) {
         postIds.resize(currentLogicalCount());
         seedCachedPosts();
     } else {
@@ -113,8 +113,8 @@ ChannelPostSource::ChannelPostSource(Backend& backendInstance,
             && !deletedPost->hidden;
 
         if (removeLikeOfficialClient) {
-            if (exactRootCount) {
-                ++rootCountOverestimate;
+            if (hasRootCountEstimate) {
+                --rootCountAdjustment;
             }
             removeLogicalRange(index, 1);
         } else {
@@ -127,7 +127,7 @@ ChannelPostSource::ChannelPostSource(Backend& backendInstance,
     });
     connect(&channel, &BackendChannel::onNewPosts, this,
             [this](const ChannelNewPosts&) {
-        if (!exactRootCount) {
+        if (!hasRootCountEstimate) {
             return;
         }
         const int count = currentLogicalCount();
@@ -171,7 +171,7 @@ bool ChannelPostSource::adoptNavigationContext(const QString& targetPostId,
                                                bool reachedOldest,
                                                bool reachedNewest)
 {
-    if (!exactRootCount || postIds.isEmpty() || targetPostId.isEmpty()) {
+    if (!hasRootCountEstimate || postIds.isEmpty() || targetPostId.isEmpty()) {
         return indexOfPost(targetPostId) >= 0;
     }
 
@@ -260,7 +260,7 @@ void ChannelPostSource::requestRange(int first,
     Q_UNUSED(reason)
     Q_UNUSED(generation)
 
-    if (!exactRootCount || postIds.isEmpty()) {
+    if (!hasRootCountEstimate || postIds.isEmpty()) {
         emit rangeRequestFinished(first, last);
         return;
     }
@@ -272,12 +272,11 @@ void ChannelPostSource::requestRange(int first,
         return;
     }
 
-    // A large channel is unlikely to have an exact oldest page when the server
-    // count still includes deleted roots. Avoid downloading one or two guessed
-    // ten-post pages just to discover that they are empty: validate the
-    // estimated oldest page with one root first, then jump inward by the 3%
-    // heuristic if that cheap probe is empty. Small channels keep the normal
-    // ten-post path because their likely oldest block is cheap and useful.
+    // total_msg_count_root is only an initial coordinate estimate. Deleted
+    // roots can make it too large, while join/leave and other count-excluded
+    // system roots returned by /posts can make it too small. Large top-edge
+    // seeks start 3% inside that estimate and repair the oldest boundary in
+    // either direction before ordinary page placement resumes.
     if (requestedFirst == 0 && !oldestBoundaryFastPathTried
         && initialBoundaryProbePages() > 1) {
         oldestBoundaryFastPathTried = true;
@@ -337,7 +336,8 @@ void ChannelPostSource::requestRange(int first,
             << "] page=" << page << " perPage=" << ServerPageSize;
         PostTimelineService::instance(backend).loadChannelPage(
             channel, page, ServerPageSize,
-            [guard, page, finishPage](const PostTimelineService::Page& result) {
+            [guard, page, requestedFirst, oldestPage, finishPage](
+                const PostTimelineService::Page& result) {
                 if (!guard) {
                     return;
                 }
@@ -349,7 +349,20 @@ void ChannelPostSource::requestRange(int first,
                     guard->resolveOldestBoundary(page, finishPage);
                     return;
                 }
+
                 guard->placePage(page, result.postIds);
+
+                // For small estimates we deliberately take the normal ten-post
+                // path first. If the estimated oldest page is full, however,
+                // the count may be an underestimate (for example because
+                // join/leave system posts are excluded from the counter). Keep
+                // this request open and search farther into older pages.
+                if (requestedFirst == 0 && page == oldestPage
+                    && result.postIds.size() == ServerPageSize
+                    && !guard->oldestBoundaryFastPathTried) {
+                    guard->resolveOldestBoundaryFromNonEmpty(page, finishPage);
+                    return;
+                }
                 finishPage();
             });
     }
@@ -370,11 +383,13 @@ void ChannelPostSource::probeEstimatedOldestBoundary(
     oldestBoundaryEmptyPage = -1;
     oldestBoundaryProbeStep = initialBoundaryProbePages();
     oldestBoundarySearchLimitPage = pageForIndex(0);
+    oldestBoundaryMaterializedFullPage = -1;
 
-    // Large channels start at the expected deletion distance instead of first
-    // spending a round trip on the estimated oldest page. If this probe finds
-    // data, binary search walks outward towards the estimate; if it is empty,
-    // exponential stepping continues inward. The 3% value affects latency only.
+    // Start at the expected deletion distance instead of spending a round trip
+    // on the estimated oldest page. Empty means the estimate was too large and
+    // we step inward. Existing data is searched outward to the estimate; if the
+    // estimated page is full, search continues beyond it because count-excluded
+    // system roots can make total_msg_count_root an underestimate as well.
     const int page = std::max(0,
                               oldestBoundarySearchLimitPage - oldestBoundaryProbeStep);
     const int offset = page * ServerPageSize;
@@ -433,6 +448,37 @@ void ChannelPostSource::resolveOldestBoundary(int emptyPage,
     oldestBoundaryEmptyPage = emptyPage;
     oldestBoundaryProbeStep = initialBoundaryProbePages();
     oldestBoundarySearchLimitPage = -1;
+    oldestBoundaryMaterializedFullPage = -1;
+    probeOldestBoundary();
+}
+
+void ChannelPostSource::resolveOldestBoundaryFromNonEmpty(
+    int nonEmptyPage, std::function<void()> completion)
+{
+    if (completion) {
+        oldestBoundaryWaiters.push_back(std::move(completion));
+    }
+
+    oldestBoundaryFastPathTried = true;
+    nonEmptyPage = std::max(0, nonEmptyPage);
+    if (oldestBoundaryProbeInFlight) {
+        if (oldestBoundaryEmptyPage < 0 || nonEmptyPage < oldestBoundaryEmptyPage) {
+            oldestBoundaryNonEmptyPage = std::max(oldestBoundaryNonEmptyPage,
+                                                  nonEmptyPage);
+            oldestBoundaryMaterializedFullPage = std::max(
+                oldestBoundaryMaterializedFullPage, nonEmptyPage);
+        }
+        return;
+    }
+
+    oldestBoundaryProbeInFlight = true;
+    oldestBoundaryNonEmptyPage = nonEmptyPage;
+    oldestBoundaryEmptyPage = -1;
+    // First check the adjacent page. Exact multiples of ten are common, so one
+    // cheap probe should prove them before exponential outward stepping begins.
+    oldestBoundaryProbeStep = 1;
+    oldestBoundarySearchLimitPage = -1;
+    oldestBoundaryMaterializedFullPage = nonEmptyPage;
     probeOldestBoundary();
 }
 
@@ -444,6 +490,16 @@ void ChannelPostSource::probeOldestBoundary()
 
     if (oldestBoundaryEmptyPage == 0) {
         reconcileRootCount(0);
+        finishOldestBoundaryProbe();
+        return;
+    }
+
+    // A full materialized page followed immediately by known emptiness proves
+    // an exact multiple-of-ten boundary without re-fetching that page.
+    if (oldestBoundaryNonEmptyPage >= 0
+        && oldestBoundaryEmptyPage == oldestBoundaryNonEmptyPage + 1
+        && oldestBoundaryMaterializedFullPage == oldestBoundaryNonEmptyPage) {
+        reconcileRootCount(oldestBoundaryEmptyPage * ServerPageSize);
         finishOldestBoundaryProbe();
         return;
     }
@@ -470,16 +526,34 @@ void ChannelPostSource::probeOldestBoundary()
 
     int page = -1;
     if (oldestBoundaryNonEmptyPage >= 0 && oldestBoundaryEmptyPage < 0) {
-        // The initial 3% probe found data. Search outward towards the estimated
-        // oldest page without assuming that estimate is empty. If all probes
-        // exist, the estimated page itself is finally materialized normally.
-        if (oldestBoundarySearchLimitPage < 0
-            || oldestBoundaryNonEmptyPage >= oldestBoundarySearchLimitPage) {
-            loadOldestBoundaryPage(oldestBoundaryNonEmptyPage);
-            return;
+        if (oldestBoundarySearchLimitPage >= 0) {
+            // The initial 3% probe found data. Walk outward toward the reported
+            // boundary without assuming it is empty.
+            if (oldestBoundaryNonEmptyPage >= oldestBoundarySearchLimitPage) {
+                loadOldestBoundaryPage(oldestBoundaryNonEmptyPage);
+                return;
+            }
+            page = oldestBoundaryNonEmptyPage
+                + (oldestBoundarySearchLimitPage - oldestBoundaryNonEmptyPage + 1) / 2;
+        } else {
+            // A full reported-boundary page proves that the count may be too
+            // small. Probe one adjacent page first, then grow the outward step
+            // exponentially. Existence is monotonic in absolute page space.
+            const int step = std::max(1, oldestBoundaryProbeStep);
+            const qint64 candidate = static_cast<qint64>(oldestBoundaryNonEmptyPage)
+                + step;
+            if (candidate > std::numeric_limits<int>::max()) {
+                finishOldestBoundaryProbe();
+                return;
+            }
+            page = static_cast<int>(candidate);
+            if (step == 1) {
+                oldestBoundaryProbeStep = std::max(2, initialBoundaryProbePages());
+            } else {
+                oldestBoundaryProbeStep = std::min(
+                    std::numeric_limits<int>::max() / 2, step * 2);
+            }
         }
-        page = oldestBoundaryNonEmptyPage
-            + (oldestBoundarySearchLimitPage - oldestBoundaryNonEmptyPage + 1) / 2;
     } else if (oldestBoundaryNonEmptyPage < 0) {
         page = std::max(0, oldestBoundaryEmptyPage - oldestBoundaryProbeStep);
         oldestBoundaryProbeStep = std::min(oldestBoundaryEmptyPage + 1,
@@ -565,13 +639,20 @@ void ChannelPostSource::loadOldestBoundaryPage(int page)
                 }
                 if (guard->oldestBoundaryNonEmptyPage >= page) {
                     guard->oldestBoundaryNonEmptyPage = -1;
+                    guard->oldestBoundaryMaterializedFullPage = -1;
                 }
                 if (guard->oldestBoundaryNonEmptyPage >= 0
                     && guard->oldestBoundaryEmptyPage
                         == guard->oldestBoundaryNonEmptyPage + 1) {
-                    guard->reconcileRootCount(
-                        guard->oldestBoundaryEmptyPage * ServerPageSize);
-                    guard->finishOldestBoundaryProbe();
+                    if (guard->oldestBoundaryMaterializedFullPage
+                        == guard->oldestBoundaryNonEmptyPage) {
+                        guard->reconcileRootCount(
+                            guard->oldestBoundaryEmptyPage * ServerPageSize);
+                        guard->finishOldestBoundaryProbe();
+                    } else {
+                        guard->loadOldestBoundaryPage(
+                            guard->oldestBoundaryNonEmptyPage);
+                    }
                     return;
                 }
                 guard->probeOldestBoundary();
@@ -582,13 +663,13 @@ void ChannelPostSource::loadOldestBoundaryPage(int page)
                 guard->oldestBoundaryNonEmptyPage, page);
             const int returned = static_cast<int>(result.postIds.size());
             if (returned < ServerPageSize) {
-                guard->reconcileRootCount(page * ServerPageSize + returned);
                 guard->placePage(page, result.postIds);
                 guard->finishOldestBoundaryProbe();
                 return;
             }
 
             guard->placePage(page, result.postIds);
+            guard->oldestBoundaryMaterializedFullPage = page;
             if (guard->oldestBoundaryEmptyPage == page + 1) {
                 guard->reconcileRootCount((page + 1) * ServerPageSize);
                 guard->finishOldestBoundaryProbe();
@@ -599,11 +680,17 @@ void ChannelPostSource::loadOldestBoundaryPage(int page)
                 return;
             }
 
-            // The outward search can reach a full estimated oldest page
-            // without ever observing an empty page. That means the estimate was
-            // usable as-is; the block is already useful materialization.
+            // Reaching a full reported oldest page is not a boundary proof:
+            // total_msg_count_root excludes join/leave and some other visible
+            // system roots. Switch from the estimated limit to outward
+            // exponential probing until /posts itself proves the edge.
             if (guard->oldestBoundaryEmptyPage < 0) {
-                guard->finishOldestBoundaryProbe();
+                if (guard->oldestBoundarySearchLimitPage >= 0
+                    && page >= guard->oldestBoundarySearchLimitPage) {
+                    guard->oldestBoundarySearchLimitPage = -1;
+                    guard->oldestBoundaryProbeStep = 1;
+                }
+                guard->probeOldestBoundary();
                 return;
             }
             guard->probeOldestBoundary();
@@ -619,6 +706,7 @@ void ChannelPostSource::finishOldestBoundaryProbe()
     oldestBoundaryEmptyPage = -1;
     oldestBoundaryProbeStep = 1;
     oldestBoundarySearchLimitPage = -1;
+    oldestBoundaryMaterializedFullPage = -1;
 
     for (auto& waiter : waiters) {
         if (waiter) {
@@ -630,22 +718,79 @@ void ChannelPostSource::finishOldestBoundaryProbe()
 void ChannelPostSource::reconcileRootCount(int actualCount)
 {
     actualCount = std::max(0, actualCount);
-    const int removePrefix = static_cast<int>(postIds.size()) - actualCount;
-    if (removePrefix <= 0) {
+    const int oldCount = static_cast<int>(postIds.size());
+
+    // Preserve the discovered difference from Mattermost's message counter so
+    // later metadata refreshes do not recreate a deleted-root phantom prefix or
+    // discard count-excluded system roots. The server counter can subsequently
+    // advance with normal messages; this signed adjustment advances with it.
+    rootCountAdjustment = actualCount - std::max(0, channel.total_msg_count_root);
+
+    if (actualCount == oldCount) {
         return;
     }
 
+    if (actualCount > oldCount) {
+        const int addPrefix = actualCount - oldCount;
+        qCDebug(lcTimelineChannel).nospace()
+            << "OLDEST_COUNT_RECONCILE addPrefix=" << addPrefix
+            << " oldCount=" << oldCount
+            << " actualCount=" << actualCount;
+        insertLogicalPrefix(addPrefix);
+        return;
+    }
+
+    const int removePrefix = oldCount - actualCount;
     qCDebug(lcTimelineChannel).nospace()
         << "OLDEST_COUNT_RECONCILE removePrefix=" << removePrefix
-        << " oldCount=" << postIds.size()
+        << " oldCount=" << oldCount
         << " actualCount=" << actualCount;
-    rootCountOverestimate += removePrefix;
     removeLogicalRange(0, removePrefix);
+}
+
+void ChannelPostSource::ensureMinimumRootCount(int minimumCount)
+{
+    minimumCount = std::max(0, minimumCount);
+    const int oldCount = static_cast<int>(postIds.size());
+    if (minimumCount <= oldCount) {
+        return;
+    }
+
+    const int addPrefix = minimumCount - oldCount;
+    qCDebug(lcTimelineChannel).nospace()
+        << "OLDEST_COUNT_EXPAND addPrefix=" << addPrefix
+        << " oldCount=" << oldCount
+        << " minimumCount=" << minimumCount;
+    insertLogicalPrefix(addPrefix);
+}
+
+void ChannelPostSource::insertLogicalPrefix(int count)
+{
+    count = std::max(0, count);
+    if (count == 0) {
+        return;
+    }
+
+    if (provisionalWindow.isValid()) {
+        provisionalWindow.first += count;
+    }
+
+    QVector<QString> next;
+    next.reserve(count + static_cast<int>(postIds.size()));
+    for (int i = 0; i < count; ++i) {
+        next.push_back(QString());
+    }
+    for (const QString& id : std::as_const(postIds)) {
+        next.push_back(id);
+    }
+    postIds = std::move(next);
+    rebuildIndex();
+    emit itemsInserted(0, count);
 }
 
 bool ChannelPostSource::canRequestBeforeFirst() const
 {
-    return !exactRootCount && moreBeforeFirst;
+    return !hasRootCountEstimate && moreBeforeFirst;
 }
 
 void ChannelPostSource::requestBeforeFirst(RequestReason reason, quint64 generation)
@@ -653,7 +798,7 @@ void ChannelPostSource::requestBeforeFirst(RequestReason reason, quint64 generat
     Q_UNUSED(reason)
     Q_UNUSED(generation)
 
-    if (exactRootCount || !moreBeforeFirst || beforeRequestInFlight) {
+    if (hasRootCountEstimate || !moreBeforeFirst || beforeRequestInFlight) {
         return;
     }
 
@@ -698,10 +843,10 @@ void ChannelPostSource::requestBeforeFirst(RequestReason reason, quint64 generat
 
 int ChannelPostSource::currentLogicalCount() const
 {
-    if (exactRootCount) {
-        const int correctedServerCount = std::max(
-            0, channel.total_msg_count_root - rootCountOverestimate);
-        return std::max(static_cast<int>(postIds.size()), correctedServerCount);
+    if (hasRootCountEstimate) {
+        const int adjustedServerCount = std::max(
+            0, channel.total_msg_count_root + rootCountAdjustment);
+        return std::max(static_cast<int>(postIds.size()), adjustedServerCount);
     }
     return static_cast<int>(postIds.size());
 }
@@ -989,7 +1134,7 @@ bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
 
 void ChannelPostSource::seedCachedPosts()
 {
-    if (!exactRootCount) {
+    if (!hasRootCountEstimate) {
         return;
     }
 
@@ -1021,7 +1166,7 @@ void ChannelPostSource::seedCachedPosts()
 
 void ChannelPostSource::seedUnknownNewestPost()
 {
-    if (exactRootCount || channel.last_post_at == 0) {
+    if (hasRootCountEstimate || channel.last_post_at == 0) {
         return;
     }
 
@@ -1099,23 +1244,27 @@ void ChannelPostSource::removeLogicalRange(int first, int count)
 
 void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
 {
-    if (!exactRootCount || postIds.isEmpty() || chronologicalIds.isEmpty()) {
+    if (!hasRootCountEstimate || postIds.isEmpty() || chronologicalIds.isEmpty()) {
         return;
     }
 
-    // /channels/{id}/posts omits deleted roots while total_msg_count_root
-    // may continue counting them. A short absolute page is authoritative proof
-    // of the real oldest boundary, including page zero for small channels.
-    if (chronologicalIds.size() < ServerPageSize) {
-        reconcileRootCount(
-            page * ServerPageSize + static_cast<int>(chronologicalIds.size()));
+    const int returned = static_cast<int>(chronologicalIds.size());
+
+    // Absolute /posts pages are the timeline authority. A short page proves the
+    // exact oldest boundary. A full page only proves a minimum count; grow at
+    // the oldest side so already known newest-anchored page mappings keep their
+    // indices. This handles total_msg_count_root underestimates caused by system
+    // roots that are visible in /posts but excluded from channel message counts.
+    if (returned < ServerPageSize) {
+        reconcileRootCount(page * ServerPageSize + returned);
+    } else {
+        ensureMinimumRootCount((page + 1) * ServerPageSize);
     }
 
     const int first = std::max(0,
-        static_cast<int>(postIds.size()) - page * ServerPageSize
-            - static_cast<int>(chronologicalIds.size()));
+        static_cast<int>(postIds.size()) - page * ServerPageSize - returned);
 
-    const int count = std::min(static_cast<int>(chronologicalIds.size()),
+    const int count = std::min(returned,
                                static_cast<int>(postIds.size()) - first);
     if (count <= 0) {
         return;
@@ -1211,7 +1360,7 @@ void ChannelPostSource::appendLivePost(BackendPost& post)
         return;
     }
 
-    int count = exactRootCount ? currentLogicalCount() : static_cast<int>(postIds.size()) + 1;
+    int count = hasRootCountEstimate ? currentLogicalCount() : static_cast<int>(postIds.size()) + 1;
     if (count <= postIds.size()) {
         count = static_cast<int>(postIds.size()) + 1;
     }

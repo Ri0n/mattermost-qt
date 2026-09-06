@@ -81,9 +81,10 @@ identities are relocated to the estimate, create an identity ping-pong and visib
 
 ## Count and boundary differences from channel history
 
-Channel history needs an absolute-page boundary repair because `total_msg_count_root` may count rows
-that ordinary `/channels/{id}/posts` history does not return. Threads deliberately do not inherit that
-page-probing algorithm. Mattermost `Thread.ReplyCount` excludes deleted replies, and the thread endpoint
+Channel history needs an absolute-page boundary repair because `total_msg_count_root` is not the
+row count of ordinary `/channels/{id}/posts`: deleted roots can make it too large, while count-excluded
+system roots can make it too small. Threads deliberately do not inherit that page-probing algorithm.
+Mattermost `Thread.ReplyCount` excludes deleted replies, and the thread endpoint
 is cursor/time based (`fromCreateAt`, `fromPost`, `direction`) rather than an absolute `page=N` space.
 
 If a future server/plugin configuration produces a real thread count mismatch, the common abstraction

@@ -407,10 +407,10 @@ Still required before enabling reads:
 ## Timeline authority and reconnect validation
 
 Persistent caching must not make Mattermost's approximate message counts an
-authority for post identity. `total_msg_count_root` is useful for scrollbar
-scale and for choosing an initial random-seek page, but deleted roots and
-concurrent server changes can make the count disagree with the rows returned
-by `/channels/{id}/posts`.
+authority for post identity. `total_msg_count_root` is useful for scrollbar scale and for choosing an initial random-seek
+page, but it is not `/posts` row count: deleted roots can make it too large, while join/leave and
+other count-excluded system roots can make it too small. Concurrent server changes can add another
+source of disagreement.
 
 The channel source keeps two separate concepts:
 
@@ -423,13 +423,14 @@ pages are newest-aligned, so a ten-item logical block can cross a server-page bo
 case the source requests both intersecting pages and places each with `placePage()`. Remote thumb
 seek, normal scrolling and initial tail materialization therefore share exactly the same paging
 path instead of switching between page arithmetic and cursor walks. A successful empty absolute
-page is also authoritative boundary evidence: when `total_msg_count_root` may overstate `/posts`
-history, a large top-edge request first validates the estimated oldest page with `per_page=1` instead
-of downloading guessed ten-post pages. An empty validation starts distant probing at a heuristic 3% of
-the estimated root count; candidate page starts use `per_page=1` until the search becomes local, where
-the page immediately before known emptiness is materialized with ten posts. The source then removes any
-phantom logical prefix and keeps ten-post paging for visible/prefetched history. The 3% value is a latency
-heuristic, never a correctness assumption.
+page is also authoritative boundary evidence. `total_msg_count_root` can overstate `/posts` when
+deleted roots disappear, but it can also understate it because join/leave and other count-excluded
+system roots remain visible in channel history. A large top-edge request starts with a one-root probe
+3% inside the estimate. Empty results search inward; existing data searches outward to the estimate
+and, when the reported oldest page is full, continues beyond it until `/posts` proves the real edge.
+Small estimates use a normal ten-post page first and expand outward if that page disproves the count.
+Exact reconciliation removes or inserts an oldest logical prefix while preserving newest-anchored page
+mapping. The 3% value is a latency heuristic, never a correctness assumption.
 
 Every successful range request ends in
 one of three states: new identities were placed, a real boundary removed stale
