@@ -1,0 +1,29 @@
+name: Apply provisional cache hydration
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-provisional-cache-hydration.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 .github/scripts/apply-provisional-cache-hydration.py
+      - name: Remove temporary helper
+        run: rm .github/scripts/apply-provisional-cache-hydration.py .github/workflows/apply-provisional-cache-hydration.yml
+      - name: Commit result
+        run: |
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add -A
+          git commit -m 'Hydrate provenance-backed cached tails'
+          git push origin HEAD:chatgpt/post-disk-cache
