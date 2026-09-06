@@ -48,6 +48,7 @@ void WebSocketEventHandler::handleEvent (const ChannelViewedEvent& event)
 	QString channelName = channel ? channel->name : event.channelId;
 
 	if (channel) {
+		PostRepository::instance(backend).recordChannelOpened(channel->id);
 		emit channel->onViewed ();
 		emit backend.onChannelViewed (*channel);
 	}
@@ -342,7 +343,7 @@ void WebSocketEventHandler::handleEvent (const UserLeaveTeamEvent& event)
 			emit channel->onLeave ();
 		}
 
-		emit (team.onLeave());
+		emit (team->onLeave());
 		storage.eraseTeam (team->id);
 	} else {
 		for (auto &channel: team->channels) {
