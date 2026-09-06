@@ -1,0 +1,74 @@
+name: Apply cache seek regression fix
+
+on:
+  push:
+    branches:
+      - chatgpt/post-disk-cache
+    paths:
+      - .github/workflows/cache-seek-regression-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+      - name: Apply focused source and architecture changes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, got {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "sources/chat-area/ChannelPostSource.h",
+              "private:\n    static constexpr int ServerPageSize = 10;\n",
+              "private:\n    // Cursor fetches are intentionally small because they extend already-known\n"
+              "    // adjacency. A remote thumb seek needs a wider one-shot seed so it never\n"
+              "    // walks thousands of messages from a distant authoritative island.\n"
+              "    static constexpr int ServerPageSize = 10;\n"
+              "    static constexpr int SeekPageSize = 100;\n")
+
+          replace_once(
+              "sources/chat-area/ChannelPostSource.cpp",
+              '''    int leftAnchor = firstMissing - 1;\n    while (leftAnchor >= 0\n           && !isAuthoritativePost(postIds.at(leftAnchor))) {\n        --leftAnchor;\n    }\n\n    int rightAnchor = lastMissing + 1;\n    while (rightAnchor < static_cast<int>(postIds.size())\n           && !isAuthoritativePost(postIds.at(rightAnchor))) {\n        ++rightAnchor;\n    }\n    if (rightAnchor >= static_cast<int>(postIds.size())) {\n        rightAnchor = -1;\n    }\n''',
+              '''    // A cursor request can return at most ServerPageSize adjacent rows.\n    // Looking farther than that for an anchor is actively harmful: after a\n    // remote thumb seek it makes us walk from the newest materialized island\n    // toward the requested index one tiny request at a time. Search only the\n    // distance that one cursor request can actually bridge.\n    const int leftLimit = std::max(0, firstMissing - ServerPageSize);\n    int leftAnchor = firstMissing - 1;\n    while (leftAnchor >= leftLimit\n           && !isAuthoritativePost(postIds.at(leftAnchor))) {\n        --leftAnchor;\n    }\n    if (leftAnchor < leftLimit) {\n        leftAnchor = -1;\n    }\n\n    const int rightLimit = std::min(static_cast<int>(postIds.size()) - 1,\n                                    lastMissing + ServerPageSize);\n    int rightAnchor = lastMissing + 1;\n    while (rightAnchor <= rightLimit\n           && !isAuthoritativePost(postIds.at(rightAnchor))) {\n        ++rightAnchor;\n    }\n    if (rightAnchor > rightLimit) {\n        rightAnchor = -1;\n    }\n''')
+
+          replace_once(
+              "sources/chat-area/ChannelPostSource.cpp",
+              '''    // No identity is close enough to the requested block. An absolute\n    // page is only a seed for a provisional island; it must never become\n    // authoritative merely because total_msg_count_root supplied an\n    // approximate global coordinate.\n    const int seedIndex = (firstMissing + lastMissing) / 2;\n    const int page = pageForIndex(seedIndex);\n    PostTimelineService::instance(backend).loadChannelPage(\n        channel, page, ServerPageSize,\n        [guard, page, finish](const PostTimelineService::Page& result) {\n            if (!guard) {\n                return;\n            }\n\n            if (result.success && !result.postIds.isEmpty()) {\n                const bool reachedOldest = result.prevPostId.isEmpty()\n                    || static_cast<int>(result.postIds.size()) < ServerPageSize;\n                const bool reachedNewest = page == 0;\n\n                if (reachedOldest && page > 0) {\n                    const int actualCount = page * ServerPageSize\n                        + static_cast<int>(result.postIds.size());\n                    const int phantomPrefix = static_cast<int>(guard->postIds.size()) - actualCount;\n                    if (phantomPrefix > 0) {\n                        guard->rootCountOverestimate += phantomPrefix;\n                        guard->removeLogicalRange(0, phantomPrefix);\n                    }\n                }\n\n                const QString targetId = result.postIds.at(result.postIds.size() / 2);\n                guard->placeNavigationContext(targetId, result.postIds,\n                                              reachedOldest, reachedNewest);\n            }\n            finish();\n        });\n''',
+              '''    // No authoritative identity is close enough to satisfy this request\n    // with one cursor page. This is a random/remote seek, not sequential\n    // scrolling. Use one wider absolute page as a provisional seed instead of\n    // walking a distant island ten posts at a time.\n    const int seedIndex = (firstMissing + lastMissing) / 2;\n    const int page = (static_cast<int>(postIds.size()) - 1 - seedIndex) / SeekPageSize;\n    qCDebug(lcTimelineChannel).nospace()\n        << "RANGE_SEED requested=[" << requestedFirst << ',' << requestedLast\n        << "] missing=[" << firstMissing << ',' << lastMissing\n        << "] page=" << page << " perPage=" << SeekPageSize;\n    PostTimelineService::instance(backend).loadChannelPage(\n        channel, page, SeekPageSize,\n        [guard, page, finish](const PostTimelineService::Page& result) {\n            if (!guard) {\n                return;\n            }\n\n            if (result.success && !result.postIds.isEmpty()) {\n                const bool reachedOldest = result.prevPostId.isEmpty()\n                    || static_cast<int>(result.postIds.size()) < SeekPageSize;\n                const bool reachedNewest = page == 0;\n\n                if (reachedOldest && page > 0) {\n                    const int actualCount = page * SeekPageSize\n                        + static_cast<int>(result.postIds.size());\n                    const int phantomPrefix = static_cast<int>(guard->postIds.size()) - actualCount;\n                    if (phantomPrefix > 0) {\n                        guard->rootCountOverestimate += phantomPrefix;\n                        guard->removeLogicalRange(0, phantomPrefix);\n                    }\n                }\n\n                const QString targetId = result.postIds.at(result.postIds.size() / 2);\n                guard->placeNavigationContext(targetId, result.postIds,\n                                              reachedOldest, reachedNewest);\n            }\n            finish();\n        });\n''')
+
+          replace_once(
+              "docs/long-list-architecture.md",
+              '''A new thumb target increments the seek generation. Results from an older generation may still enter\nthe memory/disk cache, but `LongListWidget` only materializes what the current viewport/seek needs,\nso stale results have no authority to move the viewport.\n''',
+              '''A new thumb target increments the seek generation. Results from an older generation may still enter\nthe memory/disk cache, but `LongListWidget` only materializes what the current viewport/seek needs,\nso stale results have no authority to move the viewport.\n\nThe source must also distinguish a **nearby continuation** from a **remote seek**. An identity cursor\nmay be used only when an authoritative post lies close enough that one cursor response can reach the\nrequested block. A distant authoritative island is not a reason to walk thousands of messages toward\nthe thumb target. If no such nearby anchor exists, the channel source performs one wider bounded\nabsolute-page seed (currently 100 posts) around the requested logical position. That page remains\nprovisional unless it intersects authoritative identity or proves a real oldest/newest boundary.\nThis keeps a jump to the oldest edge O(1) network requests in the normal case instead of O(history).\n''')
+
+          replace_once(
+              "docs/post-cache.md",
+              '''Ordinary scrolling must extend a known window with identity cursors. It must\nnot repeatedly overwrite authoritative identities from page-number arithmetic.\nEvery successful range request ends in one of three states: new identities\nwere placed, a real boundary removed stale logical slots, or the request made\nno progress and is finished without an immediate retry loop.\n''',
+              '''Ordinary scrolling must extend a known window with identity cursors. It must\nnot repeatedly overwrite authoritative identities from page-number arithmetic.\nA cursor is only selected when the known anchor lies within one cursor page of\nthe missing block. A remote seek (including dragging directly to the oldest\nedge) uses one wider bounded absolute-page seed instead of walking from the\nnearest already-materialized island. The seed is provisional until overlap or a\nreal channel boundary proves placement. Every successful range request ends in\none of three states: new identities were placed, a real boundary removed stale\nlogical slots, or the request made no progress and is finished without an\nimmediate retry loop.\n''')
+          PY
+
+          git rm .github/workflows/cache-seek-regression-fix.yml
+          git config user.name "Sergei Ilinykh"
+          git config user.email "rion4ik@gmail.com"
+          git add sources/chat-area/ChannelPostSource.cpp \
+                  sources/chat-area/ChannelPostSource.h \
+                  docs/long-list-architecture.md \
+                  docs/post-cache.md
+          git diff --cached --check
+          git commit -m "Bound remote channel history seeks"
+          git push origin HEAD:chatgpt/post-disk-cache
