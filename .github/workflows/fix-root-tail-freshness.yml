@@ -27,3 +27,5 @@ jobs:
           git add -A
           git commit -m 'Use root timeline freshness for cached tails'
           git push origin HEAD:chatgpt/post-disk-cache
+
+# Retry after making the helper independent of legacy tab alignment.
