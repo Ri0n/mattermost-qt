@@ -335,6 +335,49 @@ private slots:
                  "Dropping stale provisional geometry must preserve the active viewport lock");
     }
 
+    void bodyAvailabilityDropRerequestsSameLogicalBlock()
+    {
+        TestLongListWidget list;
+        list.resize(480, 320);
+        list.setDefaultItemHeight(60);
+        list.setRequestBlockSize(10);
+        list.setItemCount(100);
+        list.setRangeAvailable(0, 99);
+        list.show();
+        settleEvents();
+
+        list.scrollToIndex(55, Mattermost::LongListWidget::Alignment::Center);
+        settleEvents(12);
+        QVERIFY2(list.itemWidget(55) != nullptr,
+                 "The target must be materialized before simulating body eviction");
+
+        QSignalSpy requests(&list, &Mattermost::LongListWidget::rangeRequested);
+        list.setRangeAvailable(55, 55, false);
+        settleEvents(12);
+
+        QVERIFY(!list.isItemAvailable(55));
+        QCOMPARE(list.itemWidget(55), nullptr);
+
+        bool requestedIdentityBlock = false;
+        for (int i = 0; i < requests.count(); ++i) {
+            const QList<QVariant> request = requests.at(i);
+            if (request.at(0).toInt() == 50 && request.at(1).toInt() == 59) {
+                requestedIdentityBlock = true;
+                break;
+            }
+        }
+        QVERIFY2(requestedIdentityBlock,
+                 "Dropping only a resident body must re-request its existing 10-item logical block");
+
+        // Rematerialization restores body availability only. No item-count or
+        // structural mutation is needed for the same semantic source identity.
+        list.setRangeAvailable(55, 55, true);
+        settleEvents(12);
+        QVERIFY(list.isItemAvailable(55));
+        QVERIFY2(list.itemWidget(55) != nullptr,
+                 "Restoring the body must materialize the same logical item again");
+    }
+
     void viewportLockScalesRelativeYAcrossResize()
     {
         TestLongListWidget list;

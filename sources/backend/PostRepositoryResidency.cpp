@@ -281,6 +281,13 @@ void PostRepository::releasePostLease(const QString& channelId,
     --(*it);
     if (*it <= 0) {
         residentLeaseCounts.erase(it);
+        auto state = residentBodies.find(key);
+        if (state != residentBodies.end()) {
+            // Idle TTL starts when the last active consumer lets go, not when a
+            // long-lived widget/edit session first acquired its lease. Pressure
+            // eviction remains independent of TTL.
+            state->touchedAt = QDateTime::currentMSecsSinceEpoch();
+        }
     }
     if (residentAccountedBytes > configuredHardBytes()) {
         scheduleResidentSweep();
