@@ -422,17 +422,19 @@ void ChannelPostSource::requestRange(int first,
     }
 
     // No authoritative identity is close enough to satisfy this request
-    // with one cursor page. This is a random/remote seek, not sequential
-    // scrolling. Use one wider absolute page as a provisional seed instead of
-    // walking a distant island ten posts at a time.
+    // with one cursor page. Jump directly to the corresponding absolute server
+    // page instead of walking from a distant materialized island. Keep the same
+    // small page size used by ordinary range loading: enlarging per_page changes
+    // the page coordinate system and can make adjacent logical blocks collapse
+    // onto the same server page.
     const int seedIndex = (firstMissing + lastMissing) / 2;
-    const int page = (static_cast<int>(postIds.size()) - 1 - seedIndex) / SeekPageSize;
+    const int page = pageForIndex(seedIndex);
     qCDebug(lcTimelineChannel).nospace()
         << "RANGE_SEED requested=[" << requestedFirst << ',' << requestedLast
         << "] missing=[" << firstMissing << ',' << lastMissing
-        << "] page=" << page << " perPage=" << SeekPageSize;
+        << "] page=" << page << " perPage=" << ServerPageSize;
     PostTimelineService::instance(backend).loadChannelPage(
-        channel, page, SeekPageSize,
+        channel, page, ServerPageSize,
         [guard, page, finish](const PostTimelineService::Page& result) {
             if (!guard) {
                 return;
@@ -440,11 +442,11 @@ void ChannelPostSource::requestRange(int first,
 
             if (result.success && !result.postIds.isEmpty()) {
                 const bool reachedOldest = result.prevPostId.isEmpty()
-                    || static_cast<int>(result.postIds.size()) < SeekPageSize;
+                    || static_cast<int>(result.postIds.size()) < ServerPageSize;
                 const bool reachedNewest = page == 0;
 
                 if (reachedOldest && page > 0) {
-                    const int actualCount = page * SeekPageSize
+                    const int actualCount = page * ServerPageSize
                         + static_cast<int>(result.postIds.size());
                     const int phantomPrefix = static_cast<int>(guard->postIds.size()) - actualCount;
                     if (phantomPrefix > 0) {

@@ -260,9 +260,9 @@ so stale results have no authority to move the viewport.
 The source must also distinguish a **nearby continuation** from a **remote seek**. An identity cursor
 may be used only when an authoritative post lies close enough that one cursor response can reach the
 requested block. A distant authoritative island is not a reason to walk thousands of messages toward
-the thumb target. If no such nearby anchor exists, the channel source performs one wider bounded
-absolute-page seed (currently 100 posts) around the requested logical position. That page remains
-provisional unless it intersects authoritative identity or proves a real oldest/newest boundary.
+the thumb target. If no such nearby anchor exists, the channel source jumps directly to the bounded
+absolute page containing the requested logical position, using the normal channel page size. That
+page remains provisional unless it intersects authoritative identity or proves a real oldest/newest boundary.
 This keeps a jump to the oldest edge O(1) network requests in the normal case instead of O(history).
 
 This replaces the old controller-level `TimelineSeekState` state machine.

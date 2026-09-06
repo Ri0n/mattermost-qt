@@ -423,7 +423,8 @@ Ordinary scrolling must extend a known window with identity cursors. It must
 not repeatedly overwrite authoritative identities from page-number arithmetic.
 A cursor is only selected when the known anchor lies within one cursor page of
 the missing block. A remote seek (including dragging directly to the oldest
-edge) uses one wider bounded absolute-page seed instead of walking from the
+edge) jumps directly to the bounded absolute page containing the requested
+logical position, using the normal channel page size instead of walking from the
 nearest already-materialized island. The seed is provisional until overlap or a
 real channel boundary proves placement. Every successful range request ends in
 one of three states: new identities were placed, a real boundary removed stale
