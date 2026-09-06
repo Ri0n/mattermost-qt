@@ -218,7 +218,7 @@ void BackendChannel::mergePostContext(const QJsonArray& orderArray, const QJsonO
 	// insert arbitrary context without rebuilding the whole list.
 	for (int orderIndex = orderArray.size() - 1; orderIndex >= 0; --orderIndex) {
 		const QString newPostId = orderArray.at(orderIndex).toString();
-		if (newPostId.isEmpty() || postIdToPost.contains(newPostId)) {
+		if (newPostId.isEmpty()) {
 			continue;
 		}
 
@@ -228,6 +228,14 @@ void BackendChannel::mergePostContext(const QJsonArray& orderArray, const QJsonO
 		}
 
 		const QJsonObject postObject = postIt->toObject();
+		const auto existing = postIdToPost.constFind(newPostId);
+		if (existing != postIdToPost.cend()) {
+			BackendPost* const existingPost = existing.value();
+			if (existingPost && existingPost->refreshFromJson(postObject, storage)) {
+				emit onPostEdited(*existingPost);
+			}
+			continue;
+		}
 		const uint64_t createAt = postObject.value(QStringLiteral("create_at"))
 			.toVariant().toULongLong();
 		const QString rootId = postObject.value(QStringLiteral("root_id")).toString();
@@ -291,8 +299,9 @@ void BackendChannel::editPost (BackendPost& newPost)
 		return;
 	}
 
-	existingPost->updatePostEdits (newPost);
-	emit onPostEdited (*existingPost);
+	if (existingPost->updatePostEdits(newPost)) {
+		emit onPostEdited(*existingPost);
+	}
 }
 
 void BackendChannel::addPostReaction (QString postId, QString userId, QString emojiName)

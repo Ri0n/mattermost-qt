@@ -5,6 +5,7 @@
 #include <memory>
 #include <utility>
 
+#include <QDateTime>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -23,6 +24,8 @@ namespace Mattermost {
 namespace {
 
 constexpr int ContextFetchPerSide = 30;
+constexpr int ResidentObservationPruneThreshold = 16384;
+constexpr qint64 ResidentObservationLifetimeMs = 60LL * 60 * 1000;
 
 struct OrderedPost {
     QString id;
@@ -169,9 +172,19 @@ quint64 PostRepository::cachePostObject(const QJsonObject& postObject)
         return sourceObservation;
     }
 
-    QJsonObject posts;
-    posts.insert(postId, postObject);
-    cachePosts(currentCacheAccount(), posts, sourceObservation);
+    // This observation is relevant to resident causality even when the channel
+    // is outside the disk-admission horizon. A previously dispatched HTTP
+    // request must not overwrite a newer WebSocket snapshot in memory. Replies
+    // also advance root thread metadata, so fence their root ID conservatively.
+    noteResidentObservation(postObject, sourceObservation);
+
+    const QString channelId = postObject.value(QStringLiteral("channel_id")).toString();
+    if (shouldCacheChannelOnDisk(channelId)) {
+        QJsonObject posts;
+        posts.insert(postId, postObject);
+        cachePosts(currentCacheAccount(), posts, sourceObservation);
+    }
+    pruneResidentObservations();
     return sourceObservation;
 }
 
@@ -181,10 +194,17 @@ quint64 PostRepository::invalidateCachedPost(const QString& postId)
     if (postId.isEmpty()) {
         return sourceObservation;
     }
+
+    // Delete/reaction events may race an already in-flight REST response. Keep
+    // a short-lived resident watermark even if the post is not currently
+    // materialized, otherwise that stale response could resurrect it.
+    noteResidentPostObservation(postId, sourceObservation);
+
     const CacheAccount account = currentCacheAccount();
     if (account.isValid()) {
         postCache.removePost(account.server, account.userId, postId, sourceObservation);
     }
+    pruneResidentObservations();
     return sourceObservation;
 }
 
@@ -278,7 +298,7 @@ void PostRepository::loadPost(const QString& postId, PostCallback callback)
 
             BackendChannel* channel = guard->backend.getStorage().getChannelById(result.channelId);
             if (channel) {
-                ingest(*channel, posts, true);
+                guard->ingest(*channel, posts, requestContext.observationSequence, true);
                 result.success = channel->postIdToPost.contains(postId);
             }
 
@@ -326,7 +346,7 @@ void PostRepository::loadChannelPage(BackendChannel& channel,
                 return;
             }
 
-            ingest(*channelGuard, posts);
+            guard->ingest(*channelGuard, posts, requestContext.observationSequence);
             result.postIds = chronologicalOrder(posts);
             result.prevPostId = root.value(QStringLiteral("prev_post_id")).toString();
             result.nextPostId = root.value(QStringLiteral("next_post_id")).toString();
@@ -402,7 +422,7 @@ void PostRepository::loadChannelCursor(BackendChannel& channel,
                 return;
             }
 
-            ingest(*channelGuard, posts, quietIngest);
+            guard->ingest(*channelGuard, posts, requestContext.observationSequence, quietIngest);
             result.postIds = chronologicalOrder(posts);
             result.postIds.removeAll(cursorPostId);
             result.prevPostId = root.value(QStringLiteral("prev_post_id")).toString();
@@ -614,7 +634,7 @@ void PostRepository::loadThread(BackendChannel& channel,
                 return;
             }
 
-            ingest(*channelGuard, posts);
+            guard->ingest(*channelGuard, posts, requestContext.observationSequence);
             result.postIds = chronologicalOrder(posts, rootId);
             if (!initialPage) {
                 result.postIds.removeAll(rootId);
@@ -652,9 +672,46 @@ QStringList PostRepository::allChronologicalOrder(const QJsonObject& postsObject
 
 void PostRepository::ingest(BackendChannel& channel,
                             const QJsonObject& postsObject,
+                            quint64 sourceObservation,
                             bool quiet)
 {
-    const QStringList chronological = allChronologicalOrder(postsObject);
+    QJsonObject acceptedPosts;
+    for (auto it = postsObject.constBegin(); it != postsObject.constEnd(); ++it) {
+        if (!it->isObject()) {
+            continue;
+        }
+        const QJsonObject postObject = it->toObject();
+        const QString postId = postObject.value(QStringLiteral("id")).toString(it.key());
+        if (postId.isEmpty()) {
+            continue;
+        }
+
+        const auto watermark = residentObservations.constFind(postId);
+        if (sourceObservation != 0 && watermark != residentObservations.cend()
+            && watermark->sequence > sourceObservation) {
+            // A WebSocket/newer REST observation happened after this physical
+            // request was dispatched. Its older payload may still warm SQLite
+            // through the cache worker's independent fence, but has no resident
+            // authority.
+            continue;
+        }
+        acceptedPosts.insert(postId, postObject);
+    }
+
+    if (acceptedPosts.isEmpty()) {
+        pruneResidentObservations();
+        return;
+    }
+
+    // Mark before mutation. Other callbacks from the same coalesced physical
+    // request carry the same sequence and remain admissible; older requests do
+    // not. Reply snapshots fence their roots because mergePostContext may update
+    // root thread metadata while ingesting the reply.
+    for (auto it = acceptedPosts.constBegin(); it != acceptedPosts.constEnd(); ++it) {
+        noteResidentObservation(it->toObject(), sourceObservation);
+    }
+
+    const QStringList chronological = allChronologicalOrder(acceptedPosts);
     QJsonArray newestFirst;
     for (int i = chronological.size() - 1; i >= 0; --i) {
         newestFirst.push_back(chronological.at(i));
@@ -662,9 +719,56 @@ void PostRepository::ingest(BackendChannel& channel,
 
     if (quiet) {
         const QSignalBlocker blocker(&channel);
-        channel.mergePostContext(newestFirst, postsObject);
+        channel.mergePostContext(newestFirst, acceptedPosts);
     } else {
-        channel.mergePostContext(newestFirst, postsObject);
+        channel.mergePostContext(newestFirst, acceptedPosts);
+    }
+    pruneResidentObservations();
+}
+
+void PostRepository::noteResidentObservation(const QJsonObject& postObject,
+                                               quint64 observation)
+{
+    if (observation == 0) {
+        return;
+    }
+    const QString postId = postObject.value(QStringLiteral("id")).toString();
+    noteResidentPostObservation(postId, observation);
+
+    const QString rootId = postObject.value(QStringLiteral("root_id")).toString();
+    if (!rootId.isEmpty()) {
+        noteResidentPostObservation(rootId, observation);
+    }
+}
+
+void PostRepository::noteResidentPostObservation(const QString& postId,
+                                                  quint64 observation)
+{
+    if (postId.isEmpty() || observation == 0) {
+        return;
+    }
+    ResidentObservation& current = residentObservations[postId];
+    current.sequence = std::max(current.sequence, observation);
+    current.touchedAt = QDateTime::currentMSecsSinceEpoch();
+}
+
+void PostRepository::pruneResidentObservations()
+{
+    if (residentObservations.size() <= ResidentObservationPruneThreshold) {
+        return;
+    }
+
+    // These watermarks only protect against older in-flight network work; they
+    // are not persistent freshness metadata. One hour is deliberately far
+    // beyond a normal HTTP request lifetime while bounding busy-session memory.
+    const qint64 cutoff = QDateTime::currentMSecsSinceEpoch()
+        - ResidentObservationLifetimeMs;
+    for (auto it = residentObservations.begin(); it != residentObservations.end();) {
+        if (it->touchedAt < cutoff) {
+            it = residentObservations.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 

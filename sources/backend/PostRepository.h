@@ -208,15 +208,25 @@ private:
     static QStringList chronologicalOrder(const QJsonObject& postsObject,
                                           const QString& rootId = QString());
     static QStringList allChronologicalOrder(const QJsonObject& postsObject);
-    static void ingest(BackendChannel& channel,
-                       const QJsonObject& postsObject,
-                       bool quiet = false);
+    void ingest(BackendChannel& channel,
+                const QJsonObject& postsObject,
+                quint64 sourceObservation,
+                bool quiet = false);
+    void noteResidentObservation(const QJsonObject& postObject, quint64 observation);
+    void noteResidentPostObservation(const QString& postId, quint64 observation);
+    void pruneResidentObservations();
 
     Backend& backend;
     HTTPConnector httpConnector;
     PostCacheService postCache;
+    struct ResidentObservation {
+        quint64 sequence = 0;
+        qint64 touchedAt = 0;
+    };
+
     QHash<QString, QList<JsonCallback>> inFlightGets;
     QHash<QString, qint64> channelOpenedAtByAccount;
+    QHash<QString, ResidentObservation> residentObservations;
     quint64 observationSequence = 0;
 };
 

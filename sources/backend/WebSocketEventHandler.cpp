@@ -58,11 +58,10 @@ void WebSocketEventHandler::handleEvent (const PostEvent& event)
 {
 	auto& repository = PostRepository::instance(backend);
 
-	// A busy joined channel is not cache interest. Persist the full event only
-	// while the user has opened this channel inside the configured disk horizon.
-	if (repository.shouldCacheChannelOnDisk(event.channelId)) {
-		repository.cachePostObject(event.postObject);
-	}
+	// Always record the resident observation so an older in-flight HTTP
+	// response cannot overwrite this event. PostRepository applies disk admission
+	// independently and persists only recently opened channels.
+	repository.cachePostObject(event.postObject);
 
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 	if (!channel) {
@@ -93,9 +92,9 @@ void WebSocketEventHandler::handleEvent (const PostEvent& event)
 void WebSocketEventHandler::handleEvent (const PostEditedEvent& event)
 {
 	auto& repository = PostRepository::instance(backend);
-	if (repository.shouldCacheChannelOnDisk(event.channelId)) {
-		repository.cachePostObject(event.postObject);
-	}
+	// See PostEvent: resident causality is unconditional; durable admission is
+	// decided inside PostRepository.
+	repository.cachePostObject(event.postObject);
 
 	BackendTeam* team = storage.getTeamById (event.teamId);
 	QString teamName = team ? team->name : event.teamId;

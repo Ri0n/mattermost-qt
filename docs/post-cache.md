@@ -202,8 +202,13 @@ queued store whose source observation is older than or equal to a newer invalida
 for that post. Invalidations themselves are never suppressed by channel-admission policy because a
 known-stale row must be removable even after its channel has gone cold.
 
-The same ordering concept will be applied to resident refresh before cache-first hydration is
-enabled, so an old HTTP response cannot overwrite a newer WebSocket state in memory either.
+The same ordering concept is also applied to resident refresh. Each physical HTTP request keeps
+its dispatch observation sequence, while WebSocket new/edit/delete/reaction observations advance the
+resident watermark immediately. `PostRepository` drops an older response per post before it reaches
+`BackendChannel`, so stale REST work cannot overwrite a newer WebSocket state in memory. Reply
+observations conservatively fence their root ID too because ingesting a reply can update transient
+thread metadata on the root. These watermarks are short-lived in-flight causality guards, not
+persistent cache freshness metadata.
 
 ## Disk limits and compaction
 
@@ -256,11 +261,13 @@ Therefore:
 
 This preserves the provisional/authoritative rules in `long-list-architecture.md`.
 
-Cache-first hydration is deliberately not enabled yet. `BackendChannel::mergePostContext()` currently
-skips a post ID that is already resident, and `BackendPost::updatePostEdits()` does not perform a full
-raw-JSON refresh. Hydrating an older SQLite snapshot first would therefore allow a later fresh HTTP
-snapshot with the same ID to be ignored. Full existing-post refresh semantics are a prerequisite for
-using SQLite as a read tier.
+Cache-first hydration is deliberately not enabled yet, but the resident refresh prerequisite is
+now in place. `BackendChannel::mergePostContext()` refreshes an already-resident ID in place from the
+accepted full JSON snapshot, preserving the stable `BackendPost*` address used by current widgets and
+sources. `BackendPost` replaces all server-backed post fields rather than only the message, while
+preserving separately fetched poll metadata and local annotations absent from raw REST/cache JSON.
+The next read-side step is to serve direct/newest-window cache hits as provisional resident data and
+validate them with newer HTTP observations before granting any absolute-page authority.
 
 ## Write-through and invalidation
 
@@ -380,10 +387,13 @@ Implemented/in progress in this PR:
 - seed channel-open time from Mattermost preferences and refresh it on local activation;
 - dedicated Cache settings tab for all user-facing limits.
 
-Still required before enabling reads:
+Implemented prerequisites for reads:
 
-- full refresh semantics when fresh JSON arrives for an already resident `BackendPost`;
-- resident causal fencing against stale HTTP responses;
+- full in-place refresh semantics when fresh JSON arrives for an already resident `BackendPost`;
+- resident causal fencing against stale HTTP responses.
+
+Still required to enable reads:
+
 - direct `loadPost()` cache hit followed by background validation;
 - seed a small newest channel/thread window from SQLite before normal server range fetch.
 

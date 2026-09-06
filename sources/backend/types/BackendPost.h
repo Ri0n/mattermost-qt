@@ -65,7 +65,10 @@ public:
 	bool isOwnPollPost () 	const;
 	QString getDisplayAuthorName () const;
 	QDateTime getCreationTime () const;
-	void updatePostEdits (BackendPost& editedPost);
+	/** Replace all server-backed fields while keeping this object's address stable. */
+	bool updatePostEdits (BackendPost& editedPost);
+	/** Parse and apply one authoritative full post snapshot in place. */
+	bool refreshFromJson (const QJsonObject& jsonObject, const Storage& storage);
 	void addReaction (QString userName, QString emojiName);
 	void removeReaction (QString userName, QString emojiName);
 private:
