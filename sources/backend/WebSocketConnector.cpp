@@ -104,9 +104,9 @@ QUrl websocketEndpoint(const QUrl& apiBaseUrl, const QJsonObject& config)
     return base;
 }
 
-QByteArray webOrigin(const QUrl& websocketUrl)
+QByteArray siteOrigin(const QUrl& apiBaseUrl)
 {
-    QUrl origin(websocketUrl);
+    QUrl origin(apiBaseUrl);
     if (origin.scheme() == QLatin1String("wss")) {
         origin.setScheme(QStringLiteral("https"));
     } else if (origin.scheme() == QLatin1String("ws")) {
@@ -372,7 +372,7 @@ void WebSocketConnector::openSocket ()
 
 	QNetworkRequest request(url);
 	request.setRawHeader("User-Agent", BrowserUserAgent);
-	request.setRawHeader("Origin", webOrigin(url));
+	request.setRawHeader("Origin", siteOrigin(d->apiBaseUrl));
 	request.setRawHeader("Cookie", "MMAUTHTOKEN=" + d->token.toUtf8());
 	request.setRawHeader("Pragma", "no-cache");
 	request.setRawHeader("Cache-Control", "no-cache");
