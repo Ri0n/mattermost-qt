@@ -16,8 +16,9 @@ namespace {
 constexpr qint64 MinuteMs = 60LL * 1000;
 constexpr qint64 HourMs = 60LL * MinuteMs;
 
-// Read policy values at decision time so SettingsWindow changes take effect
-// immediately rather than only after the next process start.
+// Both memory and disk channel horizons are user-facing cache policy. Read
+// them at decision time so SettingsWindow changes take effect immediately
+// rather than only after the next process start.
 qint64 configuredMemoryChannelHorizonMs()
 {
     return std::max<qint64>(
