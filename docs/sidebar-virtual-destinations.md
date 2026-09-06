@@ -1,7 +1,8 @@
 # Virtual sidebar destinations
 
 This note records the intended model for user-centric destinations that look like sidebar entries but
-are not ordinary server channel rows.
+are not ordinary server channel rows. It is a design contract only; the virtual sidebar items are not
+implemented as part of the post-cache/source refactor.
 
 ## Personal
 
