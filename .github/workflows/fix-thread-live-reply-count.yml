@@ -1,0 +1,29 @@
+name: Fix thread live reply count
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-thread-live-reply-count.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+      - name: Apply fix
+        run: python3 .github/scripts/fix-thread-live-reply-count.py
+      - name: Remove temporary helper
+        run: rm .github/scripts/fix-thread-live-reply-count.py .github/workflows/fix-thread-live-reply-count.yml
+      - name: Commit result
+        run: |
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add -A
+          git commit -m 'Avoid double-counting live thread replies'
+          git push origin HEAD:chatgpt/post-disk-cache
