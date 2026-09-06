@@ -105,14 +105,16 @@ private:
     QHash<QString, int> postIndexes;
 
     const bool exactRootCount;
-    // total_msg_count_root can overestimate the rows returned by /posts because
-    // deleted posts are omitted by that endpoint. Once a real boundary proves
-    // such a discrepancy, keep the correction local to this source so later
-    // channel metadata cannot recreate phantom logical rows.
+    // total_msg_count_root can overestimate /posts because deleted roots are
+    // omitted. Empty/short absolute pages resolve the real oldest boundary;
+    // keep that correction local so later channel metadata cannot recreate the
+    // phantom logical prefix.
     int rootCountOverestimate = 0;
     bool moreBeforeFirst = false;
     bool beforeRequestInFlight = false;
 
+    // Shared reconciliation state lets concurrent empty range requests wait on
+    // one absolute-page search instead of starting competing boundary probes.
     bool oldestBoundaryProbeInFlight = false;
     int oldestBoundaryNonEmptyPage = -1;
     int oldestBoundaryEmptyPage = -1;
