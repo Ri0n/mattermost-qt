@@ -179,6 +179,60 @@ private slots:
         QVERIFY(concrete.contains(visible.last));
     }
 
+    void visitedRowsStayMaterializedUntilBudgetIsReached()
+    {
+        TestLongListWidget list;
+        list.resize(480, 180);
+        list.setDefaultItemHeight(60);
+        list.setMaterializationLimit(200);
+        list.setItemCount(21);
+        list.setRangeAvailable(0, 20);
+        list.show();
+        settleEvents();
+
+        for (int index = 0; index < 21; ++index) {
+            list.scrollToIndex(index, Mattermost::LongListWidget::Alignment::Center);
+            settleEvents(4);
+        }
+
+        QCOMPARE(list.materializedCount(), 21);
+    }
+
+    void tinyThumbDragInsideResidentWindowDoesNotSnapToEnd()
+    {
+        TestLongListWidget list;
+        list.resize(480, 240);
+        list.setDefaultItemHeight(60);
+        list.setMaterializationLimit(200);
+        list.setSeekDebounceMs(0);
+        list.setItemCount(21);
+        list.setRangeAvailable(0, 20);
+        list.show();
+        settleEvents();
+        list.scrollToEnd();
+        settleEvents();
+
+        QScrollBar* bar = list.verticalScrollBar();
+        QVERIFY(bar->maximum() > 1);
+        const int draggedValue = bar->maximum() - 1;
+
+        bar->setSliderDown(true);
+        bar->setValue(draggedValue);
+        QVERIFY(QMetaObject::invokeMethod(bar, "sliderMoved",
+                                          Qt::DirectConnection,
+                                          Q_ARG(int, draggedValue)));
+        settleEvents(12);
+
+        QCOMPARE(bar->value(), draggedValue);
+        const auto visible = list.visibleRange();
+        QVERIFY(visible.isValid());
+        for (int index = visible.first; index <= visible.last; ++index) {
+            QVERIFY2(list.itemWidget(index) != nullptr,
+                     "A fully available small chat must not expose an empty viewport during thumb drag");
+        }
+        bar->setSliderDown(false);
+    }
+
     void delayedRowGrowthKeepsStickyBottom()
     {
         TestLongListWidget list;
@@ -333,6 +387,49 @@ private slots:
         QCOMPARE(list.contentHeight(), heightBefore - 200);
         QVERIFY2(qAbs(locked->y() - yBefore) <= 2,
                  "Dropping stale provisional geometry must preserve the active viewport lock");
+    }
+
+    void bodyAvailabilityDropRerequestsSameLogicalBlock()
+    {
+        TestLongListWidget list;
+        list.resize(480, 320);
+        list.setDefaultItemHeight(60);
+        list.setRequestBlockSize(10);
+        list.setItemCount(100);
+        list.setRangeAvailable(0, 99);
+        list.show();
+        settleEvents();
+
+        list.scrollToIndex(55, Mattermost::LongListWidget::Alignment::Center);
+        settleEvents(12);
+        QVERIFY2(list.itemWidget(55) != nullptr,
+                 "The target must be materialized before simulating body eviction");
+
+        QSignalSpy requests(&list, &Mattermost::LongListWidget::rangeRequested);
+        list.setRangeAvailable(55, 55, false);
+        settleEvents(12);
+
+        QVERIFY(!list.isItemAvailable(55));
+        QCOMPARE(list.itemWidget(55), nullptr);
+
+        bool requestedIdentityBlock = false;
+        for (int i = 0; i < requests.count(); ++i) {
+            const QList<QVariant> request = requests.at(i);
+            if (request.at(0).toInt() == 50 && request.at(1).toInt() == 59) {
+                requestedIdentityBlock = true;
+                break;
+            }
+        }
+        QVERIFY2(requestedIdentityBlock,
+                 "Dropping only a resident body must re-request its existing 10-item logical block");
+
+        // Rematerialization restores body availability only. No item-count or
+        // structural mutation is needed for the same semantic source identity.
+        list.setRangeAvailable(55, 55, true);
+        settleEvents(12);
+        QVERIFY(list.isItemAvailable(55));
+        QVERIFY2(list.itemWidget(55) != nullptr,
+                 "Restoring the body must materialize the same logical item again");
     }
 
     void viewportLockScalesRelativeYAcrossResize()

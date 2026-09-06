@@ -63,6 +63,13 @@ public:
     uint64_t lastViewedTime(const QString& channelId) const;
     uint64_t recentTime(const QString& channelId) const;
 
+    /** Raw Mattermost channel_open_time preference; message traffic never changes it. */
+    uint64_t openTime(const QString& channelId) const
+    {
+        const auto it = entries.constFind(channelId);
+        return it == entries.cend() ? 0 : it->openTimeAt;
+    }
+
 private:
     QHash<QString, Entry> entries;
     bool collapsedThreadsEnabled = false;

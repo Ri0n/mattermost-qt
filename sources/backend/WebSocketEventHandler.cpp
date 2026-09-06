@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -24,8 +24,11 @@
 
 #include "WebSocketEventHandler.h"
 
+#include <algorithm>
+
 #include <QJsonDocument>
 #include "Backend.h"
+#include "PostRepository.h"
 #include "Storage.h"
 #include "UserProfileService.h"
 #include "log.h"
@@ -47,6 +50,7 @@ void WebSocketEventHandler::handleEvent (const ChannelViewedEvent& event)
 	QString channelName = channel ? channel->name : event.channelId;
 
 	if (channel) {
+		PostRepository::instance(backend).recordChannelOpened(channel->id);
 		emit channel->onViewed ();
 		emit backend.onChannelViewed (*channel);
 	}
@@ -54,9 +58,38 @@ void WebSocketEventHandler::handleEvent (const ChannelViewedEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostEvent& event)
 {
-	BackendChannel* channel = storage.getChannelById (event.channelId);
+	auto& repository = PostRepository::instance(backend);
 
+	// Always record the resident observation so an older in-flight HTTP
+	// response cannot overwrite this event. PostRepository applies disk admission
+	// independently and persists only recently opened channels.
+	repository.cachePostObject(event.postObject);
+
+	BackendChannel* channel = storage.getChannelById (event.channelId);
 	if (!channel) {
+		return;
+	}
+
+	// Timeline edge metadata must advance even when the channel is outside the
+	// resident-body admission horizon. last_post_at includes replies, while the
+	// root-only chat timeline uses last_root_post_at as its freshness marker.
+	const uint64_t createAt = event.postObject.value(QStringLiteral("create_at"))
+		.toVariant().toULongLong();
+	channel->last_post_at = std::max(channel->last_post_at, createAt);
+	if (event.postObject.value(QStringLiteral("root_id")).toString().isEmpty()) {
+		channel->last_root_post_at = std::max(channel->last_root_post_at, createAt);
+	}
+
+	if (!repository.shouldRetainChannelInMemory(event.channelId)) {
+		// Global unread/mention/desktop-notification consumers still need the
+		// event, but an inactive cold channel must not gain a durable BackendPost.
+		// Backend::onNewPost is currently a same-thread direct signal, so this
+		// transient object is valid for the complete synchronous fan-out.
+		BackendPost transientPost(event.postObject, storage);
+		LOG_DEBUG ("Transient post in cold channel '" << channel->getTeamAndChannelName()
+		           << "' by " << transientPost.getDisplayAuthorName() << ": "
+		           << transientPost.message);
+		emit backend.onNewPost (*channel, transientPost);
 		return;
 	}
 
@@ -70,12 +103,23 @@ void WebSocketEventHandler::handleEvent (const PostEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostEditedEvent& event)
 {
+	auto& repository = PostRepository::instance(backend);
+	// See PostEvent: resident causality is unconditional; durable admission is
+	// decided inside PostRepository.
+	repository.cachePostObject(event.postObject);
+
 	BackendTeam* team = storage.getTeamById (event.teamId);
 	QString teamName = team ? team->name : event.teamId;
 
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 
 	if (!channel) {
+		return;
+	}
+
+	const QString postId = event.postObject.value(QStringLiteral("id")).toString();
+	if (!repository.shouldRetainChannelInMemory(event.channelId)
+		&& !channel->postIdToPost.contains(postId)) {
 		return;
 	}
 
@@ -99,6 +143,10 @@ void WebSocketEventHandler::handleEvent (const PostEditedEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostDeletedEvent& event)
 {
+	// Invalidations are never admission-gated: a cold channel may still have a
+	// previously cached row that is now known to be stale.
+	PostRepository::instance(backend).invalidateCachedPost(event.postId);
+
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 
 	LOG_DEBUG ("Delete post in  '" << (channel ? channel->name : event.channelId)
@@ -112,9 +160,13 @@ void WebSocketEventHandler::handleEvent (const PostDeletedEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostReactionAddedEvent& event)
 {
+	// Reaction events do not contain a lossless full post object. Invalidate the
+	// durable snapshot rather than persisting reaction metadata known to be stale.
+	PostRepository::instance(backend).invalidateCachedPost(event.postId);
+
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 
-	if (!channel) {
+	if (!channel || !channel->postIdToPost.contains(event.postId)) {
 		return;
 	}
 
@@ -125,9 +177,11 @@ void WebSocketEventHandler::handleEvent (const PostReactionAddedEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostReactionRemovedEvent& event)
 {
+	PostRepository::instance(backend).invalidateCachedPost(event.postId);
+
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 
-	if (!channel) {
+	if (!channel || !channel->postIdToPost.contains(event.postId)) {
 		return;
 	}
 

@@ -81,6 +81,13 @@ public:
 
 	BackendPost* addPost (const QJsonObject& postObject);
 
+	/** Whether removing this resident body would leave no raw root dependency dangling. */
+	bool canEvictPostBody(const QString& postId) const;
+	/** Remove one resident body while preserving all external logical source identities. */
+	bool evictPostBody(const QString& postId);
+	/** Re-announce an insertion hidden by a selective quiet-ingest signal blocker. */
+	void notifyPostBodyAvailable(const QString& postId);
+
 	void prependPosts (const QJsonArray& orderArray, const QJsonObject& postsObject);
 	void addPosts (const QJsonArray& orderArray, const QJsonObject& postsObject);
 	// Merge an arbitrary server context window by identity/timestamp. Unlike
@@ -138,6 +145,9 @@ signals:
 	/** Called when a post is deleted. */
 	void onPostDeleted (const QString& postId);
 
+	/** Resident body appeared/disappeared while its semantic timeline ID may remain mapped. */
+	void onPostBodyAvailabilityChanged(const QString& postId, bool available);
+
 	void onUserTyping (const BackendUser& user);
 	void onMissedPosts ();
 	void onLeave ();
@@ -159,6 +169,11 @@ public:
     QString							purpose;
     int								type;
     uint64_t						last_post_at;
+    // Newest root-post timestamp. Unlike last_post_at, thread replies do not
+    // advance this value, so it is the correct freshness marker for the main
+    // channel root timeline/cache suffix. Older servers may omit the field;
+    // the constructor then falls back to last_post_at.
+    uint64_t						last_root_post_at;
     int								total_msg_count;
     int								total_msg_count_root;
     bool								has_total_msg_count_root;

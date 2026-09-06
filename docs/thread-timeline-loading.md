@@ -1,7 +1,9 @@
 # Thread timeline loading contract
 
 This document defines the data-loading invariants for partially available chat and thread timelines.
-It complements `long-list-architecture.md`; the ownership rules there remain authoritative.
+It complements `long-list-architecture.md`; the ownership rules there remain authoritative. Shared
+logical ID-slot bookkeeping is documented in `post-source-architecture.md`; this document covers only
+thread-specific topology and transport authority.
 
 ## Prefetch before a logical gap
 
@@ -78,6 +80,19 @@ After a timestamp seed overlaps or establishes an authoritative mapped row, furt
 the viewport/buffer must continue with before/after post cursors. Repeating the same approximate page
 against a known adjacent gap is a bug: it can leave a permanent estimated-height hole or, if known
 identities are relocated to the estimate, create an identity ping-pong and visible tremor.
+
+## Count and boundary differences from channel history
+
+Channel history needs an absolute-page boundary repair because `total_msg_count_root` is not the
+row count of ordinary `/channels/{id}/posts`: deleted roots can make it too large, while count-excluded
+system roots can make it too small. Threads deliberately do not inherit that page-probing algorithm.
+Mattermost `Thread.ReplyCount` excludes deleted replies, and the thread endpoint
+is cursor/time based (`fromCreateAt`, `fromPost`, `direction`) rather than an absolute `page=N` space.
+
+If a future server/plugin configuration produces a real thread count mismatch, only the structural
+slot mutation belongs in the shared `IndexedPostSource` layer. The proof that a particular count is
+correct remains thread-specific, just as `/posts` page-boundary proof remains channel-specific.
+`LongListWidget` must stay unaware of Mattermost counts, pages and cursors.
 
 ## Stability requirements
 

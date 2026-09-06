@@ -56,7 +56,8 @@ QString ThemeIconButton::symbolicResource() const
 bool ThemeIconButton::isBusy() const
 {
     return objectName() == QStringLiteral("attachButton")
-        && !property(ComposerBusyTextProperty).toString().isEmpty();
+        && (!property(ComposerBusyTextProperty).toString().isEmpty()
+            || property(ComposerMessageLoadingProperty).toBool());
 }
 
 void ThemeIconButton::syncBusyAnimation()

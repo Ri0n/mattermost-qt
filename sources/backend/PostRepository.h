@@ -19,14 +19,18 @@
 #include <QObject>
 #include <QPointer>
 #include <QStringList>
+#include <QTimer>
 #include <QVariant>
 
 #include "HTTPConnector.h"
+#include "PostCacheService.h"
+#include "PostResidencyLease.h"
 
 namespace Mattermost {
 
 class Backend;
 class BackendChannel;
+class BackendPost;
 
 /**
  * Single active owner of post REST retrieval.
@@ -76,6 +80,11 @@ public:
                          int page,
                          int perPage,
                          PageCallback callback);
+
+    /** Load a provenance-backed cached newest main-channel suffix. */
+    void loadCachedChannelTail(BackendChannel& channel,
+                               int limit,
+                               PageCallback callback);
 
     /** Extend an arbitrary channel window toward older posts from a known post. */
     void loadChannelBefore(BackendChannel& channel,
@@ -131,6 +140,12 @@ public:
                         uint64_t lastReplyAt,
                         PageCallback callback);
 
+    /** Load a provenance-backed cached newest thread-reply suffix. */
+    void loadCachedThreadTail(BackendChannel& channel,
+                              const QString& rootId,
+                              int limit,
+                              PageCallback callback);
+
     /** Seed a disconnected random middle thread window by creation timestamp. */
     void loadThreadFromTime(BackendChannel& channel,
                             const QString& rootId,
@@ -138,8 +153,52 @@ public:
                             uint64_t fromCreateAt,
                             PageCallback callback);
 
+    /**
+     * Record an explicit channel-opening/read gesture. The timestamp is a
+     * Mattermost epoch-millisecond value; zero means now.
+     */
+    void recordChannelOpened(const QString& channelId, quint64 openedAt = 0);
+
+    /** Whether post bodies from this channel may remain materialized in RAM. */
+    bool shouldRetainChannelInMemory(const QString& channelId) const;
+
+    /** Pin a resident post body while a raw BackendPost reference is retained. */
+    PostResidencyLease leasePost(const BackendPost& post);
+
+    /** True while at least one explicit raw-reference lease protects the body. */
+    bool isPostLeased(const QString& channelId, const QString& postId) const;
+
+    /** Whether full post payloads from this channel are worth persisting. */
+    bool shouldCacheChannelOnDisk(const QString& channelId) const;
+
+    /**
+     * Queue one full WebSocket post snapshot into the persistent cache and
+     * return its per-backend observation sequence.
+     */
+    quint64 cachePostObject(const QJsonObject& postObject);
+
+    /**
+     * Invalidate a cached post after delete/reaction-only WebSocket changes and
+     * return its per-backend observation sequence.
+     */
+    quint64 invalidateCachedPost(const QString& postId);
+
 private:
-    using JsonCallback = std::function<void(QVariant, const QJsonDocument&)>;
+    struct CacheAccount {
+        QString server;
+        QString userId;
+
+        bool isValid() const { return !server.isEmpty() && !userId.isEmpty(); }
+    };
+
+    struct RequestContext {
+        CacheAccount cacheAccount;
+        quint64 observationSequence = 0;
+    };
+
+    using JsonCallback = std::function<void(QVariant,
+                                            const QJsonDocument&,
+                                            const RequestContext&)>;
 
     explicit PostRepository(Backend& backend);
 
@@ -160,16 +219,55 @@ private:
                     const QString& direction,
                     PageCallback callback);
 
+    CacheAccount currentCacheAccount() const;
+    quint64 nextObservationSequence();
+    void cachePosts(const CacheAccount& account,
+                    const QJsonObject& postsObject,
+                    quint64 observationSequence);
+
     static QStringList chronologicalOrder(const QJsonObject& postsObject,
                                           const QString& rootId = QString());
     static QStringList allChronologicalOrder(const QJsonObject& postsObject);
-    static void ingest(BackendChannel& channel,
-                       const QJsonObject& postsObject,
-                       bool quiet = false);
+    void ingest(BackendChannel& channel,
+                const QJsonObject& postsObject,
+                quint64 sourceObservation,
+                bool quiet = false);
+    void ingestCached(BackendChannel& channel,
+                      const QJsonObject& postsObject,
+                      quint64 readObservation,
+                      bool quiet = false);
+    void noteResidentObservation(const QJsonObject& postObject, quint64 observation);
+    void noteResidentPostObservation(const QString& postId, quint64 observation);
+    void pruneResidentObservations();
+    void initializeResidentMemory();
+    void noteResidentSnapshot(const QJsonObject& postObject, bool forceAdmission);
+    void scheduleResidentSweep();
+    void sweepResidentBodies();
+    void releasePostLease(const QString& channelId, const QString& postId);
+
+    friend class PostResidencyLease;
 
     Backend& backend;
     HTTPConnector httpConnector;
+    PostCacheService postCache;
+    struct ResidentObservation {
+        quint64 sequence = 0;
+        qint64 touchedAt = 0;
+    };
+    struct ResidentBodyState {
+        qint64 accountedBytes = 0;
+        qint64 touchedAt = 0;
+    };
+
     QHash<QString, QList<JsonCallback>> inFlightGets;
+    QHash<QString, qint64> channelOpenedAtByAccount;
+    QHash<QString, ResidentObservation> residentObservations;
+    QHash<QString, ResidentBodyState> residentBodies;
+    QHash<QString, int> residentLeaseCounts;
+    qint64 residentAccountedBytes = 0;
+    QTimer residentSweepTimer;
+    bool residentSweepPending = false;
+    quint64 observationSequence = 0;
 };
 
 } // namespace Mattermost

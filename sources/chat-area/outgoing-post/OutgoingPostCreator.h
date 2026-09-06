@@ -26,9 +26,9 @@
 
 #include <memory>
 #include <QBoxLayout>
-#include <QTimer>
 
 #include "MessageTextEditWidget.h"
+#include "backend/PostResidencyLease.h"
 #include "fwd.h"
 
 class QDragEnterEvent;
@@ -70,13 +70,14 @@ public slots:
 	void postEditInitiated (BackendPost& post);
 	void cancelPostEdit ()
 	{
-		// Once the edit has been submitted, keep waiting for the authoritative
-		// server response; cancelling is only meaningful while the draft is local.
+		// Once an edit has been submitted, keep the immutable request data until
+		// the HTTP transaction succeeds or the user explicitly retries it.
 		if (!postToEdit || outgoingPostData) {
 			return;
 		}
 		clear();
 		postToEdit = nullptr;
+		editResidencyLease.reset();
 		setEditingVisual(false);
 		emit postEditFinished();
 	}
@@ -88,6 +89,9 @@ private:
 	void createAttachmentList (QStringList& files);
 	void updateSendButtonState ();
 	void setEditingVisual(bool editing);
+	void setSendActivityText();
+	void finishSend(const QString& confirmedPostId = QString());
+	void failSend();
 	bool isEditingPost() const;
 	bool isCreatingPost ();
 	bool isWaitingForPostServerResponse ();
@@ -95,12 +99,6 @@ private:
 	void startSendPostSequence ();
 	void prepareAndSendPost ();
 	void sendPost ();
-
-	template<typename T, typename S, typename R>
-	void connectLambda (T* senderInstance, S&& signal, R&& receiver)
-	{
-		signalConnections.emplace_back (connect (senderInstance, signal, receiver));
-	}
 
 private:
 	Backend*							backend = nullptr;
@@ -110,13 +108,12 @@ private:
 	QPushButton*						attachButton = nullptr;
 	QPushButton*						addEmojiButton = nullptr;
 	QPushButton*						sendButton = nullptr;
-	QTimer								sendRetryTimer;
 	const BackendPost*					postToEdit;
+	PostResidencyLease					editResidencyLease;
 	OutgoingAttachmentList*				attachmentList;
 	std::unique_ptr<OutgoingPostData> 	outgoingPostData;
-	bool								isConnected;
+	bool								sendFailed = false;
 	QBoxLayout* 						attachmentParent = nullptr;
-	std::vector<QMetaObject::Connection> signalConnections;
 	QString						root_id;
 };
 

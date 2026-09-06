@@ -92,6 +92,9 @@ BackendChannel::BackendChannel (Storage& storage, const QJsonObject& jsonObject)
 	type = getChannelType (jsonObject);
 
 	last_post_at = jsonObject.value("last_post_at").toVariant().toULongLong();
+	last_root_post_at = jsonObject.contains("last_root_post_at")
+		? jsonObject.value("last_root_post_at").toVariant().toULongLong()
+		: last_post_at;
 
 	total_msg_count = jsonObject.value("total_msg_count").toInt();
 	has_total_msg_count_root = jsonObject.contains("total_msg_count_root");
@@ -121,19 +124,33 @@ BackendPost* BackendChannel::addPost (const QJsonObject& postObject)
 
 	BackendPost* newPost = &posts.back ();
 	postIdToPost[newPost->id] = newPost;
+	notifyPostBodyAvailable(newPost->id);
 
 	QString rootId = postObject.value("root_id").toString();
 
 	if (!rootId.isEmpty()) {
-		rootIdAndPostList.push_back(QPair<QString,QString> (rootId, newPost->id));
+		const QPair<QString, QString> relation(rootId, newPost->id);
+		const bool knownReplyIdentity = rootIdAndPostList.contains(relation);
+		if (!knownReplyIdentity) {
+			rootIdAndPostList.push_back(relation);
+		}
 		newPost->hidden = true;
 		BackendPost* rootPost = findPostById(rootId);
 		if (rootPost) {
 			qDebug() << rootPost->id <<  rootPost->message;
+			bool rootChanged = !rootPost->has_thread;
 			rootPost->has_thread = true;
-			++rootPost->reply_count;
-			rootPost->last_reply_at = std::max(rootPost->last_reply_at, newPost->create_at);
-			emit onPostEdited(*rootPost);
+			if (!knownReplyIdentity) {
+				++rootPost->reply_count;
+				rootChanged = true;
+			}
+			if (rootPost->last_reply_at < newPost->create_at) {
+				rootPost->last_reply_at = newPost->create_at;
+				rootChanged = true;
+			}
+			if (rootChanged) {
+				emit onPostEdited(*rootPost);
+			}
 		} else {
 			missingRootPostIds.insert(rootId);
 		}
@@ -159,13 +176,17 @@ void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPo
 
 	BackendPost* newPost = &*posts.emplace (position, postObject, storage);
 	postIdToPost[newPost->id] = newPost;
+	notifyPostBodyAvailable(newPost->id);
 
 	currentChunk.postsToAdd.emplace_front (newPost);
 
 	QString rootId = postObject.value("root_id").toString();
 
 	if (!rootId.isEmpty()) {
-		rootLinks.push_back(QPair<QString,QString> (rootId, newPost->id));
+		const QPair<QString, QString> relation(rootId, newPost->id);
+		if (!rootLinks.contains(relation)) {
+			rootLinks.push_back(relation);
+		}
 		newPost->hidden = true;
 		BackendPost* rootPost = findPostById(rootId);
 		if (rootPost) {
@@ -218,7 +239,7 @@ void BackendChannel::mergePostContext(const QJsonArray& orderArray, const QJsonO
 	// insert arbitrary context without rebuilding the whole list.
 	for (int orderIndex = orderArray.size() - 1; orderIndex >= 0; --orderIndex) {
 		const QString newPostId = orderArray.at(orderIndex).toString();
-		if (newPostId.isEmpty() || postIdToPost.contains(newPostId)) {
+		if (newPostId.isEmpty()) {
 			continue;
 		}
 
@@ -228,6 +249,14 @@ void BackendChannel::mergePostContext(const QJsonArray& orderArray, const QJsonO
 		}
 
 		const QJsonObject postObject = postIt->toObject();
+		const auto existing = postIdToPost.constFind(newPostId);
+		if (existing != postIdToPost.cend()) {
+			BackendPost* const existingPost = existing.value();
+			if (existingPost && existingPost->refreshFromJson(postObject, storage)) {
+				emit onPostEdited(*existingPost);
+			}
+			continue;
+		}
 		const uint64_t createAt = postObject.value(QStringLiteral("create_at"))
 			.toVariant().toULongLong();
 		const QString rootId = postObject.value(QStringLiteral("root_id")).toString();
@@ -291,8 +320,9 @@ void BackendChannel::editPost (BackendPost& newPost)
 		return;
 	}
 
-	existingPost->updatePostEdits (newPost);
-	emit onPostEdited (*existingPost);
+	if (existingPost->updatePostEdits(newPost)) {
+		emit onPostEdited(*existingPost);
+	}
 }
 
 void BackendChannel::addPostReaction (QString postId, QString userId, QString emojiName)
@@ -342,6 +372,53 @@ void BackendChannel::addMember (const Storage& channelStorage, const QJsonObject
 		return;
 	}
 	members.insert (member.userId, std::move (member));
+}
+
+bool BackendChannel::canEvictPostBody(const QString& postId) const
+{
+	BackendPost* target = postIdToPost.value(postId, nullptr);
+	if (!target) {
+		return false;
+	}
+
+	// Legacy thread presentation still carries a raw rootPost pointer. Root IDs
+	// are the durable relationship, but until that pointer is removed a resident
+	// reply conservatively pins its root body as well.
+	for (const BackendPost& candidate : posts) {
+		if (&candidate == target) {
+			continue;
+		}
+		if (candidate.rootPost == target || candidate.root_id == postId) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool BackendChannel::evictPostBody(const QString& postId)
+{
+	if (!canEvictPostBody(postId)) {
+		return false;
+	}
+
+	auto body = std::find_if(posts.begin(), posts.end(), [&postId](const BackendPost& post) {
+		return post.id == postId;
+	});
+	if (body == posts.end()) {
+		return false;
+	}
+
+	postIdToPost.remove(postId);
+	posts.erase(body);
+	emit onPostBodyAvailabilityChanged(postId, false);
+	return true;
+}
+
+void BackendChannel::notifyPostBodyAvailable(const QString& postId)
+{
+	if (!postId.isEmpty() && postIdToPost.contains(postId)) {
+		emit onPostBodyAvailabilityChanged(postId, true);
+	}
 }
 
 BackendPost* BackendChannel::findPostById (QString postID)

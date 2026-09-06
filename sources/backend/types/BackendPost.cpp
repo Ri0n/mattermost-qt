@@ -219,16 +219,139 @@ QDateTime BackendPost::getCreationTime () const
 	return QDateTime::fromMSecsSinceEpoch (create_at);
 }
 
-void BackendPost::updatePostEdits (BackendPost& editedPost)
+bool BackendPost::refreshFromJson (const QJsonObject& jsonObject, const Storage& storage)
 {
-	message = editedPost.message;
-
-	if (poll && editedPost.poll) {
-
-		editedPost.poll->metadata = poll->metadata;
-		poll = std::move (editedPost.poll);
+	// A few fields are local annotations rather than Mattermost post fields. A
+	// raw REST/cache snapshot normally does not contain them, so absence must not
+	// erase information already derived by the client.
+	QJsonObject normalized = jsonObject;
+	if (!normalized.contains(QStringLiteral("_mmqt_sender_name")) && !sender_name.isEmpty()) {
+		normalized.insert(QStringLiteral("_mmqt_sender_name"), sender_name);
+	}
+	if (!normalized.contains(QStringLiteral("_mmqt_current_user_mentioned"))) {
+		normalized.insert(QStringLiteral("_mmqt_current_user_mentioned"), currentUserMentioned);
 	}
 
+	BackendPost refreshed(normalized, storage);
+	if (!refreshed.root_id.isEmpty()) {
+		refreshed.hidden = true;
+	}
+	return updatePostEdits(refreshed);
+}
+
+bool BackendPost::updatePostEdits (BackendPost& editedPost)
+{
+	// Identity/topology is immutable for a Mattermost post. Refusing a malformed
+	// snapshot here is safer than moving an existing object to another timeline
+	// while widgets and sources still hold its stable address/ID.
+	if (editedPost.id.isEmpty() || editedPost.id != id
+		|| editedPost.channel_id != channel_id
+		|| editedPost.root_id != root_id
+		|| editedPost.create_at != create_at) {
+		LOG_DEBUG("Ignoring structurally inconsistent refresh for post " << id);
+		return false;
+	}
+
+	const auto sameFiles = [](const std::list<BackendFile>& lhs,
+	                          const std::list<BackendFile>& rhs) {
+		if (lhs.size() != rhs.size()) {
+			return false;
+		}
+		auto left = lhs.cbegin();
+		auto right = rhs.cbegin();
+		for (; left != lhs.cend(); ++left, ++right) {
+			if (left->id != right->id || left->name != right->name
+				|| left->mimeType != right->mimeType || left->size != right->size
+				|| left->extension != right->extension) {
+				return false;
+			}
+		}
+		return true;
+	};
+	const auto sameReactions = [](const std::map<EmojiID, BackendPostReaction>& lhs,
+	                              const std::map<EmojiID, BackendPostReaction>& rhs) {
+		if (lhs.size() != rhs.size()) {
+			return false;
+		}
+		auto left = lhs.cbegin();
+		auto right = rhs.cbegin();
+		for (; left != lhs.cend(); ++left, ++right) {
+			// EmojiID is intentionally orderable for std::map but has no equality
+			// operator. Equivalent keys are therefore !(a < b) && !(b < a).
+			if (left->first < right->first || right->first < left->first
+				|| left->second != right->second) {
+				return false;
+			}
+		}
+		return true;
+	};
+
+	const bool nextDeleted = editedPost.delete_at != 0 || editedPost.isDeleted;
+	const bool nextHidden = editedPost.hidden || !root_id.isEmpty();
+	const QString nextSenderName = editedPost.sender_name.isEmpty()
+		? sender_name : editedPost.sender_name;
+	const bool nextCurrentUserMentioned = currentUserMentioned
+		|| editedPost.currentUserMentioned;
+	const bool changed = update_at != editedPost.update_at
+		|| edit_at != editedPost.edit_at
+		|| delete_at != editedPost.delete_at
+		|| is_pinned != editedPost.is_pinned
+		|| user_id != editedPost.user_id
+		|| sender_name != nextSenderName
+		|| author != editedPost.author
+		|| parent_id != editedPost.parent_id
+		|| original_id != editedPost.original_id
+		|| message != editedPost.message
+		|| type != editedPost.type
+		|| props != editedPost.props
+		|| hashtags != editedPost.hashtags
+		|| pending_post_id != editedPost.pending_post_id
+		|| !sameFiles(files, editedPost.files)
+		|| !sameReactions(reactions, editedPost.reactions)
+		|| reply_count != editedPost.reply_count
+		|| last_reply_at != editedPost.last_reply_at
+		|| threadParticipantUserIds != editedPost.threadParticipantUserIds
+		|| currentUserMentioned != nextCurrentUserMentioned
+		|| has_thread != editedPost.has_thread
+		|| isDeleted != nextDeleted
+		|| hidden != nextHidden
+		|| static_cast<bool>(poll) != static_cast<bool>(editedPost.poll);
+
+	if (!changed) {
+		return false;
+	}
+
+	// Poll vote/admin metadata is fetched through a separate endpoint. Preserve
+	// that local enrichment while rebuilding the post-backed poll definition.
+	if (poll && editedPost.poll) {
+		editedPost.poll->metadata = poll->metadata;
+	}
+
+	update_at = editedPost.update_at;
+	edit_at = editedPost.edit_at;
+	delete_at = editedPost.delete_at;
+	is_pinned = editedPost.is_pinned;
+	user_id = editedPost.user_id;
+	sender_name = nextSenderName;
+	author = editedPost.author;
+	parent_id = editedPost.parent_id;
+	original_id = editedPost.original_id;
+	message = editedPost.message;
+	type = editedPost.type;
+	props = editedPost.props;
+	hashtags = editedPost.hashtags;
+	pending_post_id = editedPost.pending_post_id;
+	files = std::move(editedPost.files);
+	reactions = std::move(editedPost.reactions);
+	reply_count = editedPost.reply_count;
+	last_reply_at = editedPost.last_reply_at;
+	threadParticipantUserIds = std::move(editedPost.threadParticipantUserIds);
+	poll = std::move(editedPost.poll);
+	currentUserMentioned = nextCurrentUserMentioned;
+	has_thread = editedPost.has_thread;
+	isDeleted = nextDeleted;
+	hidden = nextHidden;
+	return true;
 }
 
 

@@ -12,6 +12,7 @@
 #include "ChatArea.h"
 #include "QuotedPostPreview.h"
 #include "backend/PostProps.h"
+#include "backend/PostRepository.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "chat-area/outgoing-post/OutgoingPostCreator.h"
@@ -85,6 +86,7 @@ void QuotedReplyController::begin(const BackendPost& post)
     }
 
     mode = Mode::Reply;
+    replyResidencyLease = PostRepository::instance(area.getBackend()).leasePost(post);
     preview->setActivatedCallback({});
     preview->setPost(post);
     editor->setProperty(PostProps::ReplyToPostId, post.id);
@@ -104,6 +106,7 @@ void QuotedReplyController::cancel()
     }
 
     editor->setProperty(PostProps::ReplyToPostId, QString());
+    replyResidencyLease.reset();
     if (mode == Mode::Reply) {
         mode = Mode::None;
     }
@@ -123,12 +126,14 @@ bool QuotedReplyController::eventFilter(QObject* watched, QEvent* event)
         const bool hasReply = !editor->property(PostProps::ReplyToPostId).toString().isEmpty();
         if (!hasReply && mode == Mode::Reply) {
             mode = Mode::None;
+            replyResidencyLease.reset();
         }
         syncVisibility();
     } else if (name == QByteArray(EditingPostProperty)) {
         const bool editing = editor->property(EditingPostProperty).toBool();
         if (editing) {
             mode = Mode::Editing;
+            replyResidencyLease.reset();
             preview->setActivatedCallback({});
 
             QString title = tr("Editing message");

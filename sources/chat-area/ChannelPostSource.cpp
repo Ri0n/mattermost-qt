@@ -64,13 +64,17 @@ QStringList uniqueChronological(const QStringList& ids)
 ChannelPostSource::ChannelPostSource(Backend& backendInstance,
                                      BackendChannel& channelInstance,
                                      QObject* parent)
-    : AbstractPostSource(parent)
+    : IndexedPostSource(channelInstance, parent)
     , backend(backendInstance)
-    , channel(channelInstance)
-    , exactRootCount(channelInstance.has_total_msg_count_root)
+    , hasRootCountEstimate(channelInstance.has_total_msg_count_root)
 {
-    if (exactRootCount) {
-        postIds.resize(currentLogicalCount());
+    if (hasRootCountEstimate) {
+        // A zero message counter is still only an estimate: a channel may
+        // contain count-excluded system roots. Keep one unavailable bootstrap
+        // slot so LongList requests page zero and lets /posts prove empty vs.
+        // non-empty history. An actually empty channel immediately reconciles
+        // back to zero.
+        postIds.resize(std::max(1, currentLogicalCount()));
         seedCachedPosts();
     } else {
         // Without total_msg_count_root there is no honest absolute oldest->newest
@@ -113,8 +117,8 @@ ChannelPostSource::ChannelPostSource(Backend& backendInstance,
             && !deletedPost->hidden;
 
         if (removeLikeOfficialClient) {
-            if (exactRootCount) {
-                ++rootCountOverestimate;
+            if (hasRootCountEstimate) {
+                --rootCountAdjustment;
             }
             removeLogicalRange(index, 1);
         } else {
@@ -127,35 +131,15 @@ ChannelPostSource::ChannelPostSource(Backend& backendInstance,
     });
     connect(&channel, &BackendChannel::onNewPosts, this,
             [this](const ChannelNewPosts&) {
-        if (!exactRootCount) {
+        if (!hasRootCountEstimate) {
             return;
         }
-        const int count = currentLogicalCount();
-        if (count != static_cast<int>(postIds.size())) {
-            postIds.resize(count);
-            rebuildIndex();
-            emit itemCountChanged(count);
-        }
+        resizeLogicalTail(currentLogicalCount());
     });
-}
 
-bool ChannelPostSource::isAvailable(int index) const
-{
-    return index >= 0 && index < postIds.size() && !postIds.at(index).isEmpty()
-        && channel.postIdToPost.contains(postIds.at(index));
-}
-
-BackendPost* ChannelPostSource::postAt(int index) const
-{
-    if (!isAvailable(index)) {
-        return nullptr;
+    if (hasRootCountEstimate) {
+        QTimer::singleShot(0, this, [this] { hydrateCachedTail(); });
     }
-    return channel.postIdToPost.value(postIds.at(index), nullptr);
-}
-
-int ChannelPostSource::indexOfPost(const QString& postId) const
-{
-    return postIndexes.value(postId, -1);
 }
 
 int ChannelPostSource::ensurePostIndex(const QString& postId)
@@ -171,7 +155,7 @@ bool ChannelPostSource::adoptNavigationContext(const QString& targetPostId,
                                                bool reachedOldest,
                                                bool reachedNewest)
 {
-    if (!exactRootCount || postIds.isEmpty() || targetPostId.isEmpty()) {
+    if (!hasRootCountEstimate || postIds.isEmpty() || targetPostId.isEmpty()) {
         return indexOfPost(targetPostId) >= 0;
     }
 
@@ -260,7 +244,7 @@ void ChannelPostSource::requestRange(int first,
     Q_UNUSED(reason)
     Q_UNUSED(generation)
 
-    if (!exactRootCount || postIds.isEmpty()) {
+    if (!hasRootCountEstimate || postIds.isEmpty()) {
         emit rangeRequestFinished(first, last);
         return;
     }
@@ -272,42 +256,514 @@ void ChannelPostSource::requestRange(int first,
         return;
     }
 
-    // A provisional semantic window has exact local identity/order but only an
-    // estimated global offset. Absolute page numbers in its neighbourhood are
-    // therefore invalid provenance. Extend that island only with identity
-    // cursors until it intersects an authoritative page or channel boundary.
-    if (requestTouchesProvisionalWindow(requestedFirst, requestedLast)) {
-        requestProvisionalRange(first, last);
+    // total_msg_count_root is only an initial coordinate estimate. Deleted
+    // roots can make it too large, while join/leave and other count-excluded
+    // system roots returned by /posts can make it too small. Large top-edge
+    // seeks start 3% inside that estimate and repair the oldest boundary in
+    // either direction before ordinary page placement resumes.
+    if (requestedFirst == 0 && !oldestBoundaryFastPathTried
+        && initialBoundaryProbePages() > 1) {
+        oldestBoundaryFastPathTried = true;
+        QPointer<ChannelPostSource> guard(this);
+        probeEstimatedOldestBoundary([guard, first, last] {
+            if (guard) {
+                emit guard->rangeRequestFinished(first, last);
+            }
+        });
         return;
     }
 
-    const int firstPage = pageForIndex(requestedLast);
-    const int lastPage = pageForIndex(requestedFirst);
-    const int requestCount = lastPage - firstPage + 1;
-    auto remaining = std::make_shared<int>(requestCount);
-    QPointer<ChannelPostSource> guard(this);
+    int firstMissing = requestedFirst;
+    while (firstMissing <= requestedLast && isAvailable(firstMissing)) {
+        ++firstMissing;
+    }
+    if (firstMissing > requestedLast) {
+        emit rangeRequestFinished(first, last);
+        return;
+    }
 
-    for (int page = firstPage; page <= lastPage; ++page) {
+    int lastMissing = requestedLast;
+    while (lastMissing > firstMissing && isAvailable(lastMissing)) {
+        --lastMissing;
+    }
+
+    // Mattermost channel history has one paging unit here: ten root posts.
+    // Logical list blocks are anchored at the oldest end while Mattermost page
+    // numbers are anchored at the newest end, so one ten-item logical request
+    // can straddle two server pages. Load every absolute page intersecting the
+    // missing range; do not turn already known post identities into paging
+    // cursors. Those identities are useful for semantic-position estimation and
+    // overlap reconciliation, not for choosing the next HTTP request boundary.
+    const int newestPage = pageForIndex(lastMissing);
+    const int oldestPage = pageForIndex(firstMissing);
+    const int pageCount = oldestPage - newestPage + 1;
+    if (pageCount <= 0) {
+        emit rangeRequestFinished(first, last);
+        return;
+    }
+
+    QPointer<ChannelPostSource> guard(this);
+    auto pending = std::make_shared<int>(pageCount);
+    const auto finishPage = [guard, pending, first, last] {
+        if (!guard) {
+            return;
+        }
+        if (--(*pending) == 0) {
+            emit guard->rangeRequestFinished(first, last);
+        }
+    };
+
+    for (int page = newestPage; page <= oldestPage; ++page) {
+        qCDebug(lcTimelineChannel).nospace()
+            << "RANGE_PAGE requested=[" << requestedFirst << ',' << requestedLast
+            << "] missing=[" << firstMissing << ',' << lastMissing
+            << "] page=" << page << " perPage=" << ServerPageSize;
         PostTimelineService::instance(backend).loadChannelPage(
             channel, page, ServerPageSize,
-            [guard, page, remaining, first, last](const PostTimelineService::Page& result) {
+            [guard, page, requestedFirst, oldestPage, finishPage](
+                const PostTimelineService::Page& result) {
                 if (!guard) {
                     return;
                 }
-                if (result.success && !result.postIds.isEmpty()) {
-                    guard->placePage(page, result.postIds);
+                if (!result.success) {
+                    finishPage();
+                    return;
                 }
-                --*remaining;
-                if (*remaining == 0) {
-                    emit guard->rangeRequestFinished(first, last);
+                if (result.postIds.isEmpty()) {
+                    guard->resolveOldestBoundary(page, finishPage);
+                    return;
                 }
+
+                guard->placePage(page, result.postIds);
+
+                // For small estimates we deliberately take the normal ten-post
+                // path first. If the estimated oldest page is full, however,
+                // the count may be an underestimate (for example because
+                // join/leave system posts are excluded from the counter). Keep
+                // this request open and search farther into older pages.
+                if (requestedFirst == 0 && page == oldestPage
+                    && result.postIds.size() == ServerPageSize
+                    && !guard->oldestBoundaryFastPathTried) {
+                    guard->resolveOldestBoundaryFromNonEmpty(page, finishPage);
+                    return;
+                }
+                finishPage();
             });
     }
 }
 
+void ChannelPostSource::probeEstimatedOldestBoundary(
+    std::function<void()> completion)
+{
+    if (completion) {
+        oldestBoundaryWaiters.push_back(std::move(completion));
+    }
+    if (oldestBoundaryProbeInFlight || postIds.isEmpty()) {
+        return;
+    }
+
+    oldestBoundaryProbeInFlight = true;
+    oldestBoundaryNonEmptyPage = -1;
+    oldestBoundaryEmptyPage = -1;
+    oldestBoundaryProbeStep = initialBoundaryProbePages();
+    oldestBoundarySearchLimitPage = pageForIndex(0);
+    oldestBoundaryMaterializedFullPage = -1;
+
+    // Start at the expected deletion distance instead of spending a round trip
+    // on the estimated oldest page. Empty means the estimate was too large and
+    // we step inward. Existing data is searched outward to the estimate; if the
+    // estimated page is full, search continues beyond it because count-excluded
+    // system roots can make total_msg_count_root an underestimate as well.
+    const int page = std::max(0,
+                              oldestBoundarySearchLimitPage - oldestBoundaryProbeStep);
+    const int offset = page * ServerPageSize;
+    qCDebug(lcTimelineChannel).nospace()
+        << "OLDEST_BOUNDARY_INITIAL page=" << page
+        << " offset=" << offset
+        << " limit=" << oldestBoundarySearchLimitPage
+        << " step=" << oldestBoundaryProbeStep
+        << " perPage=1";
+
+    QPointer<ChannelPostSource> guard(this);
+    PostTimelineService::instance(backend).loadChannelPage(
+        channel, offset, 1,
+        [guard, page, offset](const PostTimelineService::Page& result) {
+            if (!guard || !guard->oldestBoundaryProbeInFlight) {
+                return;
+            }
+            if (!result.success) {
+                guard->finishOldestBoundaryProbe();
+                return;
+            }
+
+            const bool exists = !result.postIds.isEmpty();
+            qCDebug(lcTimelineChannel).nospace()
+                << "OLDEST_BOUNDARY_INITIAL_RESULT page=" << page
+                << " offset=" << offset
+                << " exists=" << exists;
+
+            if (exists) {
+                guard->oldestBoundaryNonEmptyPage = page;
+            } else {
+                guard->oldestBoundaryEmptyPage = page;
+            }
+            guard->probeOldestBoundary();
+        });
+}
+
+void ChannelPostSource::resolveOldestBoundary(int emptyPage,
+                                              std::function<void()> completion)
+{
+    if (completion) {
+        oldestBoundaryWaiters.push_back(std::move(completion));
+    }
+
+    oldestBoundaryFastPathTried = true;
+    emptyPage = std::max(0, emptyPage);
+    if (oldestBoundaryProbeInFlight) {
+        if (oldestBoundaryEmptyPage < 0 || emptyPage < oldestBoundaryEmptyPage) {
+            oldestBoundaryEmptyPage = emptyPage;
+        }
+        return;
+    }
+
+    oldestBoundaryProbeInFlight = true;
+    oldestBoundaryNonEmptyPage = -1;
+    oldestBoundaryEmptyPage = emptyPage;
+    oldestBoundaryProbeStep = initialBoundaryProbePages();
+    oldestBoundarySearchLimitPage = -1;
+    oldestBoundaryMaterializedFullPage = -1;
+    probeOldestBoundary();
+}
+
+void ChannelPostSource::resolveOldestBoundaryFromNonEmpty(
+    int nonEmptyPage, std::function<void()> completion)
+{
+    if (completion) {
+        oldestBoundaryWaiters.push_back(std::move(completion));
+    }
+
+    oldestBoundaryFastPathTried = true;
+    nonEmptyPage = std::max(0, nonEmptyPage);
+    if (oldestBoundaryProbeInFlight) {
+        if (oldestBoundaryEmptyPage < 0 || nonEmptyPage < oldestBoundaryEmptyPage) {
+            oldestBoundaryNonEmptyPage = std::max(oldestBoundaryNonEmptyPage,
+                                                  nonEmptyPage);
+            oldestBoundaryMaterializedFullPage = std::max(
+                oldestBoundaryMaterializedFullPage, nonEmptyPage);
+        }
+        return;
+    }
+
+    oldestBoundaryProbeInFlight = true;
+    oldestBoundaryNonEmptyPage = nonEmptyPage;
+    oldestBoundaryEmptyPage = -1;
+    // First check the adjacent page. Exact multiples of ten are common, so one
+    // cheap probe should prove them before exponential outward stepping begins.
+    oldestBoundaryProbeStep = 1;
+    oldestBoundarySearchLimitPage = -1;
+    oldestBoundaryMaterializedFullPage = nonEmptyPage;
+    probeOldestBoundary();
+}
+
+void ChannelPostSource::probeOldestBoundary()
+{
+    if (!oldestBoundaryProbeInFlight) {
+        return;
+    }
+
+    if (oldestBoundaryEmptyPage == 0) {
+        reconcileRootCount(0);
+        finishOldestBoundaryProbe();
+        return;
+    }
+
+    // A full materialized page followed immediately by known emptiness proves
+    // an exact multiple-of-ten boundary without re-fetching that page.
+    if (oldestBoundaryNonEmptyPage >= 0
+        && oldestBoundaryEmptyPage == oldestBoundaryNonEmptyPage + 1
+        && oldestBoundaryMaterializedFullPage == oldestBoundaryNonEmptyPage) {
+        reconcileRootCount(oldestBoundaryEmptyPage * ServerPageSize);
+        finishOldestBoundaryProbe();
+        return;
+    }
+
+    // If the 3% heuristic is only one page, materializing the candidate block
+    // is cheaper than maintaining a separate probe phase. Once binary search
+    // leaves at most two unknown pages, stop spending one-root probes on them:
+    // materialize the first unknown ten-post page instead. A short/empty page
+    // resolves the boundary immediately; a full page needs at most one adjacent
+    // ten-post page and both payloads are useful to the viewport/prefetch window.
+    if ((oldestBoundaryNonEmptyPage < 0 && oldestBoundaryProbeStep == 1)
+        || (oldestBoundaryNonEmptyPage >= 0 && oldestBoundaryEmptyPage >= 0
+            && oldestBoundaryEmptyPage - oldestBoundaryNonEmptyPage <= 3)) {
+        if (oldestBoundaryNonEmptyPage < 0) {
+            oldestBoundaryProbeStep = 2;
+            loadOldestBoundaryPage(std::max(0, oldestBoundaryEmptyPage - 1));
+        } else if (oldestBoundaryEmptyPage == oldestBoundaryNonEmptyPage + 1) {
+            loadOldestBoundaryPage(oldestBoundaryNonEmptyPage);
+        } else {
+            loadOldestBoundaryPage(oldestBoundaryNonEmptyPage + 1);
+        }
+        return;
+    }
+
+    int page = -1;
+    if (oldestBoundaryNonEmptyPage >= 0 && oldestBoundaryEmptyPage < 0) {
+        if (oldestBoundarySearchLimitPage >= 0) {
+            // The initial 3% probe found data. Walk outward toward the reported
+            // boundary without assuming it is empty.
+            if (oldestBoundaryNonEmptyPage >= oldestBoundarySearchLimitPage) {
+                loadOldestBoundaryPage(oldestBoundaryNonEmptyPage);
+                return;
+            }
+            page = oldestBoundaryNonEmptyPage
+                + (oldestBoundarySearchLimitPage - oldestBoundaryNonEmptyPage + 1) / 2;
+        } else {
+            // A full reported-boundary page proves that the count may be too
+            // small. Probe one adjacent page first, then grow the outward step
+            // exponentially. Existence is monotonic in absolute page space.
+            const int step = std::max(1, oldestBoundaryProbeStep);
+            const qint64 candidate = static_cast<qint64>(oldestBoundaryNonEmptyPage)
+                + step;
+            if (candidate > std::numeric_limits<int>::max()) {
+                finishOldestBoundaryProbe();
+                return;
+            }
+            page = static_cast<int>(candidate);
+            if (step == 1) {
+                oldestBoundaryProbeStep = std::max(2, initialBoundaryProbePages());
+            } else {
+                oldestBoundaryProbeStep = std::min(
+                    std::numeric_limits<int>::max() / 2, step * 2);
+            }
+        }
+    } else if (oldestBoundaryNonEmptyPage < 0) {
+        page = std::max(0, oldestBoundaryEmptyPage - oldestBoundaryProbeStep);
+        oldestBoundaryProbeStep = std::min(oldestBoundaryEmptyPage + 1,
+                                           oldestBoundaryProbeStep * 2);
+    } else {
+        page = oldestBoundaryNonEmptyPage
+            + (oldestBoundaryEmptyPage - oldestBoundaryNonEmptyPage) / 2;
+    }
+
+    const int offset = page * ServerPageSize;
+    qCDebug(lcTimelineChannel).nospace()
+        << "OLDEST_BOUNDARY_PROBE page=" << page
+        << " offset=" << offset
+        << " nonEmpty=" << oldestBoundaryNonEmptyPage
+        << " empty=" << oldestBoundaryEmptyPage
+        << " step=" << oldestBoundaryProbeStep
+        << " perPage=1";
+
+    QPointer<ChannelPostSource> guard(this);
+    PostTimelineService::instance(backend).loadChannelPage(
+        channel, offset, 1,
+        [guard, page, offset](const PostTimelineService::Page& result) {
+            if (!guard || !guard->oldestBoundaryProbeInFlight) {
+                return;
+            }
+            if (!result.success) {
+                guard->finishOldestBoundaryProbe();
+                return;
+            }
+
+            const bool exists = !result.postIds.isEmpty();
+            qCDebug(lcTimelineChannel).nospace()
+                << "OLDEST_BOUNDARY_RESULT page=" << page
+                << " offset=" << offset
+                << " exists=" << exists;
+
+            if (exists) {
+                guard->oldestBoundaryNonEmptyPage = std::max(
+                    guard->oldestBoundaryNonEmptyPage, page);
+            } else if (guard->oldestBoundaryEmptyPage < 0) {
+                guard->oldestBoundaryEmptyPage = page;
+            } else {
+                guard->oldestBoundaryEmptyPage = std::min(
+                    guard->oldestBoundaryEmptyPage, page);
+            }
+            guard->probeOldestBoundary();
+        });
+}
+
+void ChannelPostSource::loadOldestBoundaryPage(int page)
+{
+    if (!oldestBoundaryProbeInFlight) {
+        return;
+    }
+
+    page = std::max(0, page);
+    qCDebug(lcTimelineChannel).nospace()
+        << "OLDEST_BOUNDARY_PAGE page=" << page
+        << " perPage=" << ServerPageSize;
+
+    QPointer<ChannelPostSource> guard(this);
+    PostTimelineService::instance(backend).loadChannelPage(
+        channel, page, ServerPageSize,
+        [guard, page](const PostTimelineService::Page& result) {
+            if (!guard || !guard->oldestBoundaryProbeInFlight) {
+                return;
+            }
+            if (!result.success) {
+                guard->finishOldestBoundaryProbe();
+                return;
+            }
+
+            qCDebug(lcTimelineChannel).nospace()
+                << "OLDEST_BOUNDARY_PAGE_RESULT page=" << page
+                << " returned=" << result.postIds.size();
+
+            if (result.postIds.isEmpty()) {
+                if (guard->oldestBoundaryEmptyPage < 0) {
+                    guard->oldestBoundaryEmptyPage = page;
+                } else {
+                    guard->oldestBoundaryEmptyPage = std::min(
+                        guard->oldestBoundaryEmptyPage, page);
+                }
+                if (guard->oldestBoundaryNonEmptyPage >= page) {
+                    guard->oldestBoundaryNonEmptyPage = -1;
+                    guard->oldestBoundaryMaterializedFullPage = -1;
+                }
+                if (guard->oldestBoundaryNonEmptyPage >= 0
+                    && guard->oldestBoundaryEmptyPage
+                        == guard->oldestBoundaryNonEmptyPage + 1) {
+                    if (guard->oldestBoundaryMaterializedFullPage
+                        == guard->oldestBoundaryNonEmptyPage) {
+                        guard->reconcileRootCount(
+                            guard->oldestBoundaryEmptyPage * ServerPageSize);
+                        guard->finishOldestBoundaryProbe();
+                    } else {
+                        guard->loadOldestBoundaryPage(
+                            guard->oldestBoundaryNonEmptyPage);
+                    }
+                    return;
+                }
+                guard->probeOldestBoundary();
+                return;
+            }
+
+            guard->oldestBoundaryNonEmptyPage = std::max(
+                guard->oldestBoundaryNonEmptyPage, page);
+            const int returned = static_cast<int>(result.postIds.size());
+            if (returned < ServerPageSize) {
+                guard->placePage(page, result.postIds);
+                guard->finishOldestBoundaryProbe();
+                return;
+            }
+
+            guard->placePage(page, result.postIds);
+            guard->oldestBoundaryMaterializedFullPage = page;
+            if (guard->oldestBoundaryEmptyPage == page + 1) {
+                guard->reconcileRootCount((page + 1) * ServerPageSize);
+                guard->finishOldestBoundaryProbe();
+                return;
+            }
+            if (guard->oldestBoundaryEmptyPage == page + 2) {
+                guard->loadOldestBoundaryPage(page + 1);
+                return;
+            }
+
+            // Reaching a full reported oldest page is not a boundary proof:
+            // total_msg_count_root excludes join/leave and some other visible
+            // system roots. Switch from the estimated limit to outward
+            // exponential probing until /posts itself proves the edge.
+            if (guard->oldestBoundaryEmptyPage < 0) {
+                if (guard->oldestBoundarySearchLimitPage >= 0
+                    && page >= guard->oldestBoundarySearchLimitPage) {
+                    guard->oldestBoundarySearchLimitPage = -1;
+                    guard->oldestBoundaryProbeStep = 1;
+                }
+                guard->probeOldestBoundary();
+                return;
+            }
+            guard->probeOldestBoundary();
+        });
+}
+
+void ChannelPostSource::finishOldestBoundaryProbe()
+{
+    auto waiters = std::move(oldestBoundaryWaiters);
+    oldestBoundaryWaiters.clear();
+    oldestBoundaryProbeInFlight = false;
+    oldestBoundaryNonEmptyPage = -1;
+    oldestBoundaryEmptyPage = -1;
+    oldestBoundaryProbeStep = 1;
+    oldestBoundarySearchLimitPage = -1;
+    oldestBoundaryMaterializedFullPage = -1;
+
+    for (auto& waiter : waiters) {
+        if (waiter) {
+            waiter();
+        }
+    }
+}
+
+void ChannelPostSource::reconcileRootCount(int actualCount)
+{
+    actualCount = std::max(0, actualCount);
+    const int oldCount = static_cast<int>(postIds.size());
+
+    // Preserve the discovered difference from Mattermost's message counter so
+    // later metadata refreshes do not recreate a deleted-root phantom prefix or
+    // discard count-excluded system roots. The server counter can subsequently
+    // advance with normal messages; this signed adjustment advances with it.
+    rootCountAdjustment = actualCount - std::max(0, channel.total_msg_count_root);
+
+    if (actualCount == oldCount) {
+        return;
+    }
+
+    if (actualCount > oldCount) {
+        const int addPrefix = actualCount - oldCount;
+        qCDebug(lcTimelineChannel).nospace()
+            << "OLDEST_COUNT_RECONCILE addPrefix=" << addPrefix
+            << " oldCount=" << oldCount
+            << " actualCount=" << actualCount;
+        insertLogicalPrefix(addPrefix);
+        return;
+    }
+
+    const int removePrefix = oldCount - actualCount;
+    qCDebug(lcTimelineChannel).nospace()
+        << "OLDEST_COUNT_RECONCILE removePrefix=" << removePrefix
+        << " oldCount=" << oldCount
+        << " actualCount=" << actualCount;
+    removeLogicalRange(0, removePrefix);
+}
+
+void ChannelPostSource::ensureMinimumRootCount(int minimumCount)
+{
+    minimumCount = std::max(0, minimumCount);
+    const int oldCount = static_cast<int>(postIds.size());
+    if (minimumCount <= oldCount) {
+        return;
+    }
+
+    const int addPrefix = minimumCount - oldCount;
+    qCDebug(lcTimelineChannel).nospace()
+        << "OLDEST_COUNT_EXPAND addPrefix=" << addPrefix
+        << " oldCount=" << oldCount
+        << " minimumCount=" << minimumCount;
+    insertLogicalPrefix(addPrefix);
+}
+
+void ChannelPostSource::insertLogicalPrefix(int count)
+{
+    count = std::max(0, count);
+    if (count == 0) {
+        return;
+    }
+
+    if (provisionalWindow.isValid()) {
+        provisionalWindow.first += count;
+    }
+    insertEmptyLogicalSlots(0, count);
+}
+
 bool ChannelPostSource::canRequestBeforeFirst() const
 {
-    return !exactRootCount && moreBeforeFirst;
+    return !hasRootCountEstimate && moreBeforeFirst;
 }
 
 void ChannelPostSource::requestBeforeFirst(RequestReason reason, quint64 generation)
@@ -315,7 +771,7 @@ void ChannelPostSource::requestBeforeFirst(RequestReason reason, quint64 generat
     Q_UNUSED(reason)
     Q_UNUSED(generation)
 
-    if (exactRootCount || !moreBeforeFirst || beforeRequestInFlight) {
+    if (hasRootCountEstimate || !moreBeforeFirst || beforeRequestInFlight) {
         return;
     }
 
@@ -360,10 +816,10 @@ void ChannelPostSource::requestBeforeFirst(RequestReason reason, quint64 generat
 
 int ChannelPostSource::currentLogicalCount() const
 {
-    if (exactRootCount) {
-        const int correctedServerCount = std::max(
-            0, channel.total_msg_count_root - rootCountOverestimate);
-        return std::max(static_cast<int>(postIds.size()), correctedServerCount);
+    if (hasRootCountEstimate) {
+        const int adjustedServerCount = std::max(
+            0, channel.total_msg_count_root + rootCountAdjustment);
+        return std::max(static_cast<int>(postIds.size()), adjustedServerCount);
     }
     return static_cast<int>(postIds.size());
 }
@@ -375,6 +831,14 @@ int ChannelPostSource::pageForIndex(int index) const
     }
     index = std::max(0, std::min(index, static_cast<int>(postIds.size()) - 1));
     return (static_cast<int>(postIds.size()) - 1 - index) / ServerPageSize;
+}
+
+int ChannelPostSource::initialBoundaryProbePages() const
+{
+    const qint64 numerator = static_cast<qint64>(postIds.size())
+        * InitialBoundaryProbePercent;
+    const qint64 denominator = 100LL * ServerPageSize;
+    return std::max(1, static_cast<int>((numerator + denominator - 1) / denominator));
 }
 
 int ChannelPostSource::estimateIndexForPost(const BackendPost& post) const
@@ -641,111 +1105,9 @@ bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
     return true;
 }
 
-bool ChannelPostSource::requestTouchesProvisionalWindow(int first, int last) const
-{
-    if (!provisionalWindow.isValid()) {
-        return false;
-    }
-    return first <= provisionalWindow.last() + ServerPageSize
-        && last >= provisionalWindow.first - ServerPageSize;
-}
-
-void ChannelPostSource::requestProvisionalRange(int first, int last)
-{
-    pendingProvisionalRequests.push_back(qMakePair(first, last));
-    if (provisionalRequestInFlight || !provisionalWindow.isValid()) {
-        if (!provisionalWindow.isValid()) {
-            finishProvisionalRequests();
-        }
-        return;
-    }
-
-    const bool needBefore = first < provisionalWindow.first && !provisionalWindow.reachedOldest;
-    const bool needAfter = last > provisionalWindow.last() && !provisionalWindow.reachedNewest;
-    if (!needBefore && !needAfter) {
-        finishProvisionalRequests();
-        return;
-    }
-
-    struct ExpansionState {
-        ProvisionalWindow base;
-        PostTimelineService::Page before;
-        PostTimelineService::Page after;
-        bool needBefore = false;
-        bool needAfter = false;
-        int pending = 0;
-    };
-
-    provisionalRequestInFlight = true;
-    auto state = std::make_shared<ExpansionState>();
-    state->base = provisionalWindow;
-    state->needBefore = needBefore;
-    state->needAfter = needAfter;
-    state->pending = (needBefore ? 1 : 0) + (needAfter ? 1 : 0);
-
-    QPointer<ChannelPostSource> guard(this);
-    const auto finishPart = [guard, state]() {
-        if (!guard || --state->pending != 0) {
-            return;
-        }
-
-        QStringList combined;
-        if (state->needBefore && state->before.success) {
-            combined.append(state->before.postIds);
-        }
-        combined.append(state->base.postIds);
-        if (state->needAfter && state->after.success) {
-            combined.append(state->after.postIds);
-        }
-        combined = uniqueChronological(combined);
-
-        const bool reachedOldest = state->base.reachedOldest
-            || (state->needBefore && state->before.success
-                && (state->before.prevPostId.isEmpty()
-                    || static_cast<int>(state->before.postIds.size()) < ServerPageSize));
-        const bool reachedNewest = state->base.reachedNewest
-            || (state->needAfter && state->after.success
-                && (state->after.nextPostId.isEmpty()
-                    || static_cast<int>(state->after.postIds.size()) < ServerPageSize));
-
-        if (!combined.isEmpty()) {
-            guard->placeNavigationContext(state->base.targetPostId, combined,
-                                          reachedOldest, reachedNewest);
-        }
-        guard->finishProvisionalRequests();
-    };
-
-    if (needBefore) {
-        PostTimelineService::instance(backend).loadChannelBefore(
-            channel, provisionalWindow.postIds.first(), ServerPageSize,
-            [state, finishPart](const PostTimelineService::Page& result) {
-                state->before = result;
-                finishPart();
-            });
-    }
-    if (needAfter) {
-        PostTimelineService::instance(backend).loadChannelAfter(
-            channel, provisionalWindow.postIds.last(), ServerPageSize,
-            [state, finishPart](const PostTimelineService::Page& result) {
-                state->after = result;
-                finishPart();
-            });
-    }
-}
-
-void ChannelPostSource::finishProvisionalRequests()
-{
-    provisionalRequestInFlight = false;
-    const QVector<QPair<int, int>> requests = std::move(pendingProvisionalRequests);
-    pendingProvisionalRequests.clear();
-    for (const auto& request : requests) {
-        emit rangeRequestFinished(request.first, request.second);
-    }
-}
-
 void ChannelPostSource::seedCachedPosts()
 {
-    if (!exactRootCount) {
+    if (!hasRootCountEstimate) {
         return;
     }
 
@@ -759,8 +1121,8 @@ void ChannelPostSource::seedCachedPosts()
     // absolute logical positions; semantic navigation adopts those on demand.
     const BackendPost* newest = cached.last();
     if (postIds.size() > cached.size()
-        && channel.last_post_at != 0
-        && newest->create_at < channel.last_post_at) {
+        && channel.last_root_post_at != 0
+        && newest->create_at < channel.last_root_post_at) {
         return;
     }
 
@@ -777,7 +1139,7 @@ void ChannelPostSource::seedCachedPosts()
 
 void ChannelPostSource::seedUnknownNewestPost()
 {
-    if (exactRootCount || channel.last_post_at == 0) {
+    if (hasRootCountEstimate || channel.last_root_post_at == 0) {
         return;
     }
 
@@ -787,7 +1149,7 @@ void ChannelPostSource::seedUnknownNewestPost()
     }
 
     BackendPost* newest = cached.last();
-    if (!newest || newest->create_at < channel.last_post_at) {
+    if (!newest || newest->create_at < channel.last_root_post_at) {
         return;
     }
 
@@ -795,14 +1157,93 @@ void ChannelPostSource::seedUnknownNewestPost()
     rebuildIndex();
 }
 
-void ChannelPostSource::rebuildIndex()
+void ChannelPostSource::hydrateCachedTail()
 {
-    postIndexes.clear();
-    for (int index = 0; index < postIds.size(); ++index) {
-        if (!postIds.at(index).isEmpty()) {
-            postIndexes.insert(postIds.at(index), index);
-        }
+    if (!hasRootCountEstimate || postIds.isEmpty()) {
+        return;
     }
+
+    PostTimelineService& repository = PostTimelineService::instance(backend);
+    repository.recordChannelOpened(channel.id);
+    QPointer<ChannelPostSource> guard(this);
+    repository.loadCachedChannelTail(
+        channel, ServerPageSize,
+        [guard](const PostTimelineService::Page& result) {
+            if (!guard || !result.success || result.postIds.isEmpty()
+                || guard->provisionalWindow.isValid()) {
+                return;
+            }
+
+            BackendPost* newest = guard->channel.postIdToPost.value(
+                result.postIds.last(), nullptr);
+            if (!newest || (guard->channel.last_root_post_at != 0
+                            && newest->create_at != guard->channel.last_root_post_at)) {
+                qCDebug(lcTimelineChannel).nospace()
+                    << "CACHE_TAIL_SKIP channel=" << guard->channel.id
+                    << " reason=newest-mismatch cached="
+                    << (newest ? newest->create_at : 0)
+                    << " channel=" << guard->channel.last_root_post_at;
+                return;
+            }
+
+            const int usableCount = std::min(
+                static_cast<int>(result.postIds.size()),
+                static_cast<int>(guard->postIds.size()));
+            if (usableCount <= 0) {
+                return;
+            }
+            const QStringList ids = result.postIds.mid(
+                result.postIds.size() - usableCount);
+            const int first = static_cast<int>(guard->postIds.size()) - usableCount;
+
+            // A cache window may fill empty startup slots, but it may not move
+            // or overwrite an identity the source already mapped independently.
+            for (int offset = 0; offset < usableCount; ++offset) {
+                const int target = first + offset;
+                const QString& id = ids.at(offset);
+                const int existingIndex = guard->indexOfPost(id);
+                if ((existingIndex >= 0 && existingIndex != target)
+                    || (!guard->postIds.at(target).isEmpty()
+                        && guard->postIds.at(target) != id)) {
+                    qCDebug(lcTimelineChannel).nospace()
+                        << "CACHE_TAIL_SKIP channel=" << guard->channel.id
+                        << " reason=identity-collision target=" << target
+                        << " id=" << id;
+                    return;
+                }
+            }
+
+            for (const QString& id : ids) {
+                if (guard->indexOfPost(id) < 0) {
+                    guard->provisionalPostIds.insert(id);
+                }
+            }
+            const ExactWindowMutation mutation = guard->assignExactWindow(first, ids);
+            guard->publishExactWindow(mutation);
+            qCDebug(lcTimelineChannel).nospace()
+                << "CACHE_TAIL_HYDRATE channel=" << guard->channel.id
+                << " first=" << first
+                << " last=" << (first + usableCount - 1)
+                << " count=" << usableCount;
+            guard->validateCachedTail();
+        });
+}
+
+void ChannelPostSource::validateCachedTail()
+{
+    QPointer<ChannelPostSource> guard(this);
+    PostTimelineService::instance(backend).loadChannelPage(
+        channel, 0, ServerPageSize,
+        [guard](const PostTimelineService::Page& result) {
+            if (!guard || !result.success) {
+                return;
+            }
+            if (result.postIds.isEmpty()) {
+                guard->reconcileRootCount(0);
+                return;
+            }
+            guard->placePage(0, result.postIds);
+        });
 }
 
 void ChannelPostSource::removeLogicalRange(int first, int count)
@@ -846,83 +1287,44 @@ void ChannelPostSource::removeLogicalRange(int first, int count)
     for (int index = first; index <= last; ++index) {
         provisionalPostIds.remove(postIds.at(index));
     }
-    for (int i = 0; i < count; ++i) {
-        postIds.removeAt(first);
-    }
-    rebuildIndex();
-    emit itemsRemoved(first, count);
+    eraseLogicalSlots(first, count);
 }
 
 void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
 {
-    if (!exactRootCount || postIds.isEmpty() || chronologicalIds.isEmpty()) {
+    if (!hasRootCountEstimate || postIds.isEmpty() || chronologicalIds.isEmpty()) {
         return;
     }
 
-    int first = std::max(0,
-        static_cast<int>(postIds.size()) - page * ServerPageSize
-            - static_cast<int>(chronologicalIds.size()));
+    const int returned = static_cast<int>(chronologicalIds.size());
 
-    // /channels/{id}/posts omits deleted posts, while total_msg_count_root can
-    // still leave the source with a larger logical estimate. A short non-zero
-    // page is the oldest boundary, so a positive calculated first index is not a
-    // real gap: it is exactly the number of phantom deleted-root slots. Remove
-    // them structurally before publishing the page. For the reported 1070-row
-    // DM, page 106 contained seven posts and proved that indices 0..2 did not
-    // exist, which was the trigger for the infinite [0,9] seek/reload loop.
-    if (page > 0
-        && chronologicalIds.size() < ServerPageSize
-        && first > 0) {
-        qCDebug(lcTimelineChannel).nospace()
-            << "OLDEST_COUNT_RECONCILE page=" << page
-            << " removePrefix=" << first
-            << " oldCount=" << postIds.size()
-            << " returned=" << chronologicalIds.size();
-        rootCountOverestimate += first;
-        removeLogicalRange(0, first);
-        first = std::max(0,
-            static_cast<int>(postIds.size()) - page * ServerPageSize
-                - static_cast<int>(chronologicalIds.size()));
+    // Absolute /posts pages are the timeline authority. A short page proves the
+    // exact oldest boundary. A full page only proves a minimum count; grow at
+    // the oldest side so already known newest-anchored page mappings keep their
+    // indices. This handles total_msg_count_root underestimates caused by system
+    // roots that are visible in /posts but excluded from channel message counts.
+    if (returned < ServerPageSize) {
+        reconcileRootCount(page * ServerPageSize + returned);
+    } else {
+        ensureMinimumRootCount((page + 1) * ServerPageSize);
     }
 
-    const int count = std::min(static_cast<int>(chronologicalIds.size()),
+    const int first = std::max(0,
+        static_cast<int>(postIds.size()) - page * ServerPageSize - returned);
+
+    const int count = std::min(returned,
                                static_cast<int>(postIds.size()) - first);
     if (count <= 0) {
         return;
     }
-    const int last = first + count - 1;
-
     bool touchesProvisionalIdentity = false;
-    bool mappingChanged = false;
-    QSet<int> concreteChanged;
-
-    for (int offset = 0; offset < count; ++offset) {
-        const QString& id = chronologicalIds.at(offset);
-        if (provisionalPostIds.contains(id)) {
-            touchesProvisionalIdentity = true;
-        }
-        const int existing = postIndexes.value(id, -1);
-        if (existing >= 0 && (existing < first || existing > last)
-            && !postIds.at(existing).isEmpty()) {
-            postIds[existing].clear();
-            concreteChanged.insert(existing);
-            mappingChanged = true;
-        }
-    }
-
-    for (int offset = 0; offset < count; ++offset) {
-        const int index = first + offset;
-        const QString& id = chronologicalIds.at(offset);
-        if (postIds.at(index) != id) {
-            if (!postIds.at(index).isEmpty()) {
-                concreteChanged.insert(index);
-            }
-            postIds[index] = id;
-            mappingChanged = true;
-        }
+    const QStringList pageIds = chronologicalIds.mid(0, count);
+    for (const QString& id : pageIds) {
+        touchesProvisionalIdentity = touchesProvisionalIdentity
+            || provisionalPostIds.contains(id);
         provisionalPostIds.remove(id);
     }
-    rebuildIndex();
+    const ExactWindowMutation mutation = assignExactWindow(first, pageIds);
 
     // An absolute page that happens to intersect the provisional island by ID
     // provides the missing exact offset. Re-adopt the whole local context before
@@ -933,18 +1335,9 @@ void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
                                window.reachedOldest, window.reachedNewest);
     }
 
-    // Re-fetching an already known page must be a no-op. In particular, do not
-    // emit rangeAvailable/itemsChanged for identical identities: both signals
-    // schedule another synchronization, which used to clear request suppression
-    // and immediately ask for the same impossible oldest range again.
-    if (!mappingChanged) {
-        return;
-    }
-
-    for (int index : std::as_const(concreteChanged)) {
-        emit itemsChanged(index, index);
-    }
-    emit rangeAvailable(first, last);
+    // Re-fetching an already known page is deliberately a no-op. The shared
+    // publisher emits nothing unless the identity mapping actually changed.
+    publishExactWindow(mutation);
 }
 
 void ChannelPostSource::prependDiscovered(const QStringList& chronologicalIds)
@@ -953,20 +1346,9 @@ void ChannelPostSource::prependDiscovered(const QStringList& chronologicalIds)
         return;
     }
 
-    QVector<QString> combined;
-    combined.reserve(static_cast<int>(chronologicalIds.size()) + static_cast<int>(postIds.size()));
-    for (const QString& id : chronologicalIds) {
-        combined.push_back(id);
-    }
-    for (const QString& id : std::as_const(postIds)) {
-        combined.push_back(id);
-    }
-
     const int inserted = static_cast<int>(chronologicalIds.size());
-    postIds = std::move(combined);
-    rebuildIndex();
-    emit itemsInserted(0, inserted);
-    emit rangeAvailable(0, inserted - 1);
+    insertEmptyLogicalSlots(0, inserted);
+    publishExactWindow(assignExactWindow(0, chronologicalIds));
 }
 
 void ChannelPostSource::appendLivePost(BackendPost& post)
@@ -981,16 +1363,13 @@ void ChannelPostSource::appendLivePost(BackendPost& post)
         return;
     }
 
-    int count = exactRootCount ? currentLogicalCount() : static_cast<int>(postIds.size()) + 1;
+    int count = hasRootCountEstimate ? currentLogicalCount() : static_cast<int>(postIds.size()) + 1;
     if (count <= postIds.size()) {
         count = static_cast<int>(postIds.size()) + 1;
     }
-    postIds.resize(count);
+    resizeLogicalTail(count);
     const int index = count - 1;
-    postIds[index] = post.id;
-    postIndexes.insert(post.id, index);
-    emit itemCountChanged(count);
-    emit rangeAvailable(index, index);
+    publishExactWindow(assignExactWindow(index, QStringList { post.id }));
 }
 
 } // namespace Mattermost

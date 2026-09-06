@@ -1,0 +1,272 @@
+#include <QtTest>
+
+#include <QDateTime>
+#include <QJsonObject>
+#include <QTemporaryDir>
+
+#include "backend/PostCacheStore.h"
+
+using namespace Mattermost;
+
+namespace {
+
+QJsonObject makePost(const QString& id,
+                     const QString& channelId,
+                     const QString& rootId,
+                     qint64 createAt,
+                     const QString& message = QString())
+{
+    QJsonObject post;
+    post.insert(QStringLiteral("id"), id);
+    post.insert(QStringLiteral("channel_id"), channelId);
+    post.insert(QStringLiteral("root_id"), rootId);
+    post.insert(QStringLiteral("create_at"), createAt);
+    post.insert(QStringLiteral("update_at"), createAt);
+    post.insert(QStringLiteral("message"), message.isEmpty() ? id : message);
+    post.insert(QStringLiteral("user_id"), QStringLiteral("user"));
+    return post;
+}
+
+void insertPost(QJsonObject& posts, const QJsonObject& post)
+{
+    posts.insert(post.value(QStringLiteral("id")).toString(), post);
+}
+
+} // namespace
+
+class PostCacheStoreTest final : public QObject
+{
+    Q_OBJECT
+private slots:
+    void roundTripAndAccountIsolation();
+    void selectsChannelRootsAndThreadReplies();
+    void tailWindowRequiresProvenanceAndKeepsCompleteSuffix();
+    void enforcesThreadAndGlobalLimits();
+    void admitsOnlyRecentlyOpenedChannels();
+};
+
+void PostCacheStoreTest::roundTripAndAccountIsolation()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    PostCacheStore cache(directory.filePath(QStringLiteral("posts.sqlite3")));
+    QVERIFY(cache.open());
+    QVERIFY(cache.setAccount(QStringLiteral("https://chat.example/"),
+                             QStringLiteral("alice-id")));
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("c1"),
+                                      QDateTime::currentMSecsSinceEpoch()));
+
+    const QString message = QStringLiteral("hello cache — compressed JSON survives round trip");
+    QJsonObject posts;
+    insertPost(posts, makePost(QStringLiteral("p1"), QStringLiteral("c1"),
+                               QString(), 100, message));
+    QCOMPARE(cache.storePosts(posts), 1);
+
+    const QJsonObject loaded = cache.loadPost(QStringLiteral("p1"));
+    QCOMPARE(loaded.value(QStringLiteral("p1")).toObject()
+                 .value(QStringLiteral("message")).toString(), message);
+
+    // Trailing slash normalization must resolve the same account.
+    QVERIFY(cache.setAccount(QStringLiteral("https://chat.example"),
+                             QStringLiteral("alice-id")));
+    QVERIFY(!cache.loadPost(QStringLiteral("p1")).isEmpty());
+
+    QVERIFY(cache.setAccount(QStringLiteral("https://chat.example"),
+                             QStringLiteral("bob-id")));
+    QVERIFY(cache.loadPost(QStringLiteral("p1")).isEmpty());
+
+    QVERIFY(cache.setAccount(QStringLiteral("https://chat.example"),
+                             QStringLiteral("alice-id")));
+    QVERIFY(!cache.loadPost(QStringLiteral("p1")).isEmpty());
+}
+
+void PostCacheStoreTest::selectsChannelRootsAndThreadReplies()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    PostCacheStore cache(directory.filePath(QStringLiteral("posts.sqlite3")));
+    QVERIFY(cache.open());
+    QVERIFY(cache.setAccount(QStringLiteral("https://chat.example"),
+                             QStringLiteral("alice-id")));
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("c1"), now));
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("c2"), now));
+
+    QJsonObject posts;
+    insertPost(posts, makePost(QStringLiteral("r1"), QStringLiteral("c1"), QString(), 10));
+    insertPost(posts, makePost(QStringLiteral("r2"), QStringLiteral("c1"), QString(), 20));
+    insertPost(posts, makePost(QStringLiteral("r3"), QStringLiteral("c1"), QString(), 30));
+    insertPost(posts, makePost(QStringLiteral("t1"), QStringLiteral("c1"),
+                               QStringLiteral("r2"), 21));
+    insertPost(posts, makePost(QStringLiteral("t2"), QStringLiteral("c1"),
+                               QStringLiteral("r2"), 22));
+    insertPost(posts, makePost(QStringLiteral("t3"), QStringLiteral("c1"),
+                               QStringLiteral("r2"), 23));
+    insertPost(posts, makePost(QStringLiteral("other"), QStringLiteral("c2"), QString(), 40));
+    QCOMPARE(cache.storePosts(posts), posts.size());
+
+    const QJsonObject roots = cache.loadLatestChannelRoots(QStringLiteral("c1"), 2);
+    QCOMPARE(roots.size(), 2);
+    QVERIFY(roots.contains(QStringLiteral("r2")));
+    QVERIFY(roots.contains(QStringLiteral("r3")));
+    QVERIFY(!roots.contains(QStringLiteral("t3")));
+
+    const QJsonObject thread = cache.loadThread(QStringLiteral("c1"),
+                                                QStringLiteral("r2"), 3);
+    QCOMPARE(thread.size(), 3);
+    QVERIFY(thread.contains(QStringLiteral("r2")));
+    QVERIFY(thread.contains(QStringLiteral("t2")));
+    QVERIFY(thread.contains(QStringLiteral("t3")));
+    QVERIFY(!thread.contains(QStringLiteral("t1")));
+}
+
+void PostCacheStoreTest::tailWindowRequiresProvenanceAndKeepsCompleteSuffix()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    PostCacheStore cache(directory.filePath(QStringLiteral("posts.sqlite3")));
+    QVERIFY(cache.open());
+    QVERIFY(cache.setAccount(QStringLiteral("https://chat.example"),
+                             QStringLiteral("alice-id")));
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("c1"),
+                                      QDateTime::currentMSecsSinceEpoch()));
+
+    QJsonObject posts;
+    insertPost(posts, makePost(QStringLiteral("r1"), QStringLiteral("c1"), QString(), 10));
+    insertPost(posts, makePost(QStringLiteral("r2"), QStringLiteral("c1"), QString(), 20));
+    insertPost(posts, makePost(QStringLiteral("r3"), QStringLiteral("c1"), QString(), 30));
+    insertPost(posts, makePost(QStringLiteral("t1"), QStringLiteral("c1"),
+                               QStringLiteral("r2"), 21));
+    insertPost(posts, makePost(QStringLiteral("t2"), QStringLiteral("c1"),
+                               QStringLiteral("r2"), 22));
+    insertPost(posts, makePost(QStringLiteral("t3"), QStringLiteral("c1"),
+                               QStringLiteral("r2"), 23));
+    QCOMPARE(cache.storePosts(posts), posts.size());
+
+    // A row bag alone never becomes an adjacency proof.
+    QVERIFY(cache.loadTailWindow(QStringLiteral("c1"), QString(), 10).isEmpty());
+
+    QVERIFY(cache.storeTailWindow(QStringLiteral("c1"), QString(),
+                                  { QStringLiteral("r1"), QStringLiteral("r2"),
+                                    QStringLiteral("r3") }));
+    QJsonObject roots = cache.loadTailWindow(QStringLiteral("c1"), QString(), 10);
+    QCOMPARE(roots.size(), 3);
+
+    // Invalidating a middle row leaves only the newer contiguous suffix usable.
+    QVERIFY(cache.removePost(QStringLiteral("r2")));
+    roots = cache.loadTailWindow(QStringLiteral("c1"), QString(), 10);
+    QCOMPARE(roots.size(), 1);
+    QVERIFY(roots.contains(QStringLiteral("r3")));
+
+    QVERIFY(cache.storeTailWindow(QStringLiteral("c1"), QStringLiteral("r2"),
+                                  { QStringLiteral("t1"), QStringLiteral("t2"),
+                                    QStringLiteral("t3") }));
+    QJsonObject replies = cache.loadTailWindow(QStringLiteral("c1"),
+                                               QStringLiteral("r2"), 2);
+    QCOMPARE(replies.size(), 2);
+    QVERIFY(replies.contains(QStringLiteral("t2")));
+    QVERIFY(replies.contains(QStringLiteral("t3")));
+
+    // Losing the newest row means the stored window can no longer seed a tail.
+    QVERIFY(cache.removePost(QStringLiteral("t3")));
+    QVERIFY(cache.loadTailWindow(QStringLiteral("c1"),
+                                 QStringLiteral("r2"), 10).isEmpty());
+}
+
+void PostCacheStoreTest::enforcesThreadAndGlobalLimits()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    PostCacheStore cache(directory.filePath(QStringLiteral("posts.sqlite3")));
+    QVERIFY(cache.open());
+    QVERIFY(cache.setAccount(QStringLiteral("https://chat.example"),
+                             QStringLiteral("alice-id")));
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("c1"),
+                                      QDateTime::currentMSecsSinceEpoch()));
+
+    PostCacheStore::Limits limits;
+    limits.maxBytes = 16 * 1024 * 1024;
+    limits.maxPosts = 20;
+    limits.maxPostsPerThread = 2;
+    cache.setLimits(limits);
+
+    QJsonObject threadPosts;
+    insertPost(threadPosts, makePost(QStringLiteral("root"), QStringLiteral("c1"), QString(), 1));
+    for (int i = 0; i < 5; ++i) {
+        insertPost(threadPosts,
+                   makePost(QStringLiteral("reply-%1").arg(i), QStringLiteral("c1"),
+                            QStringLiteral("root"), 10 + i));
+    }
+    QCOMPARE(cache.storePosts(threadPosts), threadPosts.size());
+
+    const QJsonObject thread = cache.loadThread(QStringLiteral("c1"),
+                                                QStringLiteral("root"), 20);
+    QCOMPARE(thread.size(), 3); // root + two retained replies
+    QVERIFY(thread.contains(QStringLiteral("root")));
+
+    limits.maxPosts = 3;
+    limits.maxPostsPerThread = 20;
+    cache.setLimits(limits);
+
+    QJsonObject roots;
+    for (int i = 0; i < 10; ++i) {
+        insertPost(roots,
+                   makePost(QStringLiteral("root-%1").arg(i), QStringLiteral("c1"),
+                            QString(), 100 + i));
+    }
+    QCOMPARE(cache.storePosts(roots), roots.size());
+    cache.maintenance();
+
+    const PostCacheStore::Stats stats = cache.stats();
+    QVERIFY(stats.postCount <= 3);
+    QVERIFY(stats.payloadBytes > 0);
+    QVERIFY(stats.databaseBytes > 0);
+}
+
+void PostCacheStoreTest::admitsOnlyRecentlyOpenedChannels()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    PostCacheStore cache(directory.filePath(QStringLiteral("posts.sqlite3")));
+    QVERIFY(cache.open());
+    QVERIFY(cache.setAccount(QStringLiteral("https://chat.example"),
+                             QStringLiteral("alice-id")));
+
+    PostCacheStore::Limits limits;
+    limits.maxChannelIdleMs = 1000;
+    cache.setLimits(limits);
+
+    QJsonObject posts;
+    insertPost(posts, makePost(QStringLiteral("cold"), QStringLiteral("cold-channel"),
+                               QString(), 1));
+    QCOMPARE(cache.storePosts(posts), 0);
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("hot-channel"), now));
+    QJsonObject hotPosts;
+    insertPost(hotPosts, makePost(QStringLiteral("hot"), QStringLiteral("hot-channel"),
+                                  QString(), 2));
+    QCOMPARE(cache.storePosts(hotPosts), 1);
+    QVERIFY(!cache.loadPost(QStringLiteral("hot")).isEmpty());
+
+    // A deliberately old visit may seed metadata, but it must not admit data.
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("old-channel"), now - 2000));
+    QJsonObject oldPosts;
+    insertPost(oldPosts, makePost(QStringLiteral("old"), QStringLiteral("old-channel"),
+                                  QString(), 3));
+    QCOMPARE(cache.storePosts(oldPosts), 0);
+
+    // Let the hot channel become older than the configured horizon and verify
+    // maintenance removes both its post payload and stale usage metadata.
+    QTest::qWait(1100);
+    cache.maintenance();
+    QVERIFY(cache.loadPost(QStringLiteral("hot")).isEmpty());
+}
+
+QTEST_GUILESS_MAIN(PostCacheStoreTest)
+#include "PostCacheStoreTest.moc"

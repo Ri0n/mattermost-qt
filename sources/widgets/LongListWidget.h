@@ -133,7 +133,7 @@ public:
     int indexAtViewportPosition(int viewportY) const;
     bool isAtEnd() const
     {
-        return maximumContentOffset() - contentOffset() <= 2;
+        return maximumContentOffset() == contentOffset();
     }
 
     void scrollToIndex(int index, Alignment alignment = Alignment::EnsureVisible);

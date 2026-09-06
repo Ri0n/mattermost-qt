@@ -28,6 +28,12 @@ QAbstractScrollArea
         v
    ChatLogWidget                   Mattermost post UI + semantic post identity
         |
+        v
+ AbstractPostSource              source/view contract only
+        |
+        v
+  IndexedPostSource              shared logical ID slots + structural signals
+        |
         +-------------------+
         |                   |
  ChannelPostSource      ThreadPostSource
@@ -40,9 +46,12 @@ QAbstractScrollArea
 ```
 
 `LongListWidget` owns geometry, scrolling, viewport anchoring and persistent logical-item viewport
-locks. `ChatLogWidget` owns post-specific presentation, actions and semantic post-ID identity. A post
-source owns logical-index-to-post identity and range availability. `PostTimelineService` owns range
-retrieval, in-flight request coalescing and cache tiers.
+locks. `ChatLogWidget` owns post-specific presentation, actions and semantic post-ID identity.
+`AbstractPostSource` is the view/source interface; `IndexedPostSource` owns the transport-agnostic
+logical ID slot map, exact-window mutation and structural source signals shared by channel/thread
+sources. Concrete sources alone decide what server evidence makes a placement exact.
+`PostTimelineService` owns range retrieval, in-flight request coalescing and cache tiers. See
+`post-source-architecture.md` for the complete source-layer contract.
 
 Channel and thread logs share the same widget and therefore the same scrollbar, materialization,
 seek, resize and pruning semantics. Their only meaningful difference is how a logical range is
@@ -166,7 +175,10 @@ A geometry change *inside* the visible region cannot keep every row on both side
 visible item grows by 200 pixels, some content must make room for those pixels. The invariant is that
 `LongListWidget` preserves its chosen semantic anchor and introduces no additional artificial jump.
 
-Only direct user input or an explicit logical navigation operation changes viewport intent.
+Only direct user input or an explicit logical navigation operation changes viewport intent. Sticky
+bottom is exact user intent: only the actual scrollbar maximum captures a `Bottom` anchor. A thumb
+position even one pixel above the maximum is an ordinary item anchor and must not be snapped back to
+the end by a later materialization or geometry transaction.
 
 ## Persistent viewport lock semantics
 
@@ -232,14 +244,35 @@ Loading adjacent data never recenters the viewport.
 
 ## Random thumb seek
 
-Thumb drag uses normalized logical position rather than current estimated pixel geometry:
+A scrollbar value represents the **top content offset of a viewport**, not a post ordinal. Thumb
+movement therefore first maps the scrollbar value back into the current estimated content geometry
+and chooses the logical item at the viewport centre:
 
 ```text
-fraction = (value - minimum) / (maximum - minimum)
-target   = round(fraction * (itemCount - 1))
+top    = contentOffsetForScrollValue(value)
+center = top + viewportHeight / 2
+target = heightIndex.indexAtPixel(center)
 ```
 
-While the thumb is moving, target changes restart a 100 ms debounce timer. When it becomes stable:
+This distinction matters near the newest edge: moving the thumb upward by one pixel must not still
+select the final post and then re-centre it, which would snap the scrollbar back to the end.
+
+Thumb dragging has two modes:
+
+```text
+target already materialized OR desired viewport bodies already available
+        -> ordinary buffered scroll path immediately
+
+jump enters unavailable / unmaterialized history
+        -> seek target + 100 ms debounce
+```
+
+The first mode intentionally behaves like wheel scrolling: it keeps the user's exact scrollbar
+position and materializes the viewport/buffer immediately. No seek re-centering is allowed merely
+because the user happened to drag the thumb instead of using the wheel.
+
+Only a genuine random jump into data that is not ready enters seek mode. While such a thumb target is
+moving, target changes restart the 100 ms debounce timer. When it becomes stable:
 
 ```text
 request ~10-item seed around TARGET
@@ -253,9 +286,39 @@ calculate actual viewport + buffer coverage
 request additional whole blocks only where coverage is missing
 ```
 
-A new thumb target increments the seek generation. Results from an older generation may still enter
+A new seek target increments the seek generation. Results from an older generation may still enter
 the memory/disk cache, but `LongListWidget` only materializes what the current viewport/seek needs,
 so stale results have no authority to move the viewport.
+
+Channel history range loading uses a single paging contract: Mattermost absolute pages with
+`per_page=10`. Already known post identities are not reused as `before`/`after` paging boundaries.
+They are inputs to semantic-position estimation and overlap reconciliation only. Because logical
+blocks are aligned from the oldest end while Mattermost pages are aligned from the newest end, one
+ten-item logical request may intersect two server pages; the source loads both and places each via
+its absolute page number. Once the oldest boundary is known, a jump to any scrollbar position is
+therefore O(1) page requests rather than an identity-cursor walk through history.
+
+`total_msg_count_root` is only an initial coordinate estimate for `/posts`, not its row count.
+Deleted roots can make the counter larger than visible history, while join/leave and other system
+roots excluded from Mattermost message counts are still returned by `/posts` and can make the counter
+smaller. The source therefore repairs the oldest boundary in both directions. Absolute pages remain
+newest-anchored; count growth inserts empty logical slots at the oldest side so already mapped pages do
+not move relative to the newest edge.
+
+Boundary search stays in ten-post page coordinates but tests distant candidate page starts with one
+root only: candidate page P is probed as `page=P*10&per_page=1`. For a large top-edge request the first
+probe jumps inward by a heuristic 3% of the estimated root count. If it is empty, the step grows
+exponentially farther inward until data is found. If it exists, binary search walks outward to the
+reported boundary. A full reported-boundary page is not accepted as proof: the source first probes the
+adjacent older page and, if that exists too, expands outward exponentially until `/posts` provides an
+empty/short boundary. Small estimates use the normal ten-post path first and enter the same outward
+repair only when their reported oldest page is full.
+
+Near a bounded edge, when at most two unknown ten-post pages remain, the source stops spending
+one-root probes and materializes the first unknown page with `per_page=10`. A short page proves the
+exact count; a full page adjacent to known emptiness proves an exact multiple of ten. Exact
+reconciliation may therefore remove a phantom prefix or insert a missing oldest prefix. The 3% value
+changes latency only, never correctness, and no identity cursor is introduced by this repair path.
 
 This replaces the old controller-level `TimelineSeekState` state machine.
 
@@ -275,8 +338,18 @@ came from an already materialized model object, RAM cache, SQLite or HTTP.
 
 ## Materialization and eviction
 
-`LongListWidget` keeps only the desired viewport window and buffer, bounded by a hard widget budget
-(initially 200).
+The desired viewport window plus buffer defines what must be materialized **now** and which missing
+blocks should be requested. It is not the destruction boundary for already-created widgets.
+
+`maxMaterializedItems` is a resident widget budget (initially 200). Already-created widgets are kept
+while the total remains within that budget. Consequently a short chat with, for example, 21 posts can
+remain fully materialized after the user has visited all of it instead of continually destroying and
+recreating rows just outside the current buffer.
+
+When materialization would exceed the budget, `LongListWidget` first protects the current desired
+viewport/buffer and evicts the farthest widgets outside that window until the count is back at the
+budget. The retained set is therefore allowed to be larger than the current viewport window and does
+not have to be one contiguous range.
 
 Evicting a widget means only:
 
@@ -372,7 +445,9 @@ signals:
 ```
 
 `ChannelPostSource` and `ThreadPostSource` adapt different Mattermost endpoints into the same logical
-contract. They do not manipulate widgets or scrollbars.
+contract. Their common index-to-ID bookkeeping lives in `IndexedPostSource`; absolute channel pages,
+channel count repair, thread root/cursor semantics and endpoint-specific boundary proofs remain in the
+concrete source. They do not manipulate widgets or scrollbars.
 
 `BackendPost::hidden` is a channel-root-list concern: replies are intentionally marked hidden by
 `BackendChannel` so they do not appear as root rows. `ThreadPostSource` must still expose posts whose

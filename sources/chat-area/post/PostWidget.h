@@ -22,6 +22,7 @@
 #include <QPushButton>
 #include <memory>
 
+#include "backend/PostResidencyLease.h"
 #include "backend/types/BackendPost.h"
 
 class QContextMenuEvent;
@@ -99,6 +100,7 @@ private:
     QString mentionTeamId() const;
 
     Backend&                            backend;
+    PostResidencyLease                 residencyLease;
     Ui::PostWidget*						ui;
     std::unique_ptr<PostQuoteFrame>		quoteFrame;
     std::unique_ptr<QuotedPostPreview>    quotedReplyPreview;

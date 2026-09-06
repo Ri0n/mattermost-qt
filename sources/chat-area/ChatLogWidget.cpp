@@ -416,6 +416,18 @@ void ChatLogWidget::reconnectSource()
         setRangeAvailable(first, last, true);
         restoreNavigationTarget();
     }));
+    sourceConnections.push_back(connect(postSource, &AbstractPostSource::bodyAvailabilityChanged,
+                                        this, [this](int first, int last, bool bodyAvailable) {
+        qCDebug(lcTimelineTrace).nospace()
+            << "SOURCE_BODY_AVAILABILITY list=" << static_cast<const void*>(this)
+            << " source=" << sourceName(postSource)
+            << " range=[" << first << ',' << last << ']'
+            << " available=" << bodyAvailable;
+        setRangeAvailable(first, last, bodyAvailable);
+        if (bodyAvailable) {
+            restoreNavigationTarget();
+        }
+    }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::itemsChanged,
                                         this, [this](int first, int last) {
         qCDebug(lcTimelineTrace).nospace()

@@ -1,12 +1,13 @@
 #pragma once
 
-#include <QHash>
-#include <QPair>
+#include <functional>
+#include <vector>
+
 #include <QSet>
 #include <QStringList>
 #include <QVector>
 
-#include "AbstractPostSource.h"
+#include "IndexedPostSource.h"
 
 namespace Mattermost {
 
@@ -14,7 +15,7 @@ class Backend;
 class BackendChannel;
 
 /** Main-channel root posts mapped onto oldest->newest logical indices. */
-class ChannelPostSource : public AbstractPostSource
+class ChannelPostSource : public IndexedPostSource
 {
     Q_OBJECT
 public:
@@ -22,10 +23,6 @@ public:
                                BackendChannel& channel,
                                QObject* parent = nullptr);
 
-    int itemCount() const override { return static_cast<int>(postIds.size()); }
-    bool isAvailable(int index) const override;
-    BackendPost* postAt(int index) const override;
-    int indexOfPost(const QString& postId) const override;
     int ensurePostIndex(const QString& postId) override;
 
     /**
@@ -33,7 +30,7 @@ public:
      * target. The context is placed exactly when it intersects an authoritative
      * row (or a confirmed channel boundary); otherwise its target gets a
      * timestamp-based estimated absolute position and the whole context remains
-     * provisional until a later cursor expansion intersects authoritative data.
+     * provisional until an absolute page later reconciles it by identity.
      */
     bool adoptNavigationContext(const QString& targetPostId,
                                 const QStringList& chronologicalIds,
@@ -49,7 +46,15 @@ public:
     void requestBeforeFirst(RequestReason reason, quint64 generation) override;
 
 private:
+    // Visible/prefetch channel ranges use Mattermost's ten-post absolute pages.
+    // Distant boundary discovery probes candidate page starts with per_page=1;
+    // once at most two candidate pages remain, normal ten-post requests double
+    // as both boundary evidence and useful viewport/prefetch materialization.
     static constexpr int ServerPageSize = 10;
+    // Large-channel top-edge search starts this far inside the estimated count.
+    // This is a latency heuristic only; inward/outward boundary search keeps
+    // correctness independent of whether the estimate is high or low.
+    static constexpr int InitialBoundaryProbePercent = 3;
 
     struct ProvisionalWindow {
         QString targetPostId;
@@ -72,6 +77,7 @@ private:
 
     int currentLogicalCount() const;
     int pageForIndex(int index) const;
+    int initialBoundaryProbePages() const;
     int estimateIndexForPost(const BackendPost& post) const;
     int findFreeWindowFirst(const QVector<QString>& ids,
                             int windowSize,
@@ -82,35 +88,49 @@ private:
                                 bool reachedOldest,
                                 bool reachedNewest,
                                 int exactFirstHint = -1);
-    bool requestTouchesProvisionalWindow(int first, int last) const;
-    void requestProvisionalRange(int first, int last);
-    void finishProvisionalRequests();
     void seedCachedPosts();
     void seedUnknownNewestPost();
-    void rebuildIndex();
+    void hydrateCachedTail();
+    void validateCachedTail();
     void removeLogicalRange(int first, int count);
     void placePage(int page, const QStringList& chronologicalIds);
+    void probeEstimatedOldestBoundary(std::function<void()> completion);
+    void resolveOldestBoundary(int emptyPage, std::function<void()> completion);
+    void resolveOldestBoundaryFromNonEmpty(int nonEmptyPage,
+                                           std::function<void()> completion);
+    void probeOldestBoundary();
+    void loadOldestBoundaryPage(int page);
+    void finishOldestBoundaryProbe();
+    void reconcileRootCount(int actualCount);
+    void ensureMinimumRootCount(int minimumCount);
+    void insertLogicalPrefix(int count);
     void prependDiscovered(const QStringList& chronologicalIds);
     void appendLivePost(BackendPost& post);
 
     Backend& backend;
-    BackendChannel& channel;
-    QVector<QString> postIds;
-    QHash<QString, int> postIndexes;
 
-    const bool exactRootCount;
-    // total_msg_count_root can overestimate the rows returned by /posts because
-    // deleted posts are omitted by that endpoint. Once a real boundary proves
-    // such a discrepancy, keep the correction local to this source so later
-    // channel metadata cannot recreate phantom logical rows.
-    int rootCountOverestimate = 0;
+    const bool hasRootCountEstimate;
+    // total_msg_count_root is a message-count estimate, not /posts row count.
+    // Deleted roots can make it too large; count-excluded system roots can
+    // make it too small. Once /posts proves the exact oldest boundary, keep
+    // the signed difference so later metadata refreshes preserve that mapping.
+    int rootCountAdjustment = 0;
     bool moreBeforeFirst = false;
     bool beforeRequestInFlight = false;
 
+    // Shared reconciliation state lets concurrent top-edge/range requests wait
+    // on one absolute-page boundary search instead of starting competing probes.
+    bool oldestBoundaryFastPathTried = false;
+    bool oldestBoundaryProbeInFlight = false;
+    int oldestBoundaryNonEmptyPage = -1;
+    int oldestBoundaryEmptyPage = -1;
+    int oldestBoundaryProbeStep = 1;
+    int oldestBoundarySearchLimitPage = -1;
+    int oldestBoundaryMaterializedFullPage = -1;
+    std::vector<std::function<void()>> oldestBoundaryWaiters;
+
     ProvisionalWindow provisionalWindow;
     QSet<QString> provisionalPostIds;
-    bool provisionalRequestInFlight = false;
-    QVector<QPair<int, int>> pendingProvisionalRequests;
 };
 
 } // namespace Mattermost
