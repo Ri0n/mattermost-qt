@@ -1,7 +1,6 @@
 #pragma once
 
-#include <QHash>
-#include <QVector>
+#include <QString>
 
 #include "IndexedPostSource.h"
 
