@@ -28,6 +28,12 @@ int channelType(const QModelIndex& index)
     return index.data(SidebarItem::ChannelTypeRole).toInt();
 }
 
+bool isConversationRow(const QModelIndex& index)
+{
+    const int kind = index.data(SidebarItem::KindRole).toInt();
+    return kind == SidebarItem::Channel || kind == SidebarItem::VirtualDestination;
+}
+
 } // namespace
 
 ChannelItemDelegate::ChannelItemDelegate(QObject* parent)
@@ -39,7 +45,7 @@ QSize ChannelItemDelegate::sizeHint(const QStyleOptionViewItem& option,
                                     const QModelIndex& index) const
 {
     QSize hint = QStyledItemDelegate::sizeHint(option, index);
-    if (index.data(SidebarItem::KindRole).toInt() == SidebarItem::Channel) {
+    if (isConversationRow(index)) {
         hint.setHeight(ChannelRowHeight);
     }
     return hint;
@@ -49,7 +55,7 @@ void ChannelItemDelegate::paint(QPainter* painter,
                                 const QStyleOptionViewItem& option,
                                 const QModelIndex& index) const
 {
-    if (index.data(SidebarItem::KindRole).toInt() != SidebarItem::Channel) {
+    if (!isConversationRow(index)) {
         QStyledItemDelegate::paint(painter, option, index);
         return;
     }
