@@ -168,8 +168,8 @@ public:
         // accidentally treat the key wrapper as Mattermost post JSON.
         const QJsonObject posts = store->loadPost(postId);
         const auto post = posts.constFind(postId);
-        return post != posts.cend() && post->isObject() ? post->toObject()
-                                                        : QJsonObject {};
+        return post != posts.constEnd() && post->isObject() ? post->toObject()
+                                                            : QJsonObject {};
     }
 
     QJsonObject loadLatestChannelRoots(const QString& server,
