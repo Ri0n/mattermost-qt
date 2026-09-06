@@ -4,6 +4,11 @@ This document defines the persistent and resident post-cache contract below the 
 It extends the cache boundary in `long-list-architecture.md`; it does not move any geometry or
 viewport responsibility out of `LongListWidget`.
 
+`post-cache-runtime.md` is the detailed execution contract for snapshot authority, account isolation,
+observation sequences, async worker ordering, direct cache-first reads and future provisional newest
+window hydration. `post-source-architecture.md` defines which logical-index operations are shared by
+channel/thread sources and which boundary proofs stay transport-specific.
+
 ## Goals
 
 The cache exists to make already-seen history cheap to revisit and cheap to restore after restart,
@@ -261,17 +266,20 @@ Therefore:
 
 This preserves the provisional/authoritative rules in `long-list-architecture.md`.
 
-Cache-first hydration is deliberately not enabled yet, but the resident refresh prerequisite is
-now in place. `BackendChannel::mergePostContext()` refreshes an already-resident ID in place from the
-accepted full JSON snapshot, preserving the stable `BackendPost*` address used by current widgets and
-sources. `BackendPost` replaces all server-backed post fields rather than only the message, while
-preserving separately fetched poll metadata and local annotations absent from raw REST/cache JSON.
-Direct post lookup now has its first cache-read path. An asynchronous SQLite hit may insert an absent
-resident post and satisfy the caller immediately, but it never refreshes an already-resident object and
-never advances the resident server-observation watermark. The normal HTTP request is still dispatched
-and validates/refreshes that object in the background; a failed result is delivered only after both
-cache and HTTP miss. Cached identity/timestamps still have no absolute-page authority. Newest channel
-and thread window hydration remains the next read-side step.
+Cache-first **window** hydration is deliberately not enabled yet, but the resident refresh prerequisite
+and direct-post read path are now in place. `BackendChannel::mergePostContext()` refreshes an
+already-resident ID in place from the accepted full JSON snapshot, preserving the stable
+`BackendPost*` address used by current widgets and sources. `BackendPost` replaces all server-backed
+post fields rather than only the message, while preserving separately fetched poll metadata and local
+annotations absent from raw REST/cache JSON.
+
+Direct `loadPost()` is cache-first: an asynchronous SQLite hit may insert an absent resident post and
+satisfy the caller immediately, but it never refreshes an already-resident object and never advances
+the resident server-observation watermark. The normal HTTP request is still dispatched and
+validates/refreshes that object in the background; a failed result is delivered only after both cache
+and HTTP miss. Cached identity/timestamps still have no absolute-page authority. Newest channel and
+thread window hydration remains the next read-side step and must stay provisional until endpoint-specific
+HTTP boundary evidence arrives.
 
 ## Write-through and invalidation
 

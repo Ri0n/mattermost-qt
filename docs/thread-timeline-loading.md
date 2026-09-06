@@ -1,7 +1,9 @@
 # Thread timeline loading contract
 
 This document defines the data-loading invariants for partially available chat and thread timelines.
-It complements `long-list-architecture.md`; the ownership rules there remain authoritative.
+It complements `long-list-architecture.md`; the ownership rules there remain authoritative. Shared
+logical ID-slot bookkeeping is documented in `post-source-architecture.md`; this document covers only
+thread-specific topology and transport authority.
 
 ## Prefetch before a logical gap
 
@@ -87,8 +89,9 @@ system roots can make it too small. Threads deliberately do not inherit that pag
 Mattermost `Thread.ReplyCount` excludes deleted replies, and the thread endpoint
 is cursor/time based (`fromCreateAt`, `fromPost`, `direction`) rather than an absolute `page=N` space.
 
-If a future server/plugin configuration produces a real thread count mismatch, the common abstraction
-should be logical-count reconciliation only. Transport-specific boundary evidence remains in the source;
+If a future server/plugin configuration produces a real thread count mismatch, only the structural
+slot mutation belongs in the shared `IndexedPostSource` layer. The proof that a particular count is
+correct remains thread-specific, just as `/posts` page-boundary proof remains channel-specific.
 `LongListWidget` must stay unaware of Mattermost counts, pages and cursors.
 
 ## Stability requirements

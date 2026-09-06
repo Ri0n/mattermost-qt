@@ -28,6 +28,12 @@ QAbstractScrollArea
         v
    ChatLogWidget                   Mattermost post UI + semantic post identity
         |
+        v
+ AbstractPostSource              source/view contract only
+        |
+        v
+  IndexedPostSource              shared logical ID slots + structural signals
+        |
         +-------------------+
         |                   |
  ChannelPostSource      ThreadPostSource
@@ -40,9 +46,12 @@ QAbstractScrollArea
 ```
 
 `LongListWidget` owns geometry, scrolling, viewport anchoring and persistent logical-item viewport
-locks. `ChatLogWidget` owns post-specific presentation, actions and semantic post-ID identity. A post
-source owns logical-index-to-post identity and range availability. `PostTimelineService` owns range
-retrieval, in-flight request coalescing and cache tiers.
+locks. `ChatLogWidget` owns post-specific presentation, actions and semantic post-ID identity.
+`AbstractPostSource` is the view/source interface; `IndexedPostSource` owns the transport-agnostic
+logical ID slot map, exact-window mutation and structural source signals shared by channel/thread
+sources. Concrete sources alone decide what server evidence makes a placement exact.
+`PostTimelineService` owns range retrieval, in-flight request coalescing and cache tiers. See
+`post-source-architecture.md` for the complete source-layer contract.
 
 Channel and thread logs share the same widget and therefore the same scrollbar, materialization,
 seek, resize and pruning semantics. Their only meaningful difference is how a logical range is
@@ -402,7 +411,9 @@ signals:
 ```
 
 `ChannelPostSource` and `ThreadPostSource` adapt different Mattermost endpoints into the same logical
-contract. They do not manipulate widgets or scrollbars.
+contract. Their common index-to-ID bookkeeping lives in `IndexedPostSource`; absolute channel pages,
+channel count repair, thread root/cursor semantics and endpoint-specific boundary proofs remain in the
+concrete source. They do not manipulate widgets or scrollbars.
 
 `BackendPost::hidden` is a channel-root-list concern: replies are intentionally marked hidden by
 `BackendChannel` so they do not appear as root rows. `ThreadPostSource` must still expose posts whose
