@@ -18,6 +18,8 @@ class PostRepository;
  * PostRepository only issues a lease when the referenced object is the actual
  * BackendChannel-owned resident body. Transient WebSocket objects and pinned
  * dialog copies therefore cannot accidentally pin a same-ID channel object.
+ * Releasing the last lease starts that body's idle-TTL window; memory pressure
+ * may still evict an unleased body immediately when the hard cap is exceeded.
  */
 class PostResidencyLease
 {
