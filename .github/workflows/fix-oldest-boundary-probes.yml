@@ -1,4 +1,4 @@
-# One-shot patch workflow; removed by the patch commit.
+# One-shot patch workflow; removed by the patch commit. Retry from current head.
 name: Use one-post oldest boundary probes
 
 on:
