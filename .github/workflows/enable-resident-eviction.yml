@@ -18,6 +18,22 @@ jobs:
           fetch-depth: 0
       - name: Apply resident eviction integration
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/enable-resident-eviction.py')
+          text = path.read_text()
+          old = '''replace_once(
+              'sources/chat-area/QuotedReplyController.h',
+              '#include <functional>\\n',
+              '#include <functional>\\n\\n#include "backend/PostResidencyLease.h"\\n')'''
+          new = '''replace_once(
+              'sources/chat-area/QuotedReplyController.h',
+              '#include <QObject>\\n',
+              '#include <QObject>\\n\\n#include "backend/PostResidencyLease.h"\\n')'''
+          if text.count(old) != 1:
+              raise SystemExit('quoted reply include helper anchor mismatch')
+          path.write_text(text.replace(old, new, 1))
+          PY
           python3 .github/scripts/enable-resident-eviction.py
           python3 - <<'PY'
           from pathlib import Path
