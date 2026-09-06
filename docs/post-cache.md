@@ -402,3 +402,39 @@ Still required before enabling reads:
 - restore eligible cached newest suffixes immediately on channel/thread open;
 - validate in the background without moving the viewport;
 - expose cache statistics/logging for tuning limits and vacuum thresholds.
+
+
+## Timeline authority and reconnect validation
+
+Persistent caching must not make Mattermost's approximate message counts an
+authority for post identity. `total_msg_count_root` is useful for scrollbar
+scale and for choosing an initial random-seek page, but deleted roots and
+concurrent server changes can make the count disagree with the rows returned
+by `/channels/{id}/posts`.
+
+The channel source therefore uses this provenance order:
+
+1. an identity cursor (`before=<post_id>` / `after=<post_id>`) proves adjacency;
+2. overlap with an already authoritative identity proves global placement;
+3. an actual oldest/newest boundary can reconcile stale logical slots;
+4. an absolute page number is only a provisional seed for random seek.
+
+Ordinary scrolling must extend a known window with identity cursors. It must
+not repeatedly overwrite authoritative identities from page-number arithmetic.
+Every successful range request ends in one of three states: new identities
+were placed, a real boundary removed stale logical slots, or the request made
+no progress and is finished without an immediate retry loop.
+
+WebSocket reconnect uses the same bounded-working-set rule. A successful
+Mattermost sequence resume requires no HTTP history replay. If reliable replay
+explicitly fails, only the currently viewed conversation is validated
+immediately; inactive joined channels are left lazy and are validated when
+opened. This prevents a reconnect from filling either the network queue or the
+post cache with channels the user is not reading.
+
+Cache admission follows user interest rather than membership. By default a
+channel is eligible for resident-memory post caching for one hour after it was
+viewed, and for persistent SQLite post caching for ten hours after it was
+viewed. The current channel is always considered interested. These intervals,
+memory/disk limits, maintenance cadence, TTLs and vacuum controls are exposed
+on the cache settings page and are policy inputs rather than timeline geometry.

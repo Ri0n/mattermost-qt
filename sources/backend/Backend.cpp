@@ -42,6 +42,7 @@
 #include <QList>
 
 #include "NetworkRequest.h"
+#include "RealtimeFallbackService.h"
 #include "types/BackendPoll.h"
 #include "types/BackendNewPollData.h"
 #include "emoji/EmojiInfo.h"
@@ -82,12 +83,12 @@ Backend::Backend(QObject *parent)
 			 */
 			httpConnector.reset ();
 
-			for (auto& it: storage.channels) {
-				retrieveChannelPosts (*it, 0, 25);
-			}
-
-			for (auto& it: storage.channels) {
-				retrieveChannelPinnedPosts (*it);
+			// Reliable WebSocket replay already covers normal reconnects. If
+			// replay explicitly failed, validate only the conversation the user
+			// is looking at. Bulk-resyncing every joined channel turns one broken
+			// socket into hundreds of history and pinned-post requests.
+			if (currentChannel) {
+				retrieveChannelPosts (*currentChannel, 0, 25);
 			}
 		}
 	});
@@ -116,6 +117,7 @@ Backend::Backend(QObject *parent)
 
 	attachmentsCache.setCacheDirectory (QDir (QStandardPaths::writableLocation(QStandardPaths::CacheLocation)).filePath("attachments"));
 	attachmentsCache.setMaximumCacheSize (300 * 1024 * 1024);
+	(void)RealtimeFallbackService::instance(*this);
 }
 
 void debugRequest (const QNetworkRequest& request, QByteArray data = QByteArray())

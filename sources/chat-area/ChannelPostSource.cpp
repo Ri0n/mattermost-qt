@@ -272,37 +272,178 @@ void ChannelPostSource::requestRange(int first,
         return;
     }
 
-    // A provisional semantic window has exact local identity/order but only an
-    // estimated global offset. Absolute page numbers in its neighbourhood are
-    // therefore invalid provenance. Extend that island only with identity
-    // cursors until it intersects an authoritative page or channel boundary.
+    // A semantic navigation island has exact local adjacency but only an
+    // estimated global offset. Continue resolving it exclusively by identity.
     if (requestTouchesProvisionalWindow(requestedFirst, requestedLast)) {
         requestProvisionalRange(first, last);
         return;
     }
 
-    const int firstPage = pageForIndex(requestedLast);
-    const int lastPage = pageForIndex(requestedFirst);
-    const int requestCount = lastPage - firstPage + 1;
-    auto remaining = std::make_shared<int>(requestCount);
-    QPointer<ChannelPostSource> guard(this);
+    int firstMissing = requestedFirst;
+    while (firstMissing <= requestedLast && isAvailable(firstMissing)) {
+        ++firstMissing;
+    }
+    if (firstMissing > requestedLast) {
+        emit rangeRequestFinished(first, last);
+        return;
+    }
 
-    for (int page = firstPage; page <= lastPage; ++page) {
-        PostTimelineService::instance(backend).loadChannelPage(
-            channel, page, ServerPageSize,
-            [guard, page, remaining, first, last](const PostTimelineService::Page& result) {
+    int lastMissing = requestedLast;
+    while (lastMissing > firstMissing && isAvailable(lastMissing)) {
+        --lastMissing;
+    }
+
+    int leftAnchor = firstMissing - 1;
+    while (leftAnchor >= 0
+           && !isAuthoritativePost(postIds.at(leftAnchor))) {
+        --leftAnchor;
+    }
+
+    int rightAnchor = lastMissing + 1;
+    while (rightAnchor < postIds.size()
+           && !isAuthoritativePost(postIds.at(rightAnchor))) {
+        ++rightAnchor;
+    }
+    if (rightAnchor >= postIds.size()) {
+        rightAnchor = -1;
+    }
+
+    QPointer<ChannelPostSource> guard(this);
+    auto finish = [guard, first, last] {
+        if (guard) {
+            emit guard->rangeRequestFinished(first, last);
+        }
+    };
+
+    // Sequential scrolling is cursor-authoritative. Once one side of a
+    // missing interval has a concrete identity, page-number arithmetic is no
+    // longer allowed to move that identity or infer its adjacency.
+    if (leftAnchor >= 0 || rightAnchor >= 0) {
+        const bool useLeft = leftAnchor >= 0
+            && (rightAnchor < 0
+                || firstMissing - leftAnchor <= rightAnchor - lastMissing);
+
+        if (useLeft) {
+            const QString anchorId = postIds.at(leftAnchor);
+            PostTimelineService::instance(backend).loadChannelAfter(
+                channel, anchorId, ServerPageSize,
+                [guard, anchorId, finish](const PostTimelineService::Page& result) {
+                    if (!guard) {
+                        return;
+                    }
+
+                    if (result.success) {
+                        int anchorIndex = guard->indexOfPost(anchorId);
+                        if (anchorIndex >= 0) {
+                            const bool reachedNewest = result.nextPostId.isEmpty()
+                                || static_cast<int>(result.postIds.size()) < ServerPageSize;
+
+                            // If an identity cursor proves the newest boundary,
+                            // every logical slot after the returned adjacency is
+                            // a stale total_msg_count_root estimate. Remove it
+                            // structurally instead of letting a later page shift
+                            // already authoritative identities.
+                            if (reachedNewest) {
+                                const int expectedLast = anchorIndex
+                                    + static_cast<int>(result.postIds.size());
+                                const int removeCount = guard->postIds.size()
+                                    - expectedLast - 1;
+                                if (removeCount > 0) {
+                                    guard->rootCountOverestimate += removeCount;
+                                    guard->removeLogicalRange(expectedLast + 1,
+                                                              removeCount);
+                                }
+                            }
+
+                            QStringList context;
+                            context.reserve(result.postIds.size() + 1);
+                            context.push_back(anchorId);
+                            context.append(result.postIds);
+                            if (!result.postIds.isEmpty() || reachedNewest) {
+                                guard->placeNavigationContext(anchorId, context,
+                                                              false, reachedNewest);
+                            }
+                        }
+                    }
+                    finish();
+                });
+            return;
+        }
+
+        const QString anchorId = postIds.at(rightAnchor);
+        PostTimelineService::instance(backend).loadChannelBefore(
+            channel, anchorId, ServerPageSize,
+            [guard, anchorId, finish](const PostTimelineService::Page& result) {
                 if (!guard) {
                     return;
                 }
-                if (result.success && !result.postIds.isEmpty()) {
-                    guard->placePage(page, result.postIds);
+
+                if (result.success) {
+                    int anchorIndex = guard->indexOfPost(anchorId);
+                    if (anchorIndex >= 0) {
+                        const bool reachedOldest = result.prevPostId.isEmpty()
+                            || static_cast<int>(result.postIds.size()) < ServerPageSize;
+
+                        // A proven oldest boundary also tells us exactly
+                        // how much total_msg_count_root overestimated the
+                        // logical prefix. Removing that prefix shifts all
+                        // newer authoritative identities together.
+                        if (reachedOldest) {
+                            const int phantomPrefix = anchorIndex
+                                - static_cast<int>(result.postIds.size());
+                            if (phantomPrefix > 0) {
+                                guard->rootCountOverestimate += phantomPrefix;
+                                guard->removeLogicalRange(0, phantomPrefix);
+                            }
+                        }
+
+                        QStringList context = result.postIds;
+                        context.push_back(anchorId);
+                        if (!result.postIds.isEmpty() || reachedOldest) {
+                            guard->placeNavigationContext(anchorId, context,
+                                                          reachedOldest, false);
+                        }
+                    }
                 }
-                --*remaining;
-                if (*remaining == 0) {
-                    emit guard->rangeRequestFinished(first, last);
-                }
+                finish();
             });
+        return;
     }
+
+    // No identity is close enough to the requested block. An absolute
+    // page is only a seed for a provisional island; it must never become
+    // authoritative merely because total_msg_count_root supplied an
+    // approximate global coordinate.
+    const int seedIndex = (firstMissing + lastMissing) / 2;
+    const int page = pageForIndex(seedIndex);
+    PostTimelineService::instance(backend).loadChannelPage(
+        channel, page, ServerPageSize,
+        [guard, page, finish](const PostTimelineService::Page& result) {
+            if (!guard) {
+                return;
+            }
+
+            if (result.success && !result.postIds.isEmpty()) {
+                const bool reachedOldest = result.prevPostId.isEmpty()
+                    || static_cast<int>(result.postIds.size()) < ServerPageSize;
+                const bool reachedNewest = page == 0;
+
+                if (reachedOldest && page > 0) {
+                    const int actualCount = page * ServerPageSize
+                        + static_cast<int>(result.postIds.size());
+                    const int phantomPrefix = guard->postIds.size() - actualCount;
+                    if (phantomPrefix > 0) {
+                        guard->rootCountOverestimate += phantomPrefix;
+                        guard->removeLogicalRange(0, phantomPrefix);
+                    }
+                }
+
+                const QString targetId = result.postIds.at(result.postIds.size() / 2);
+                guard->placeNavigationContext(targetId, result.postIds,
+                                              reachedOldest, reachedNewest);
+            }
+            finish();
+        });
 }
 
 bool ChannelPostSource::canRequestBeforeFirst() const
