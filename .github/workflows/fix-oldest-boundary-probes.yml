@@ -1,4 +1,4 @@
-# One-shot patch workflow; removed by the patch commit. Retry from current head.
+# One-shot patch workflow; removed by the patch commit.
 name: Use one-post oldest boundary probes
 
 on:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message == 'Run one-post boundary probe fix'
+    if: github.event.head_commit.message == 'Run page-start boundary probe fix'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,11 +20,12 @@ jobs:
           fetch-depth: 0
 
       - name: Apply patch
-        run: python3 fix-oldest-boundary-probes.py
+        run: python3 fix-oldest-boundary-page-probes.py
 
       - name: Validate and commit
         shell: bash
         run: |
+          rm fix-oldest-boundary-page-probes.py
           rm fix-oldest-boundary-probes.py
           rm .github/workflows/fix-oldest-boundary-probes.yml
           git diff --check
@@ -35,6 +36,6 @@ jobs:
                   docs/long-list-architecture.md \
                   docs/post-cache.md
           git add -u .github
-          git add -u fix-oldest-boundary-probes.py
-          git commit -m 'Probe channel history boundary by single posts'
+          git add -u fix-oldest-boundary-page-probes.py fix-oldest-boundary-probes.py
+          git commit -m 'Probe channel history boundary by page starts'
           git push origin HEAD:chatgpt/post-disk-cache
