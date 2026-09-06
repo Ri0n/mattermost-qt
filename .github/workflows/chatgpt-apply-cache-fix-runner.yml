@@ -1,0 +1,48 @@
+name: Run cache timeline regression fix
+
+on:
+  push:
+    branches:
+      - chatgpt/post-disk-cache
+    paths:
+      - .github/workflows/chatgpt-apply-cache-fix-runner.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+
+      - name: Reuse staged patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import textwrap
+
+          workflow = Path('.github/workflows/chatgpt-apply-cache-fix.yml').read_text()
+          match = re.search(r"python3 - <<'PY'\n(.*?)\n          PY", workflow, re.S)
+          if not match:
+              raise SystemExit('cannot extract staged Python patch')
+          code = textwrap.dedent(match.group(1))
+          exec(compile(code, 'chatgpt-cache-fix', 'exec'), {})
+          PY
+          git diff --check
+
+      - name: Commit source fixes
+        shell: bash
+        run: |
+          git config user.name "Sergei Ilinykh"
+          git config user.email "rion4ik@gmail.com"
+          git add sources/chat-area/ChannelPostSource.cpp \
+                  sources/backend/Backend.cpp \
+                  docs/post-cache.md
+          git commit -m "Make channel history cursor-authoritative"
+          git push origin HEAD:chatgpt/post-disk-cache
