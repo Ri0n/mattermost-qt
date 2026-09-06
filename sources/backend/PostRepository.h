@@ -140,6 +140,18 @@ public:
                             PageCallback callback);
 
     /**
+     * Record an explicit channel-opening/read gesture. The timestamp is a
+     * Mattermost epoch-millisecond value; zero means now.
+     */
+    void recordChannelOpened(const QString& channelId, quint64 openedAt = 0);
+
+    /** Whether post bodies from this channel may remain materialized in RAM. */
+    bool shouldRetainChannelInMemory(const QString& channelId) const;
+
+    /** Whether full post payloads from this channel are worth persisting. */
+    bool shouldCacheChannelOnDisk(const QString& channelId) const;
+
+    /**
      * Queue one full WebSocket post snapshot into the persistent cache and
      * return its per-backend observation sequence.
      */
@@ -204,6 +216,7 @@ private:
     HTTPConnector httpConnector;
     PostCacheService postCache;
     QHash<QString, QList<JsonCallback>> inFlightGets;
+    QHash<QString, qint64> channelOpenedAtByAccount;
     quint64 observationSequence = 0;
 };
 
