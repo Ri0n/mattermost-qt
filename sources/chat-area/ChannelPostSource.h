@@ -125,8 +125,8 @@ private:
     bool moreBeforeFirst = false;
     bool beforeRequestInFlight = false;
 
-    // Shared reconciliation state lets concurrent empty range requests wait on
-    // one absolute-page search instead of starting competing boundary probes.
+    // Shared reconciliation state lets concurrent top-edge/range requests wait
+    // on one absolute-page boundary search instead of starting competing probes.
     bool oldestBoundaryFastPathTried = false;
     bool oldestBoundaryProbeInFlight = false;
     int oldestBoundaryNonEmptyPage = -1;
