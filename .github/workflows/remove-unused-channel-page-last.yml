@@ -1,0 +1,29 @@
+name: Remove stale channel page local
+
+on:
+  push:
+    paths:
+      - '.github/workflows/remove-unused-channel-page-last.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+      - name: Apply cleanup
+        run: python3 .github/scripts/remove-unused-channel-page-last.py
+      - name: Remove temporary helper
+        run: rm .github/scripts/remove-unused-channel-page-last.py .github/workflows/remove-unused-channel-page-last.yml
+      - name: Commit result
+        run: |
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add -A
+          git commit -m 'Clean up shared page placement'
+          git push origin HEAD:chatgpt/post-disk-cache
