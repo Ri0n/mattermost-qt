@@ -1,0 +1,37 @@
+name: Tune boundary fast path
+
+on:
+  push:
+    branches:
+      - chatgpt/post-disk-cache
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Run boundary fast path helper'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 tune-boundary-fast-path.py
+      - name: Validate and commit
+        shell: bash
+        run: |
+          rm tune-boundary-fast-path.py
+          rm .github/workflows/tune-boundary-fast-path.yml
+          git diff --check
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add sources/chat-area/ChannelPostSource.cpp \
+                  sources/chat-area/ChannelPostSource.h \
+                  docs/long-list-architecture.md \
+                  docs/post-cache.md
+          git add -u .github
+          git add -u tune-boundary-fast-path.py
+          git commit -m 'Optimize oldest boundary fast path'
+          git push origin HEAD:chatgpt/post-disk-cache
