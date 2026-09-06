@@ -65,10 +65,19 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
 
 void QuotedPostPreview::setPost(const BackendPost& post)
 {
-    authorLabel->setText(QObject::tr("Replying to %1").arg(post.getDisplayAuthorName()));
-    fullText = QuotedReplyFormat::compactText(
-        QuotedReplyFormat::stripFallback(post.message), !post.files.empty(), 500);
-    setToolTip(QuotedReplyFormat::stripFallback(post.message));
+    setPreview(QObject::tr("Replying to %1").arg(post.getDisplayAuthorName()),
+               post.message,
+               !post.files.empty());
+}
+
+void QuotedPostPreview::setPreview(const QString& title,
+                                   const QString& message,
+                                   bool hasAttachments)
+{
+    authorLabel->setText(title);
+    const QString visibleMessage = QuotedReplyFormat::stripFallback(message);
+    fullText = QuotedReplyFormat::compactText(visibleMessage, hasAttachments, 500);
+    setToolTip(visibleMessage);
     refreshText();
 }
 

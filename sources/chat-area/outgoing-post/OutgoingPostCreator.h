@@ -67,6 +67,18 @@ public slots:
 	void onPostReceived (BackendPost& post);
 	void sendPostButtonAction ();
 	void postEditInitiated (BackendPost& post);
+	void cancelPostEdit ()
+	{
+		// Once the edit has been submitted, keep waiting for the authoritative
+		// server response; cancelling is only meaningful while the draft is local.
+		if (!postToEdit || outgoingPostData) {
+			return;
+		}
+		clear();
+		postToEdit = nullptr;
+		setEditingVisual(false);
+		emit postEditFinished();
+	}
 
 signals:
 	void postEditFinished ();

@@ -13,7 +13,7 @@ class ChatArea;
 class OutgoingPostCreator;
 class QuotedPostPreview;
 
-/** Owns the UI-only quoted-reply state around the composer QTextEdit. */
+/** Owns the compact context preview displayed above the composer. */
 class QuotedReplyController final : public QObject
 {
 public:
@@ -26,6 +26,12 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    enum class Mode {
+        None,
+        Reply,
+        Editing
+    };
+
     explicit QuotedReplyController(ChatArea& area);
     void ensureUi();
     void syncVisibility();
@@ -36,6 +42,7 @@ private:
     QuotedPostPreview* preview = nullptr;
     QToolButton* cancelButton = nullptr;
     OutgoingPostCreator* editor = nullptr;
+    Mode mode = Mode::None;
 };
 
 } // namespace Mattermost
