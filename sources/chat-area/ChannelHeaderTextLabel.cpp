@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -27,6 +27,7 @@
 #include <QTextDocument>
 
 #include "post/MessageFormatter.h"
+#include "ui/PresenceAvatarLabel.h"
 
 namespace Mattermost {
 
@@ -48,12 +49,33 @@ ChannelHeaderTextLabel::ChannelHeaderTextLabel(QWidget* parent)
 
 void ChannelHeaderTextLabel::setText(const QString& text)
 {
+    // A direct-message presence is presentation state, not channel header text.
+    // Route it to the avatar badge so we use the same AvatarUtils visual as the
+    // timeline and never depend on rich-text foreground palette propagation.
+    if (PresenceAvatarLabel::isPresenceStatus(text)) {
+        sourceText.clear();
+        formattedText.clear();
+        QLabel::clear();
+        hidePopover();
+        if (popover) {
+            popover->clear();
+        }
+        if (QWidget* host = parentWidget()) {
+            if (auto* avatar = host->findChild<PresenceAvatarLabel*>(
+                    QStringLiteral("userAvatar"))) {
+                avatar->setStatus(text);
+            }
+        }
+        hide();
+        return;
+    }
+
     sourceText = text;
 
     // QTextDocument::toHtml() returns a complete HTML document even for an
     // empty Markdown source. Keep QLabel::text() genuinely empty here because
-    // ChatArea uses text().isEmpty() to decide whether a DM presence string
-    // (online/offline/etc.) still needs to be installed.
+    // ChatArea uses text().isEmpty() to decide whether a DM presence value still
+    // needs to be installed.
     if (text.isEmpty()) {
         formattedText.clear();
         QLabel::setText(QString());
@@ -62,9 +84,11 @@ void ChannelHeaderTextLabel::setText(const QString& text)
         if (popover) {
             popover->clear();
         }
+        hide();
         return;
     }
 
+    show();
     formattedText = MessageFormatter::formatMessageText(text);
     QLabel::setText(formattedText);
     updateCollapsedHeight();

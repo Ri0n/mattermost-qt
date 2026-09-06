@@ -20,6 +20,8 @@
 #include "UserProfileDialog.h"
 #include "ui_UserProfileDialog.h"
 
+#include <memory>
+
 #include <QDialogButtonBox>
 #include <QLayoutItem>
 #include <QNetworkRequest>
@@ -30,6 +32,8 @@
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
 #include "backend/Storage.h"
+#include "backend/types/BackendChannel.h"
+#include "backend/types/BackendDirectChannelsTeam.h"
 #include "backend/types/BackendUser.h"
 #include "navigation/AppNavigationService.h"
 
@@ -94,12 +98,12 @@ UserProfileDialog::UserProfileDialog(Backend* backendInstance,
 
         QPointer<UserProfileDialog> guard(this);
         avatarConnector.get(request, HttpResponseCallback(
-            [guard](QByteArray data) {
+            [guard](QByteArray avatarData) {
                 if (!guard) {
                     return;
                 }
                 QPixmap pixmap;
-                if (!pixmap.loadFromData(data)) {
+                if (!pixmap.loadFromData(avatarData)) {
                     return;
                 }
                 guard->ui->avatar->setPixmap(
@@ -147,9 +151,24 @@ void UserProfileDialog::startDirectMessage()
         return;
     }
 
-    // The legacy Backend API completes DM creation through the normal server/
-    // websocket channel path. Starting the request here is sufficient for a new
-    // conversation; once the channel arrives it becomes available in Direct Messages.
+    // New direct channels arrive asynchronously through the ordinary backend
+    // channel path. Keep one backend-owned connection alive after this dialog
+    // closes and navigate exactly once when the requested user's DM appears.
+    Backend* backendInstance = backend;
+    const QString requestedUserId = userId;
+    auto connection = std::make_shared<QMetaObject::Connection>();
+    *connection = connect(&backendInstance->getStorage().directChannels,
+                          &BackendDirectChannelsTeam::onNewChannel,
+                          backendInstance,
+                          [backendInstance, requestedUserId, connection](BackendChannel& channel) {
+        if (channel.type != BackendChannel::directChannel
+            || channel.name != requestedUserId) {
+            return;
+        }
+        QObject::disconnect(*connection);
+        AppNavigationService::instance(*backendInstance).openChannel(channel.id);
+    });
+
     ui->messageButton->setEnabled(false);
     ui->messageButton->setText(tr("Starting…"));
     backend->createDirectChannel(*user);

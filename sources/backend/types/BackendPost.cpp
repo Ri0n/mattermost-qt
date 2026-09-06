@@ -107,7 +107,11 @@ BackendPost::~BackendPost () = default;
 
 bool BackendPost::isOwnPost () const
 {
-	if (!author) {
+	// Deleted posts are no longer actionable as "our post". In particular, a
+	// post_deleted websocket event is rendered as the same tombstone an official
+	// remote client shows, rather than being mistaken for a locally initiated
+	// delete/remove action merely because its original author is the login user.
+	if (isDeleted || !author) {
 		return false;
 	}
 

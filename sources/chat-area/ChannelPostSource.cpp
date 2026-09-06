@@ -102,7 +102,26 @@ ChannelPostSource::ChannelPostSource(Backend& backendInstance,
     connect(&channel, &BackendChannel::onPostDeleted, this,
             [this](const QString& postId) {
         const int index = indexOfPost(postId);
-        if (index >= 0) {
+        if (index < 0) {
+            return;
+        }
+
+        BackendPost* deletedPost = channel.postIdToPost.value(postId, nullptr);
+        const bool removeLikeOfficialClient = deletedPost
+            && deletedPost->isOwnPost()
+            && deletedPost->root_id.isEmpty()
+            && !deletedPost->hidden;
+
+        if (removeLikeOfficialClient) {
+            if (exactRootCount) {
+                ++rootCountOverestimate;
+            }
+            removeLogicalRange(index, 1);
+        } else {
+            // Mattermost keeps a deleted placeholder when another user's post
+            // disappears, while deletion of the current user's own post is a
+            // structural removal. BackendPost::isDeleted already contains the
+            // tombstone state set by BackendChannel::deletePost().
             emit itemsChanged(index, index);
         }
     });
@@ -342,7 +361,9 @@ void ChannelPostSource::requestBeforeFirst(RequestReason reason, quint64 generat
 int ChannelPostSource::currentLogicalCount() const
 {
     if (exactRootCount) {
-        return std::max(0, channel.total_msg_count_root);
+        const int correctedServerCount = std::max(
+            0, channel.total_msg_count_root - rootCountOverestimate);
+        return std::max(static_cast<int>(postIds.size()), correctedServerCount);
     }
     return static_cast<int>(postIds.size());
 }
@@ -784,33 +805,122 @@ void ChannelPostSource::rebuildIndex()
     }
 }
 
+void ChannelPostSource::removeLogicalRange(int first, int count)
+{
+    first = std::max(0, std::min(first, static_cast<int>(postIds.size())));
+    count = std::max(0, std::min(count, static_cast<int>(postIds.size()) - first));
+    if (count == 0) {
+        return;
+    }
+
+    const int last = first + count - 1;
+
+    if (provisionalWindow.isValid()) {
+        const int oldFirst = provisionalWindow.first;
+        const int oldLast = provisionalWindow.last();
+        const int removedBeforeWindow = first < oldFirst
+            ? std::min(count, oldFirst - first) : 0;
+        const int overlapFirst = std::max(first, oldFirst);
+        const int overlapLast = std::min(last, oldLast);
+
+        if (overlapFirst <= overlapLast) {
+            const int offset = overlapFirst - oldFirst;
+            const int overlapCount = overlapLast - overlapFirst + 1;
+            const QStringList removedIds = provisionalWindow.postIds.mid(offset, overlapCount);
+            const bool targetRemoved = removedIds.contains(provisionalWindow.targetPostId);
+            for (const QString& id : removedIds) {
+                provisionalPostIds.remove(id);
+            }
+            for (int i = 0; i < overlapCount; ++i) {
+                provisionalWindow.postIds.removeAt(offset);
+            }
+            provisionalWindow.first -= removedBeforeWindow;
+            if (targetRemoved || provisionalWindow.postIds.isEmpty()) {
+                provisionalWindow.clear();
+            }
+        } else if (last < oldFirst) {
+            provisionalWindow.first -= count;
+        }
+    }
+
+    for (int index = first; index <= last; ++index) {
+        provisionalPostIds.remove(postIds.at(index));
+    }
+    for (int i = 0; i < count; ++i) {
+        postIds.removeAt(first);
+    }
+    rebuildIndex();
+    emit itemsRemoved(first, count);
+}
+
 void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
 {
     if (!exactRootCount || postIds.isEmpty() || chronologicalIds.isEmpty()) {
         return;
     }
 
-    const int first = std::max(0,
+    int first = std::max(0,
         static_cast<int>(postIds.size()) - page * ServerPageSize
             - static_cast<int>(chronologicalIds.size()));
+
+    // /channels/{id}/posts omits deleted posts, while total_msg_count_root can
+    // still leave the source with a larger logical estimate. A short non-zero
+    // page is the oldest boundary, so a positive calculated first index is not a
+    // real gap: it is exactly the number of phantom deleted-root slots. Remove
+    // them structurally before publishing the page. For the reported 1070-row
+    // DM, page 106 contained seven posts and proved that indices 0..2 did not
+    // exist, which was the trigger for the infinite [0,9] seek/reload loop.
+    if (page > 0
+        && chronologicalIds.size() < ServerPageSize
+        && first > 0) {
+        qCDebug(lcTimelineChannel).nospace()
+            << "OLDEST_COUNT_RECONCILE page=" << page
+            << " removePrefix=" << first
+            << " oldCount=" << postIds.size()
+            << " returned=" << chronologicalIds.size();
+        rootCountOverestimate += first;
+        removeLogicalRange(0, first);
+        first = std::max(0,
+            static_cast<int>(postIds.size()) - page * ServerPageSize
+                - static_cast<int>(chronologicalIds.size()));
+    }
+
     const int count = std::min(static_cast<int>(chronologicalIds.size()),
                                static_cast<int>(postIds.size()) - first);
+    if (count <= 0) {
+        return;
+    }
     const int last = first + count - 1;
 
     bool touchesProvisionalIdentity = false;
+    bool mappingChanged = false;
+    QSet<int> concreteChanged;
+
     for (int offset = 0; offset < count; ++offset) {
         const QString& id = chronologicalIds.at(offset);
         if (provisionalPostIds.contains(id)) {
             touchesProvisionalIdentity = true;
         }
         const int existing = postIndexes.value(id, -1);
-        if (existing >= 0 && (existing < first || existing > last)) {
+        if (existing >= 0 && (existing < first || existing > last)
+            && !postIds.at(existing).isEmpty()) {
             postIds[existing].clear();
+            concreteChanged.insert(existing);
+            mappingChanged = true;
         }
     }
+
     for (int offset = 0; offset < count; ++offset) {
-        postIds[first + offset] = chronologicalIds.at(offset);
-        provisionalPostIds.remove(chronologicalIds.at(offset));
+        const int index = first + offset;
+        const QString& id = chronologicalIds.at(offset);
+        if (postIds.at(index) != id) {
+            if (!postIds.at(index).isEmpty()) {
+                concreteChanged.insert(index);
+            }
+            postIds[index] = id;
+            mappingChanged = true;
+        }
+        provisionalPostIds.remove(id);
     }
     rebuildIndex();
 
@@ -823,7 +933,17 @@ void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
                                window.reachedOldest, window.reachedNewest);
     }
 
-    emit itemsChanged(first, last);
+    // Re-fetching an already known page must be a no-op. In particular, do not
+    // emit rangeAvailable/itemsChanged for identical identities: both signals
+    // schedule another synchronization, which used to clear request suppression
+    // and immediately ask for the same impossible oldest range again.
+    if (!mappingChanged) {
+        return;
+    }
+
+    for (int index : std::as_const(concreteChanged)) {
+        emit itemsChanged(index, index);
+    }
     emit rangeAvailable(first, last);
 }
 

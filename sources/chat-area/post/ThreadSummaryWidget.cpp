@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -21,6 +21,7 @@
 
 #include <algorithm>
 
+#include <QApplication>
 #include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
@@ -72,6 +73,7 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
     chip->installEventFilter(this);
 
     chipIcon = new QLabel(chip);
+    chipIcon->setObjectName(QStringLiteral("threadSummaryIcon"));
     chipIcon->setFixedSize(ReactionChipStyle::IconExtent, ReactionChipStyle::IconExtent);
     chipIcon->setAlignment(Qt::AlignCenter);
     chipIcon->setAttribute(Qt::WA_TransparentForMouseEvents, true);
@@ -85,7 +87,6 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
     chipCount->setFont(countFont);
     chipCount->setAttribute(Qt::WA_TransparentForMouseEvents, true);
     chipLayout->addWidget(chipCount, 0, Qt::AlignBottom);
-    refreshTheme();
 
     connect(&channel, &BackendChannel::onPostEdited, this,
             [this](BackendPost& edited) {
@@ -105,43 +106,14 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
 
 bool ThreadSummaryWidget::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == chip && event) {
-        // ThreadSummaryWidget receives its PaletteChange before the styled chip
-        // gets its own resolved palette. Rebuild the cached symbolic pixmap when
-        // the actual color-owning widget changes instead of relying on a later
-        // scroll/rematerialization to recreate the summary.
-        if (event->type() == QEvent::PaletteChange) {
-            refreshTheme();
-        } else if (event->type() == QEvent::MouseButtonRelease) {
-            auto* mouseEvent = static_cast<QMouseEvent*>(event);
-            if (mouseEvent->button() == Qt::LeftButton) {
-                emit clicked();
-                return true;
-            }
+    if (watched == chip && event && event->type() == QEvent::MouseButtonRelease) {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (mouseEvent->button() == Qt::LeftButton) {
+            emit clicked();
+            return true;
         }
     }
     return QWidget::eventFilter(watched, event);
-}
-
-void ThreadSummaryWidget::changeEvent(QEvent* event)
-{
-    QWidget::changeEvent(event);
-    if (event && (event->type() == QEvent::PaletteChange
-                  || event->type() == QEvent::ApplicationPaletteChange)) {
-        refreshTheme();
-    }
-}
-
-void ThreadSummaryWidget::refreshTheme()
-{
-    if (!chipIcon || !chip) {
-        return;
-    }
-    const QColor color = chip->palette().color(QPalette::WindowText);
-    const QIcon icon = IconUtils::tintedSymbolicIcon(
-        QStringLiteral(":/icons/message-balloon"), color);
-    chipIcon->setPixmap(icon.pixmap(ReactionChipStyle::IconExtent,
-                                    ReactionChipStyle::IconExtent));
 }
 
 void ThreadSummaryWidget::refresh()
@@ -154,8 +126,37 @@ void ThreadSummaryWidget::refresh()
         chipCount->clear();
         chipCount->hide();
     }
+    refreshTheme();
     chip->adjustSize();
     updateGeometry();
+}
+
+void ThreadSummaryWidget::changeEvent(QEvent* event)
+{
+    QWidget::changeEvent(event);
+    if (event && (event->type() == QEvent::PaletteChange
+                  || event->type() == QEvent::ApplicationPaletteChange
+                  || event->type() == QEvent::StyleChange)) {
+        refreshTheme();
+    }
+}
+
+void ThreadSummaryWidget::refreshTheme()
+{
+    if (!chipIcon || !chipCount) {
+        return;
+    }
+
+    const QPalette currentPalette = qApp ? qApp->palette() : palette();
+    chipCount->setPalette(currentPalette);
+
+    const QColor iconColor = currentPalette.color(QPalette::WindowText);
+    chipIcon->setPixmap(IconUtils::tintedSymbolicIcon(
+        QStringLiteral(":/icons/message-balloon"), iconColor)
+                            .pixmap(ReactionChipStyle::IconExtent,
+                                    ReactionChipStyle::IconExtent));
+    chipIcon->update();
+    chipCount->update();
 }
 
 void ThreadSummaryWidget::rebuildParticipantAvatars()

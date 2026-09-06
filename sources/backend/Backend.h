@@ -39,6 +39,8 @@
 #include "backend/ServerDialogsMap.h"
 #include "backend/RequestTracker.h"
 
+class QJsonObject;
+
 namespace Mattermost {
 
 struct BackendNewPollData;
@@ -142,6 +144,8 @@ public:
 
 	//add new post in a channel (/posts)
 	void addPost (BackendChannel& channel, const QString& message, const QList<QString>& attachments, const QString& rootID = "");
+	void addPost (BackendChannel& channel, const QString& message, const QList<QString>& attachments,
+	              const QString& rootID, const QJsonObject& props);
 
 	//edit post (/posts/{post_id}/patch)
 	void editPost (const QString& postID, const QString& message, const QList<QString>& attachments);

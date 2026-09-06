@@ -17,6 +17,25 @@ target_link_libraries(long-list-widget-test
 add_test(NAME long-list-widget-test COMMAND long-list-widget-test)
 set_tests_properties(long-list-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+add_executable(long-list-widget-removal-test
+    LongListWidgetRemovalTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/widgets/LongListWidget.cpp"
+)
+
+target_include_directories(long-list-widget-removal-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(long-list-widget-removal-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+add_test(NAME long-list-widget-removal-test COMMAND long-list-widget-removal-test)
+set_tests_properties(long-list-widget-removal-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(message-formatter-test
     MessageFormatterTest.cpp
     "${CMAKE_SOURCE_DIR}/sources/chat-area/post/MessageFormatter.cpp"
@@ -173,3 +192,40 @@ target_link_libraries(post-navigation-window-test
 )
 
 add_test(NAME post-navigation-window-test COMMAND post-navigation-window-test)
+
+add_executable(message-text-edit-widget-test
+    MessageTextEditWidgetTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/chat-area/outgoing-post/MessageTextEditWidget.cpp"
+)
+
+target_include_directories(message-text-edit-widget-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(message-text-edit-widget-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+add_test(NAME message-text-edit-widget-test COMMAND message-text-edit-widget-test)
+set_tests_properties(message-text-edit-widget-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(quoted-reply-format-test
+    QuotedReplyFormatTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/chat-area/QuotedReplyFormat.cpp"
+)
+
+target_include_directories(quoted-reply-format-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(quoted-reply-format-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME quoted-reply-format-test COMMAND quoted-reply-format-test)

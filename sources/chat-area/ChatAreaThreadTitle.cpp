@@ -50,6 +50,8 @@ void ChatArea::updateThreadWindowTitle()
 void ChatArea::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
+    focusComposer();
+
     if (!isThread) {
         return;
     }

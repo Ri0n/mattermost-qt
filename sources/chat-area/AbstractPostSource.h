@@ -70,6 +70,9 @@ signals:
     /** Existing logical items shifted right because real items were prepended. */
     void itemsInserted(int first, int count);
 
+    /** Existing logical items were removed and later identities shifted left. */
+    void itemsRemoved(int first, int count);
+
     void rangeAvailable(int first, int last);
     void itemsChanged(int first, int last);
 

@@ -19,10 +19,16 @@
 
 #include "PostWidget.h"
 
+#include <QApplication>
+#include <QClipboard>
+#include <QContextMenuEvent>
+#include <QCursor>
 #include <QDateTime>
 #include <QDebug>
 #include <QEvent>
+#include <QMenu>
 #include <QPalette>
+#include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -37,11 +43,18 @@
 #include "attachments/PostAttachmentList.h"
 #include "attachments/PostPoll.h"
 #include "backend/Backend.h"
+#include "backend/MentionGroupService.h"
+#include "backend/PostProps.h"
+#include "backend/PostRepository.h"
 #include "backend/UserProfileService.h"
 #include "backend/emoji/EmojiInfo.h"
 #include "backend/types/BackendPost.h"
 #include "chat-area/ChatArea.h"
+#include "chat-area/QuotedPostPreview.h"
+#include "chat-area/QuotedReplyController.h"
+#include "chat-area/QuotedReplyFormat.h"
 #include "chat-area/ThreadWindowTitle.h"
+#include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
 #include "info-dialogs/UserProfileDialog.h"
 #include "navigation/AppNavigationService.h"
 #include "reactions/PostReactionList.h"
@@ -49,6 +62,35 @@
 #include "ui_PostWidget.h"
 
 namespace Mattermost {
+
+namespace {
+
+QString internalLinkValue(const QUrl& url)
+{
+    QString value = url.path();
+    while (value.startsWith(QLatin1Char('/'))) {
+        value.remove(0, 1);
+    }
+    return value;
+}
+
+QString quotedPostId(const BackendPost& post)
+{
+    return post.props.toObject()
+        .value(QString::fromLatin1(PostProps::ReplyToPostId)).toString();
+}
+
+QString displayMessage(const BackendPost& post, const QString& wireMessage)
+{
+    if (post.isDeleted) {
+        return post.poll ? QStringLiteral("(Poll deleted)")
+                         : QStringLiteral("(Message deleted)");
+    }
+    return quotedPostId(post).isEmpty()
+        ? wireMessage : QuotedReplyFormat::stripFallback(wireMessage);
+}
+
+} // namespace
 
 PostWidget::PostWidget(Backend& backend,
                        BackendPost& post,
@@ -78,7 +120,7 @@ PostWidget::PostWidget(Backend& backend,
 	ui->verticalLayout->insertWidget(messageIndex, messageContent);
 	connect(messageContent, &MessageContentWidget::dimensionsChanged,
 	        this, &PostWidget::dimensionsChanged);
-	messageContent->setMessage(post.message);
+	messageContent->setMessage(displayMessage(post, post.message));
 	connectMessageLinks();
 	ui->time->setText(getMessageTimeString(post.create_at));
 
@@ -87,6 +129,18 @@ PostWidget::PostWidget(Backend& backend,
 		qDebug() << "Link hovered:" << link;
 		hoveredLink = link;
 	});
+
+    const QString teamId = mentionTeamId();
+    if (!teamId.isEmpty()) {
+        auto& groupService = MentionGroupService::instance(backend);
+        connect(&groupService, &MentionGroupService::groupsChanged,
+                this, [this, teamId](const QString& changedTeamId) {
+            if (changedTeamId == teamId) {
+                refreshMentionLinks();
+            }
+        });
+        groupService.ensureTeamGroups(teamId);
+    }
 
 	if (post.author) {
 		setAuthor(backend, post.author);
@@ -100,7 +154,48 @@ PostWidget::PostWidget(Backend& backend,
 			});
 	}
 
-	if (post.rootPost && post.rootPost != lastRootPost) {
+    const QString replyPostId = quotedPostId(post);
+    if (!post.isDeleted && !replyPostId.isEmpty() && parentChatArea) {
+        BackendPost* quotedPost = parentChatArea->channel.postIdToPost.value(replyPostId, nullptr);
+        if (quotedPost && quotedPost != &post) {
+            quotedReplyPreview = std::make_unique<QuotedPostPreview>(this, 2);
+            quotedReplyPreview->setPost(*quotedPost);
+            quotedReplyPreview->setActivatedCallback([this, replyPostId] {
+                if (parentChatArea) {
+                    parentChatArea->goToPost(replyPostId);
+                }
+            });
+            ui->verticalLayout->insertWidget(1, quotedReplyPreview.get());
+        } else {
+            QPointer<PostWidget> guard(this);
+            PostRepository::instance(backend).loadPost(
+                replyPostId,
+                [guard, replyPostId](const PostRepository::PostResult& result) {
+                    if (!guard || !result.success || !guard->parentChatArea
+                        || guard->quotedReplyPreview || guard->post.isDeleted) {
+                        return;
+                    }
+                    BackendPost* loaded = guard->parentChatArea->channel.postIdToPost
+                        .value(replyPostId, nullptr);
+                    if (!loaded || loaded == &guard->post) {
+                        return;
+                    }
+
+                    guard->quotedReplyPreview =
+                        std::make_unique<QuotedPostPreview>(guard, 2);
+                    guard->quotedReplyPreview->setPost(*loaded);
+                    guard->quotedReplyPreview->setActivatedCallback(
+                        [guard, replyPostId] {
+                            if (guard && guard->parentChatArea) {
+                                guard->parentChatArea->goToPost(replyPostId);
+                            }
+                        });
+                    guard->ui->verticalLayout->insertWidget(
+                        1, guard->quotedReplyPreview.get());
+                    emit guard->dimensionsChanged();
+                });
+        }
+	} else if (!post.isDeleted && post.rootPost && post.rootPost != lastRootPost) {
 		quoteFrame = std::make_unique<PostQuoteFrame>(*post.rootPost,
 		                                              backend.getStorage(), this);
 		ui->verticalLayout->insertWidget(1, quoteFrame.get(), 0, Qt::AlignLeft);
@@ -109,7 +204,7 @@ PostWidget::PostWidget(Backend& backend,
 		});
 	}
 
-	if (!post.files.empty()) {
+	if (!post.isDeleted && !post.files.empty()) {
 		attachments = std::make_unique<PostAttachmentList>(backend, this);
 		connect(attachments.get(), &PostAttachmentList::dimensionsChanged,
 		        this, &PostWidget::dimensionsChanged);
@@ -119,7 +214,7 @@ PostWidget::PostWidget(Backend& backend,
 		}
 	}
 
-	if (!post.reactions.empty()) {
+	if (!post.isDeleted && !post.reactions.empty()) {
 		reactions = std::make_unique<PostReactionList>(this);
 		for (auto& it : post.reactions) {
 			const EmojiID emojiID = it.first;
@@ -130,7 +225,7 @@ PostWidget::PostWidget(Backend& backend,
 		ui->verticalLayout->addWidget(reactions.get(), 0, Qt::AlignLeft);
 	}
 
-	if (post.poll) {
+	if (!post.isDeleted && post.poll) {
 		clearMessageText();
 		poll = std::make_unique<PostPoll>(backend, post, *post.poll, this);
 		ui->verticalLayout->addWidget(poll.get(), 0, Qt::AlignLeft);
@@ -155,6 +250,7 @@ void PostWidget::changeEvent(QEvent* event)
     }
 
     updateAuthorAvatar();
+    refreshMentionLinks();
     update();
     const auto childWidgets = findChildren<QWidget*>();
     for (QWidget* child : childWidgets) {
@@ -165,6 +261,102 @@ void PostWidget::changeEvent(QEvent* event)
     if (QWidget* viewportWidget = parentWidget()) {
         viewportWidget->update();
     }
+}
+
+void PostWidget::contextMenuEvent(QContextMenuEvent* event)
+{
+    if (!event) {
+        return;
+    }
+    showPostContextMenu(event->globalPos());
+    event->accept();
+}
+
+void PostWidget::showPostContextMenu(const QPoint& globalPos)
+{
+    if (post.isDeleted) {
+        return;
+    }
+
+    QMenu menu(this);
+
+    if (parentChatArea) {
+        QAction* replyAction = menu.addAction(tr("Reply"));
+        connect(replyAction, &QAction::triggered, this, [this] {
+            if (parentChatArea) {
+                QuotedReplyController::instance(*parentChatArea).begin(post);
+            }
+        });
+
+        if (!parentChatArea->isThread) {
+            QAction* threadAction = menu.addAction(tr("Reply in thread"));
+            connect(threadAction, &QAction::triggered,
+                    this, &PostWidget::openThreadWindow);
+        }
+        menu.addSeparator();
+    }
+
+    if (post.isOwnPost()) {
+        if (parentChatArea) {
+            QAction* editAction = menu.addAction(tr("Edit"));
+            connect(editAction, &QAction::triggered, this, [this] {
+                parentChatArea->editPost(post);
+            });
+        }
+        QAction* deleteAction = menu.addAction(tr("Delete"));
+        connect(deleteAction, &QAction::triggered, this, [this] {
+            backend.deletePost(post.id);
+        });
+        menu.addSeparator();
+    }
+
+    if (!hoveredLink.isEmpty()) {
+        QAction* copyLinkAction = menu.addAction(tr("Copy link to clipboard"));
+        connect(copyLinkAction, &QAction::triggered, this, [this] {
+            QApplication::clipboard()->setText(hoveredLink);
+        });
+    }
+
+    const QString selectedText = getSelectedText();
+    if (!selectedText.isEmpty()) {
+        QAction* copySelectedAction = menu.addAction(tr("Copy selected text"));
+        connect(copySelectedAction, &QAction::triggered, this, [selectedText] {
+            QApplication::clipboard()->setText(selectedText);
+        });
+    }
+
+    QAction* copyEntireAction = menu.addAction(tr("Copy entire post (formatted)"));
+    connect(copyEntireAction, &QAction::triggered, this, [this] {
+        QApplication::clipboard()->setText(formatForClipboardSelection(entirePost));
+    });
+
+    QAction* copyMessageAction = menu.addAction(tr("Copy post message"));
+    connect(copyMessageAction, &QAction::triggered, this, [this] {
+        QApplication::clipboard()->setText(formatForClipboardSelection(messageOnly));
+    });
+
+    QAction* reactionAction = menu.addAction(tr("Add emoji reaction"));
+    connect(reactionAction, &QAction::triggered, this, [this] {
+        showEmojiDialog([this](Emoji emoji) {
+            backend.addPostReaction(post.id, emoji.name);
+        });
+    });
+
+    if (post.author) {
+        menu.addSeparator();
+        QAction* profileAction = menu.addAction(
+            tr("View %1's profile").arg(post.author->getDisplayName()));
+        connect(profileAction, &QAction::triggered, this, [this] {
+            if (!post.author) {
+                return;
+            }
+            auto* dialog = new UserProfileDialog(backend, *post.author, this);
+            dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->show();
+        });
+    }
+
+    menu.exec(globalPos);
 }
 
 void PostWidget::setAuthor(Backend& backendInstance, const BackendUser* user)
@@ -216,7 +408,7 @@ void PostWidget::updateAuthorAvatar()
 
 void PostWidget::setEdited(const QString& message)
 {
-	messageContent->setMessage(message);
+	messageContent->setMessage(displayMessage(post, message));
 	connectMessageLinks();
 
 	if (post.poll) {
@@ -228,36 +420,77 @@ void PostWidget::setEdited(const QString& message)
 	}
 }
 
+QString PostWidget::mentionTeamId() const
+{
+    return parentChatArea && parentChatArea->channel.team
+        ? parentChatArea->channel.team->id : QString();
+}
+
+void PostWidget::refreshMentionLinks()
+{
+    if (!messageContent || post.poll || post.isDeleted) {
+        return;
+    }
+    messageContent->setMessage(displayMessage(post, post.message));
+    connectMessageLinks();
+}
+
 void PostWidget::connectMessageLinks()
 {
+    QHash<QString, QString> groupMentionIds;
+    const QString teamId = mentionTeamId();
+    if (!teamId.isEmpty()) {
+        groupMentionIds = MentionGroupService::instance(backend).mentionIds(teamId);
+    }
+
 	const auto browsers = messageContent->findChildren<QTextBrowser*>();
 	for (QTextBrowser* browser : browsers) {
 		if (!browser) {
 			continue;
 		}
 
-        // Apply Mattermost @username semantics after Markdown/HTML parsing. This
-        // works for both the Qt 6 markdown renderer and the Qt 5 compatibility
-        // path, and deliberately leaves existing links and code untouched.
-        UserMentionLinkifier::linkify(*browser->document());
+        UserMentionLinkifier::linkify(*browser->document(), groupMentionIds);
 
 		browser->setOpenLinks(false);
 		browser->setOpenExternalLinks(false);
+        browser->setContextMenuPolicy(Qt::CustomContextMenu);
+        QObject::disconnect(browser, nullptr, this, nullptr);
 		connect(browser, &QTextBrowser::anchorClicked, this,
 		        [this](const QUrl& url) {
             if (url.scheme() == QStringLiteral("mattermost-user")) {
-                QString username = url.path();
-                while (username.startsWith(QLatin1Char('/'))) {
-                    username.remove(0, 1);
-                }
+                const QString username = internalLinkValue(url);
                 if (!username.isEmpty()) {
                     openUserProfile(username);
                 }
                 return;
             }
+            if (url.scheme() == QStringLiteral("mattermost-group")) {
+                const QString groupId = internalLinkValue(url);
+                if (!groupId.isEmpty()) {
+                    openGroupMention(groupId);
+                }
+                return;
+            }
 			AppNavigationService::instance(backend).openUrl(url);
 		});
+        connect(browser, &QWidget::customContextMenuRequested, this,
+                [this, browser](const QPoint& pos) {
+            showPostContextMenu(browser->viewport()->mapToGlobal(pos));
+        });
 	}
+
+    const auto codeEditors = messageContent->findChildren<QPlainTextEdit*>();
+    for (QPlainTextEdit* editor : codeEditors) {
+        if (!editor) {
+            continue;
+        }
+        editor->setContextMenuPolicy(Qt::CustomContextMenu);
+        QObject::disconnect(editor, nullptr, this, nullptr);
+        connect(editor, &QWidget::customContextMenuRequested, this,
+                [this, editor](const QPoint& pos) {
+            showPostContextMenu(editor->viewport()->mapToGlobal(pos));
+        });
+    }
 }
 
 void PostWidget::openUserProfile(const QString& username)
@@ -298,10 +531,65 @@ void PostWidget::openUserProfile(const QString& username)
         });
 }
 
+void PostWidget::openGroupMention(const QString& groupId)
+{
+    const QString teamId = mentionTeamId();
+    if (teamId.isEmpty()) {
+        return;
+    }
+
+    auto& service = MentionGroupService::instance(backend);
+    const MentionGroup* group = service.groupById(teamId, groupId);
+    const QString title = group && !group->displayName.isEmpty()
+        ? group->displayName : QStringLiteral("@") + (group ? group->name : QString());
+
+    QPointer<PostWidget> guard(this);
+    service.retrieveMembers(groupId,
+        [guard, title](QVector<MentionGroupMember> members) {
+            if (!guard) {
+                return;
+            }
+
+            auto* menu = new QMenu(guard);
+            menu->setAttribute(Qt::WA_DeleteOnClose);
+            if (!title.isEmpty()) {
+                QAction* titleAction = menu->addAction(title);
+                titleAction->setEnabled(false);
+                menu->addSeparator();
+            }
+
+            if (members.isEmpty()) {
+                QAction* emptyAction = menu->addAction(guard->tr("No members"));
+                emptyAction->setEnabled(false);
+            } else {
+                for (const MentionGroupMember& member : members) {
+                    QString label = member.displayName;
+                    if (!member.username.isEmpty()
+                        && member.displayName.compare(member.username, Qt::CaseInsensitive) != 0) {
+                        label += QStringLiteral(" (@") + member.username + QLatin1Char(')');
+                    }
+                    QAction* action = menu->addAction(label);
+                    const QString username = member.username;
+                    QObject::connect(action, &QAction::triggered, guard,
+                                     [guard, username] {
+                        if (guard && !username.isEmpty()) {
+                            guard->openUserProfile(username);
+                        }
+                    });
+                }
+            }
+            menu->popup(QCursor::pos());
+        });
+}
+
 void PostWidget::updateReactions()
 {
 	if (reactions) {
 		reactions.reset();
+	}
+
+	if (post.isDeleted) {
+		return;
 	}
 
 	if (!post.reactions.empty()) {
@@ -384,15 +672,19 @@ void PostWidget::openThreadWindow()
 
 void PostWidget::markAsDeleted()
 {
-	attachments.reset(nullptr);
 	post.isDeleted = true;
+	quoteFrame.reset();
+	quotedReplyPreview.reset();
+	attachments.reset();
+	reactions.reset();
 	if (poll) {
 		ui->verticalLayout->removeWidget(poll.get());
-		poll.reset(nullptr);
+		poll.reset();
 		messageContent->setMessage(QStringLiteral("(Poll deleted)"));
 	} else {
 		messageContent->setMessage(QStringLiteral("(Message deleted)"));
 	}
+	emit dimensionsChanged();
 }
 
 QString PostWidget::getSelectedText()
@@ -426,12 +718,13 @@ QString PostWidget::getMessageTimeString(uint64_t timestamp)
 
 QString PostWidget::formatForClipboardSelection(FormatType formatType) const
 {
+	const QString visibleMessage = displayMessage(post, post.message);
 	if (formatType == messageOnly) {
-		return post.message;
+		return visibleMessage;
 	}
 
 	QString ret(post.getDisplayAuthorName() + "\t[" + ui->time->text() + "]\n");
-	ret += " " + post.message + "\n\n";
+	ret += " " + visibleMessage + "\n\n";
 	return ret;
 }
 

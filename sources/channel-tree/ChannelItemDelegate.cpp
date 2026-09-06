@@ -1,6 +1,7 @@
 #include "ChannelItemDelegate.h"
 
 #include <QApplication>
+#include <QMetaObject>
 #include <QPainter>
 #include <QPainterPath>
 #include <QStyle>
@@ -58,6 +59,25 @@ void ChannelItemDelegate::paint(QPainter* painter,
     const QString text = base.text;
     QIcon icon = base.icon;
     const int type = channelType(index);
+
+    if (type == BackendChannel::groupChannel) {
+        const QString channelId = index.data(SidebarItem::IdRole).toString();
+        if (!channelId.isEmpty() && !requestedGroupChannels.contains(channelId)) {
+            requestedGroupChannels.insert(channelId);
+
+            // Painting must stay independent from Backend/Storage services: the
+            // delegate is also built in isolation by the rendering unit test.
+            // Ask the owning ChannelTree to resolve this visible group-DM title
+            // asynchronously through its meta-object instead of performing
+            // network/storage work directly from paint().
+            if (QObject* owner = parent()) {
+                QMetaObject::invokeMethod(owner,
+                                          "ensureGroupChannelDisplayName",
+                                          Qt::QueuedConnection,
+                                          Q_ARG(QString, channelId));
+            }
+        }
+    }
 
     if (icon.isNull()) {
         if (type == BackendChannel::groupChannel) {
