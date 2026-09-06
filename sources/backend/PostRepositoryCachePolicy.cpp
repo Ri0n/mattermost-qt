@@ -5,8 +5,10 @@
 #include <QDateTime>
 #include <QSettings>
 
+#include "Backend.h"
 #include "Settings.h"
 #include "SidebarService.h"
+#include "types/BackendChannel.h"
 
 namespace Mattermost {
 namespace {
@@ -85,6 +87,15 @@ bool PostRepository::shouldRetainChannelInMemory(const QString& channelId) const
         return false;
     }
 
+    auto* self = const_cast<PostRepository*>(this);
+    BackendChannel* const currentChannel = backend.getCurrentChannel();
+    if (currentChannel && currentChannel->id == channelId) {
+        // setCurrentChannel() happens before the active ChatArea starts loading
+        // its source. Any cache-policy decision for that channel is therefore a
+        // reliable local reading gesture even before the server echoes viewed.
+        self->recordChannelOpened(channelId);
+    }
+
     const QString key = channelInterestKey(account.server, account.userId, channelId);
     auto it = channelOpenedAtByAccount.constFind(key);
     if (it == channelOpenedAtByAccount.cend()) {
@@ -95,7 +106,6 @@ bool PostRepository::shouldRetainChannelInMemory(const QString& channelId) const
         if (serverOpenTime == 0) {
             return false;
         }
-        auto* self = const_cast<PostRepository*>(this);
         self->recordChannelOpened(channelId, serverOpenTime);
         it = channelOpenedAtByAccount.constFind(key);
         if (it == channelOpenedAtByAccount.cend()) {
@@ -117,6 +127,12 @@ bool PostRepository::shouldCacheChannelOnDisk(const QString& channelId) const
         return false;
     }
 
+    auto* self = const_cast<PostRepository*>(this);
+    BackendChannel* const currentChannel = backend.getCurrentChannel();
+    if (currentChannel && currentChannel->id == channelId) {
+        self->recordChannelOpened(channelId);
+    }
+
     const QString key = channelInterestKey(account.server, account.userId, channelId);
     auto it = channelOpenedAtByAccount.constFind(key);
     if (it == channelOpenedAtByAccount.cend()) {
@@ -124,7 +140,6 @@ bool PostRepository::shouldCacheChannelOnDisk(const QString& channelId) const
         if (serverOpenTime == 0) {
             return false;
         }
-        auto* self = const_cast<PostRepository*>(this);
         self->recordChannelOpened(channelId, serverOpenTime);
         it = channelOpenedAtByAccount.constFind(key);
         if (it == channelOpenedAtByAccount.cend()) {
