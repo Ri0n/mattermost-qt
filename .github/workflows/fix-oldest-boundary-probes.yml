@@ -1,0 +1,39 @@
+name: Use one-post oldest boundary probes
+
+on:
+  push:
+    branches:
+      - chatgpt/post-disk-cache
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Run one-post boundary probe fix'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+
+      - name: Apply patch
+        run: python3 fix-oldest-boundary-probes.py
+
+      - name: Validate and commit
+        shell: bash
+        run: |
+          rm fix-oldest-boundary-probes.py
+          rm .github/workflows/fix-oldest-boundary-probes.yml
+          git diff --check
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add sources/chat-area/ChannelPostSource.cpp \
+                  sources/chat-area/ChannelPostSource.h \
+                  docs/long-list-architecture.md \
+                  docs/post-cache.md
+          git add -u .github
+          git add -u fix-oldest-boundary-probes.py
+          git commit -m 'Probe channel history boundary by single posts'
+          git push origin HEAD:chatgpt/post-disk-cache
