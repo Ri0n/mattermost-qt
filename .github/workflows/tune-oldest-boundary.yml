@@ -1,0 +1,379 @@
+name: Tune oldest boundary search
+
+on:
+  push:
+    branches:
+      - chatgpt/post-disk-cache
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'Tune oldest boundary search'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+
+      - name: Apply boundary-search refinements
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(text, old, new, label):
+              if text.count(old) != 1:
+                  raise SystemExit(f'{label}: expected one match, got {text.count(old)}')
+              return text.replace(old, new, 1)
+
+          header = Path('sources/chat-area/ChannelPostSource.h')
+          text = header.read_text()
+          text = replace_once(
+              text,
+              '    static constexpr int ServerPageSize = 10;\n',
+              '    static constexpr int ServerPageSize = 10;\n'
+              '    // Heuristic only: correctness never depends on this ratio.\n'
+              '    static constexpr int InitialBoundaryProbePercent = 3;\n',
+              'header constants')
+          text = replace_once(
+              text,
+              '    int pageForIndex(int index) const;\n',
+              '    int pageForIndex(int index) const;\n'
+              '    int initialBoundaryProbePages() const;\n',
+              'header method')
+          text = replace_once(
+              text,
+              '    void probeOldestBoundary();\n'
+              '    void finishOldestBoundaryProbe();\n',
+              '    void probeOldestBoundary();\n'
+              '    void loadOldestBoundaryPage(int page);\n'
+              '    void finishOldestBoundaryProbe();\n',
+              'header boundary method')
+          text = replace_once(
+              text,
+              '    int oldestBoundaryProbeStep = 1;\n'
+              '    std::vector<std::function<void()>> oldestBoundaryWaiters;\n',
+              '    int oldestBoundaryProbeStep = 1;\n'
+              '    int oldestBoundaryFullPageChecked = -1;\n'
+              '    std::vector<std::function<void()>> oldestBoundaryWaiters;\n',
+              'header state')
+          header.write_text(text)
+
+          cpp = Path('sources/chat-area/ChannelPostSource.cpp')
+          text = cpp.read_text()
+          page_for_index = '''int ChannelPostSource::pageForIndex(int index) const
+          {
+              if (postIds.isEmpty()) {
+                  return 0;
+              }
+              index = std::max(0, std::min(index, static_cast<int>(postIds.size()) - 1));
+              return (static_cast<int>(postIds.size()) - 1 - index) / ServerPageSize;
+          }
+          '''
+          page_for_index = '\n'.join(line[10:] if line.startswith('          ') else line for line in page_for_index.splitlines()) + '\n'
+          helper = page_for_index + '''
+          int ChannelPostSource::initialBoundaryProbePages() const
+          {
+              const qint64 numerator = static_cast<qint64>(postIds.size())
+                  * InitialBoundaryProbePercent;
+              const qint64 denominator = 100LL * ServerPageSize;
+              return std::max(1, static_cast<int>((numerator + denominator - 1) / denominator));
+          }
+          '''
+          helper = '\n'.join(line[10:] if line.startswith('          ') else line for line in helper.splitlines()) + '\n'
+          text = replace_once(text, page_for_index, helper, 'initial probe helper')
+
+          text = replace_once(
+              text,
+              '    oldestBoundaryProbeInFlight = true;\n'
+              '    oldestBoundaryNonEmptyPage = -1;\n'
+              '    oldestBoundaryEmptyPage = emptyPage;\n'
+              '    oldestBoundaryProbeStep = 1;\n'
+              '    probeOldestBoundary();\n',
+              '    oldestBoundaryProbeInFlight = true;\n'
+              '    oldestBoundaryNonEmptyPage = -1;\n'
+              '    oldestBoundaryEmptyPage = emptyPage;\n'
+              '    oldestBoundaryProbeStep = initialBoundaryProbePages();\n'
+              '    oldestBoundaryFullPageChecked = -1;\n'
+              '    probeOldestBoundary();\n',
+              'resolver init')
+
+          pattern = re.compile(
+              r'void ChannelPostSource::probeOldestBoundary\(\)\n\{.*?\n\}\n\n'
+              r'void ChannelPostSource::finishOldestBoundaryProbe\(\)',
+              re.S)
+          replacement = r'''void ChannelPostSource::probeOldestBoundary()
+          {
+              if (!oldestBoundaryProbeInFlight) {
+                  return;
+              }
+
+              if (oldestBoundaryEmptyPage == 0) {
+                  reconcileRootCount(0);
+                  finishOldestBoundaryProbe();
+                  return;
+              }
+
+              // For a small channel the 3% heuristic is less than one server
+              // page. Fetch the immediately preceding block in full: it is likely
+              // the actual oldest page and, unlike a one-post probe, is useful to
+              // the viewport if that guess is right. Mark step 1 as consumed so
+              // an empty result falls back to exponential one-post probing.
+              if (oldestBoundaryNonEmptyPage < 0 && oldestBoundaryProbeStep == 1) {
+                  oldestBoundaryProbeStep = 2;
+                  loadOldestBoundaryPage(std::max(0, oldestBoundaryEmptyPage - 1));
+                  return;
+              }
+
+              if (oldestBoundaryNonEmptyPage >= 0
+                  && oldestBoundaryEmptyPage == oldestBoundaryNonEmptyPage + 1) {
+                  if (oldestBoundaryFullPageChecked == oldestBoundaryNonEmptyPage) {
+                      reconcileRootCount((oldestBoundaryNonEmptyPage + 1) * ServerPageSize);
+                      finishOldestBoundaryProbe();
+                  } else {
+                      loadOldestBoundaryPage(oldestBoundaryNonEmptyPage);
+                  }
+                  return;
+              }
+
+              // With one unknown ten-post page left between known data and known
+              // emptiness, first materialize the known non-empty page. A short
+              // result proves the boundary immediately and avoids the final
+              // one-post probe; a full result is useful prefetch and the binary
+              // search continues normally.
+              if (oldestBoundaryNonEmptyPage >= 0
+                  && oldestBoundaryEmptyPage == oldestBoundaryNonEmptyPage + 2
+                  && oldestBoundaryFullPageChecked != oldestBoundaryNonEmptyPage) {
+                  loadOldestBoundaryPage(oldestBoundaryNonEmptyPage);
+                  return;
+              }
+
+              int page = -1;
+              if (oldestBoundaryNonEmptyPage < 0) {
+                  page = std::max(0, oldestBoundaryEmptyPage - oldestBoundaryProbeStep);
+                  oldestBoundaryProbeStep = std::min(oldestBoundaryEmptyPage + 1,
+                                                     oldestBoundaryProbeStep * 2);
+              } else {
+                  page = oldestBoundaryNonEmptyPage
+                      + (oldestBoundaryEmptyPage - oldestBoundaryNonEmptyPage) / 2;
+              }
+
+              // Search in normal ten-post page coordinates, but probe only the first root
+              // of each candidate page. With per_page=1, page=(P * 10) addresses exactly
+              // the offset at which normal page P would begin.
+              const int offset = page * ServerPageSize;
+              qCDebug(lcTimelineChannel).nospace()
+                  << "OLDEST_BOUNDARY_PROBE page=" << page
+                  << " offset=" << offset
+                  << " nonEmpty=" << oldestBoundaryNonEmptyPage
+                  << " empty=" << oldestBoundaryEmptyPage
+                  << " step=" << oldestBoundaryProbeStep
+                  << " perPage=1";
+
+              QPointer<ChannelPostSource> guard(this);
+              PostTimelineService::instance(backend).loadChannelPage(
+                  channel, offset, 1,
+                  [guard, page, offset](const PostTimelineService::Page& result) {
+                      if (!guard || !guard->oldestBoundaryProbeInFlight) {
+                          return;
+                      }
+                      if (!result.success) {
+                          guard->finishOldestBoundaryProbe();
+                          return;
+                      }
+
+                      const bool exists = !result.postIds.isEmpty();
+                      qCDebug(lcTimelineChannel).nospace()
+                          << "OLDEST_BOUNDARY_RESULT page=" << page
+                          << " offset=" << offset
+                          << " exists=" << exists;
+
+                      if (exists) {
+                          guard->oldestBoundaryNonEmptyPage = std::max(
+                              guard->oldestBoundaryNonEmptyPage, page);
+                      } else {
+                          guard->oldestBoundaryEmptyPage = std::min(
+                              guard->oldestBoundaryEmptyPage, page);
+                      }
+                      guard->probeOldestBoundary();
+                  });
+          }
+
+          void ChannelPostSource::loadOldestBoundaryPage(int page)
+          {
+              if (!oldestBoundaryProbeInFlight) {
+                  return;
+              }
+
+              page = std::max(0, page);
+              oldestBoundaryFullPageChecked = page;
+              qCDebug(lcTimelineChannel).nospace()
+                  << "OLDEST_BOUNDARY_PAGE page=" << page
+                  << " perPage=" << ServerPageSize;
+
+              QPointer<ChannelPostSource> guard(this);
+              PostTimelineService::instance(backend).loadChannelPage(
+                  channel, page, ServerPageSize,
+                  [guard, page](const PostTimelineService::Page& result) {
+                      if (!guard || !guard->oldestBoundaryProbeInFlight) {
+                          return;
+                      }
+                      if (!result.success) {
+                          guard->finishOldestBoundaryProbe();
+                          return;
+                      }
+
+                      qCDebug(lcTimelineChannel).nospace()
+                          << "OLDEST_BOUNDARY_PAGE_RESULT page=" << page
+                          << " returned=" << result.postIds.size();
+
+                      if (result.postIds.isEmpty()) {
+                          guard->oldestBoundaryEmptyPage = std::min(
+                              guard->oldestBoundaryEmptyPage, page);
+                          if (guard->oldestBoundaryNonEmptyPage >= page) {
+                              guard->oldestBoundaryNonEmptyPage = -1;
+                          }
+                          guard->oldestBoundaryFullPageChecked = -1;
+                          guard->probeOldestBoundary();
+                          return;
+                      }
+
+                      guard->oldestBoundaryNonEmptyPage = std::max(
+                          guard->oldestBoundaryNonEmptyPage, page);
+                      const int returned = static_cast<int>(result.postIds.size());
+                      if (returned < ServerPageSize) {
+                          guard->reconcileRootCount(page * ServerPageSize + returned);
+                          guard->placePage(page, result.postIds);
+                          guard->finishOldestBoundaryProbe();
+                          return;
+                      }
+
+                      guard->placePage(page, result.postIds);
+                      if (guard->oldestBoundaryEmptyPage == page + 1) {
+                          guard->reconcileRootCount((page + 1) * ServerPageSize);
+                          guard->finishOldestBoundaryProbe();
+                          return;
+                      }
+                      guard->probeOldestBoundary();
+                  });
+          }
+
+          void ChannelPostSource::finishOldestBoundaryProbe()'''
+          replacement = '\n'.join(line[10:] if line.startswith('          ') else line for line in replacement.splitlines())
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'probe function: expected one match, got {count}')
+
+          text = replace_once(
+              text,
+              '    oldestBoundaryEmptyPage = -1;\n'
+              '    oldestBoundaryProbeStep = 1;\n'
+              '\n'
+              '    for (auto& waiter : waiters) {\n',
+              '    oldestBoundaryEmptyPage = -1;\n'
+              '    oldestBoundaryProbeStep = 1;\n'
+              '    oldestBoundaryFullPageChecked = -1;\n'
+              '\n'
+              '    for (auto& waiter : waiters) {\n',
+              'finish reset')
+          cpp.write_text(text)
+
+          doc = Path('docs/long-list-architecture.md')
+          text = doc.read_text()
+          old = '''`total_msg_count_root` may overestimate the rows returned by `/posts` because deleted roots can be
+          omitted from history. If an absolute page calculated from that estimate is successfully fetched but
+          empty, the source treats the empty response as boundary evidence instead of leaving a black logical
+          range. Boundary search stays in ten-post page coordinates but tests each candidate page with one
+          root only: candidate page P is probed as `page=P*10&per_page=1`, which asks whether the first offset
+          of that ten-post page exists. Exponential stepping followed by binary search therefore keeps the same
+          request count without downloading ten posts per probe. Once the last existing page is known, that
+          page alone is fetched with `per_page=10`; its returned length gives the exact real root count and
+          materializes the oldest viewport block. The phantom logical prefix is then removed once and normal
+          ten-post paging continues. No identity cursor is introduced by this reconciliation path.
+          '''
+          old = '\n'.join(line[10:] if line.startswith('          ') else line for line in old.splitlines()) + '\n'
+          new = '''`total_msg_count_root` may overestimate the rows returned by `/posts` because deleted roots can be
+          omitted from history. If an absolute page calculated from that estimate is successfully fetched but
+          empty, the source treats the empty response as boundary evidence instead of leaving a black logical
+          range. Boundary search stays in ten-post page coordinates but tests distant candidate pages with one
+          root only: candidate page P is probed as `page=P*10&per_page=1`, which asks whether the first offset
+          of that ten-post page exists.
+
+          The first exponential step is a heuristic 3% of the estimated root count, rounded to ten-post pages.
+          This ratio affects latency only; correctness does not depend on it. If 3% is no larger than one page,
+          the immediately preceding page is fetched with `per_page=10` instead, because a small channel is cheap
+          to materialize and that request is likely to be the actual oldest block. If the 3% probe is still empty,
+          the step grows exponentially until data brackets the boundary, then binary search refines it.
+
+          Near the end of binary search, when only one unknown ten-post page remains between known data and
+          known emptiness, the source first fetches the known non-empty page with `per_page=10`. A short result
+          proves the exact oldest boundary immediately and is already useful viewport materialization; a full
+          result remains useful prefetch and the one-post search continues. The phantom logical prefix is removed
+          once the exact count is known and normal ten-post paging continues. No identity cursor is introduced by
+          this reconciliation path.
+          '''
+          new = '\n'.join(line[10:] if line.startswith('          ') else line for line in new.splitlines()) + '\n'
+          text = replace_once(text, old, new, 'long-list docs')
+          doc.write_text(text)
+
+          doc = Path('docs/post-cache.md')
+          text = doc.read_text()
+          old = '''page is also authoritative boundary evidence: when `total_msg_count_root` overstates `/posts`
+          history, the source probes candidate ten-post page starts with `per_page=1`, loads only the resolved
+          oldest page with `per_page=10`, removes the phantom logical prefix, and then keeps ten-post paging for
+          visible/prefetched history.
+          '''
+          old = '\n'.join(line[10:] if line.startswith('          ') else line for line in old.splitlines()) + '\n'
+          new = '''page is also authoritative boundary evidence: when `total_msg_count_root` overstates `/posts`
+          history, the source starts distant boundary probing at a heuristic 3% of the estimated root count,
+          probes candidate ten-post page starts with `per_page=1`, opportunistically materializes a useful full
+          ten-post block when the search becomes local, removes the phantom logical prefix, and then keeps
+          ten-post paging for visible/prefetched history. The 3% value is a latency heuristic, never a correctness
+          assumption.
+          '''
+          new = '\n'.join(line[10:] if line.startswith('          ') else line for line in new.splitlines()) + '\n'
+          text = replace_once(text, old, new, 'post-cache docs')
+          doc.write_text(text)
+
+          doc = Path('docs/thread-timeline-loading.md')
+          text = doc.read_text()
+          marker = '''## Stability requirements
+          '''
+          marker = '\n'.join(line[10:] if line.startswith('          ') else line for line in marker.splitlines()) + '\n'
+          insert = '''## Count and boundary differences from channel history
+
+          Channel history needs an absolute-page boundary repair because `total_msg_count_root` may count rows
+          that ordinary `/channels/{id}/posts` history does not return. Threads deliberately do not inherit that
+          page-probing algorithm. Mattermost `Thread.ReplyCount` excludes deleted replies, and the thread endpoint
+          is cursor/time based (`fromCreateAt`, `fromPost`, `direction`) rather than an absolute `page=N` space.
+
+          If a future server/plugin configuration produces a real thread count mismatch, the common abstraction
+          should be logical-count reconciliation only. Transport-specific boundary evidence remains in the source;
+          `LongListWidget` must stay unaware of Mattermost counts, pages and cursors.
+
+          ## Stability requirements
+          '''
+          insert = '\n'.join(line[10:] if line.startswith('          ') else line for line in insert.splitlines())
+          text = replace_once(text, marker, insert, 'thread docs')
+          doc.write_text(text)
+          PY
+
+      - name: Validate and commit
+        shell: bash
+        run: |
+          rm .github/workflows/tune-oldest-boundary.yml
+          git diff --check
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add sources/chat-area/ChannelPostSource.cpp \
+                  sources/chat-area/ChannelPostSource.h \
+                  docs/long-list-architecture.md \
+                  docs/post-cache.md \
+                  docs/thread-timeline-loading.md
+          git add -u .github
+          git commit -m 'Tune oldest channel boundary probing'
+          git push origin HEAD:chatgpt/post-disk-cache
