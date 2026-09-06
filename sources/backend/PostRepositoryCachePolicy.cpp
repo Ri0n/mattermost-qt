@@ -6,6 +6,7 @@
 #include <QSettings>
 
 #include "Settings.h"
+#include "SidebarService.h"
 
 namespace Mattermost {
 namespace {
@@ -84,10 +85,22 @@ bool PostRepository::shouldRetainChannelInMemory(const QString& channelId) const
         return false;
     }
 
-    const auto it = channelOpenedAtByAccount.constFind(
-        channelInterestKey(account.server, account.userId, channelId));
+    const QString key = channelInterestKey(account.server, account.userId, channelId);
+    auto it = channelOpenedAtByAccount.constFind(key);
     if (it == channelOpenedAtByAccount.cend()) {
-        return false;
+        // Mattermost persists channel_open_time as a user preference. Use it as
+        // a lazy startup seed so we do not need to cache every joined channel
+        // merely to reconstruct yesterday's working set.
+        const quint64 serverOpenTime = SidebarService::instance(backend).channelOpenTime(channelId);
+        if (serverOpenTime == 0) {
+            return false;
+        }
+        auto* self = const_cast<PostRepository*>(this);
+        self->recordChannelOpened(channelId, serverOpenTime);
+        it = channelOpenedAtByAccount.constFind(key);
+        if (it == channelOpenedAtByAccount.cend()) {
+            return false;
+        }
     }
 
     return *it >= QDateTime::currentMSecsSinceEpoch() - configuredMemoryChannelHorizonMs();
@@ -104,10 +117,19 @@ bool PostRepository::shouldCacheChannelOnDisk(const QString& channelId) const
         return false;
     }
 
-    const auto it = channelOpenedAtByAccount.constFind(
-        channelInterestKey(account.server, account.userId, channelId));
+    const QString key = channelInterestKey(account.server, account.userId, channelId);
+    auto it = channelOpenedAtByAccount.constFind(key);
     if (it == channelOpenedAtByAccount.cend()) {
-        return false;
+        const quint64 serverOpenTime = SidebarService::instance(backend).channelOpenTime(channelId);
+        if (serverOpenTime == 0) {
+            return false;
+        }
+        auto* self = const_cast<PostRepository*>(this);
+        self->recordChannelOpened(channelId, serverOpenTime);
+        it = channelOpenedAtByAccount.constFind(key);
+        if (it == channelOpenedAtByAccount.cend()) {
+            return false;
+        }
     }
 
     return *it >= QDateTime::currentMSecsSinceEpoch() - configuredDiskChannelHorizonMs();
