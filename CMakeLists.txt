@@ -57,6 +57,7 @@ option(BUILD_MULTIMEDIA "Enable Multimedia" OFF)
 
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Widgets REQUIRED)
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Network REQUIRED)
+find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Sql REQUIRED)
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS WebSockets REQUIRED)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -115,7 +116,7 @@ if(BUILD_TESTING)
 	add_subdirectory(tests)
 endif()
 
-target_link_libraries (${APPID} PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::WebSockets qsourcehighlite)
+target_link_libraries (${APPID} PRIVATE Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Network Qt${QT_VERSION_MAJOR}::Sql Qt${QT_VERSION_MAJOR}::WebSockets qsourcehighlite)
 
 if(TARGET Qt${QT_VERSION_MAJOR}::DBus)
 	target_link_libraries(${APPID} PRIVATE Qt${QT_VERSION_MAJOR}::DBus)
@@ -176,6 +177,11 @@ set(CPACK_PACKAGE_EXECUTABLES "${APPID}" "Mattermost Qt")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Mattermost Qt Maintainers <maintainers@mattermost-qt.invalid>")
 set(CPACK_DEBIAN_PACKAGE_SECTION "net")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+if(QT_VERSION_MAJOR EQUAL 6)
+	set(CPACK_DEBIAN_PACKAGE_DEPENDS "libqt6sql6-sqlite")
+else()
+	set(CPACK_DEBIAN_PACKAGE_DEPENDS "libqt5sql5-sqlite")
+endif()
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 
 if(WIN32)
