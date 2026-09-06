@@ -1,0 +1,32 @@
+name: Apply Personal sidebar patch
+
+on:
+  push:
+    branches:
+      - chatgpt/sidebar-personal
+    paths:
+      - .github/apply_sidebar_personal.py
+      - .github/workflows/apply-sidebar-personal.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/sidebar-personal
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 .github/apply_sidebar_personal.py
+      - name: Remove temporary helper
+        run: rm .github/apply_sidebar_personal.py .github/workflows/apply-sidebar-personal.yml
+      - name: Commit
+        run: |
+          git config user.name "Sergei Ilinykh"
+          git config user.email "rion4ik@gmail.com"
+          git add -A
+          git commit -m "Add Personal virtual sidebar destination"
+          git push origin HEAD:chatgpt/sidebar-personal
