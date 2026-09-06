@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 def replace_once(path, old, new):
@@ -10,10 +11,23 @@ def replace_once(path, old, new):
     p.write_text(text.replace(old, new, 1))
 
 
-replace_once(
-    "sources/backend/types/BackendChannel.h",
-    '''    uint64_t\t\t\t\t\t\t\tlast_post_at;\n    int\t\t\t\t\t\t\t\ttotal_msg_count;\n''',
-    '''    uint64_t\t\t\t\t\t\t\tlast_post_at;\n    // Newest root-post timestamp. Unlike last_post_at, thread replies do not\n    // advance this value, so it is the correct freshness marker for the main\n    // channel root timeline/cache suffix. Older servers may omit the field;\n    // the constructor then falls back to last_post_at.\n    uint64_t\t\t\t\t\t\t\tlast_root_post_at;\n    int\t\t\t\t\t\t\t\ttotal_msg_count;\n''')
+# BackendChannel.h is old code with tab-aligned fields. Match the declaration
+# semantically instead of depending on the exact number of tabs.
+p = Path("sources/backend/types/BackendChannel.h")
+text = p.read_text()
+pattern = r"(?m)^(\s*uint64_t\s+last_post_at;\n)"
+replacement = (
+    r"\1"
+    "    // Newest root-post timestamp. Unlike last_post_at, thread replies do not\n"
+    "    // advance this value, so it is the correct freshness marker for the main\n"
+    "    // channel root timeline/cache suffix. Older servers may omit the field;\n"
+    "    // the constructor then falls back to last_post_at.\n"
+    "    uint64_t                         last_root_post_at;\n"
+)
+text, count = re.subn(pattern, replacement, text, count=1)
+if count != 1:
+    raise RuntimeError(f"BackendChannel.h last_post_at declaration matches={count}")
+p.write_text(text)
 
 replace_once(
     "sources/backend/types/BackendChannel.cpp",
@@ -54,15 +68,19 @@ replace_once(
 # provisional request planning.
 p = Path("sources/chat-area/ThreadPostSource.cpp")
 text = p.read_text()
-text = text.replace(
-    "lastMissing + 1 < postIds.size()",
-    "lastMissing + 1 < static_cast<int>(postIds.size())")
-text = text.replace(
-    "if (postIds.size() - 1 <= ServerBlockSize) {",
-    "if (static_cast<int>(postIds.size()) - 1 <= ServerBlockSize) {")
-text = text.replace(
-    "if (index < 0 || index >= postIds.size()) {",
-    "if (index < 0 || index >= static_cast<int>(postIds.size())) {")
+replacements = [
+    ("lastMissing + 1 < postIds.size()",
+     "lastMissing + 1 < static_cast<int>(postIds.size())"),
+    ("if (postIds.size() - 1 <= ServerBlockSize) {",
+     "if (static_cast<int>(postIds.size()) - 1 <= ServerBlockSize) {"),
+    ("if (index < 0 || index >= postIds.size()) {",
+     "if (index < 0 || index >= static_cast<int>(postIds.size())) {"),
+]
+for old, new in replacements:
+    count = text.count(old)
+    if count != 1:
+        raise RuntimeError(f"ThreadPostSource.cpp warning fragment count={count}: {old!r}")
+    text = text.replace(old, new, 1)
 p.write_text(text)
 
 # Document the distinction because it is part of cache authority, not merely an
