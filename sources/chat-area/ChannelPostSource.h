@@ -51,9 +51,9 @@ public:
     void requestBeforeFirst(RequestReason reason, quint64 generation) override;
 
 private:
-    // Visible/prefetch channel ranges use Mattermost's ten-post absolute
-    // pages. Boundary discovery probes candidate page starts with per_page=1 so
-    // binary search does not fetch viewport-sized payloads.
+    // Visible/prefetch channel ranges use Mattermost's ten-post absolute pages.
+    // Boundary discovery probes only the first offset of candidate pages with
+    // per_page=1; only the resolved oldest page is materialized with ten posts.
     static constexpr int ServerPageSize = 10;
 
     struct ProvisionalWindow {
