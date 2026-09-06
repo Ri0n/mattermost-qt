@@ -633,12 +633,42 @@ void ChannelTree::setChatAreaStackedWidget (QStackedWidget* stackedWidget)
 void ChannelTree::openChannel (QString channelID)
 {
 	auto it = channelToItemMap.find (channelID);
-	if (it == channelToItemMap.end() || it.value().isEmpty()) {
-		qDebug() << "openChannel " << channelID << ": channel not found";
-		return;
-	}
+    QTreeWidgetItem* item = nullptr;
 
-    QTreeWidgetItem* item = it.value().front();
+    if (it != channelToItemMap.end() && !it.value().isEmpty()) {
+        item = it.value().front();
+    } else if (backendForSidebar) {
+        BackendChannel* personal = backendForSidebar->getStorage().getDirectChannelByUserId(
+            backendForSidebar->getLoginUser().id);
+        if (personal && personal->id == channelID) {
+            // Programmatic navigation (permalinks, Saved/Search results, etc.)
+            // must resolve the self-DM even when its ordinary server row is
+            // absent or suppressed in Favorites. Prefer the currently selected
+            // team's Personal row, otherwise use the first available one.
+            QTreeWidgetItem* current = currentItem();
+            QTreeWidgetItem* teamItem = current;
+            while (teamItem && teamItem->parent()) {
+                teamItem = teamItem->parent();
+            }
+            if (teamItem && teamItem->data(0, ItemKindRole).toInt() == TeamItemKind) {
+                item = personalItemForTeam(teamItem->data(0, ItemTeamIdRole).toString());
+            }
+            if (!item) {
+                for (auto teamIt = teamToItemMap.cbegin(); teamIt != teamToItemMap.cend(); ++teamIt) {
+                    item = personalItemForTeam(teamIt.key());
+                    if (item) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (!item) {
+        qDebug() << "openChannel " << channelID << ": channel not found";
+        return;
+    }
+
     if (currentItem() == item) {
         activateChannelItem(item);
     } else {
