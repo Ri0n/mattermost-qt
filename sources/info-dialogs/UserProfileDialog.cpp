@@ -98,12 +98,12 @@ UserProfileDialog::UserProfileDialog(Backend* backendInstance,
 
         QPointer<UserProfileDialog> guard(this);
         avatarConnector.get(request, HttpResponseCallback(
-            [guard](QByteArray data) {
+            [guard](QByteArray avatarData) {
                 if (!guard) {
                     return;
                 }
                 QPixmap pixmap;
-                if (!pixmap.loadFromData(data)) {
+                if (!pixmap.loadFromData(avatarData)) {
                     return;
                 }
                 guard->ui->avatar->setPixmap(
