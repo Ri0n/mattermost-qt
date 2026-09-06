@@ -142,37 +142,50 @@ PostRepository::CacheAccount PostRepository::currentCacheAccount() const
     return account;
 }
 
+quint64 PostRepository::nextObservationSequence()
+{
+    ++observationSequence;
+    if (observationSequence == 0) {
+        ++observationSequence;
+    }
+    return observationSequence;
+}
+
 void PostRepository::cachePosts(const CacheAccount& account,
-                                const QJsonObject& postsObject)
+                                const QJsonObject& postsObject,
+                                quint64 sourceObservation)
 {
     if (!account.isValid() || postsObject.isEmpty()) {
         return;
     }
-    postCache.storePosts(account.server, account.userId, postsObject);
+    postCache.storePosts(account.server, account.userId, postsObject, sourceObservation);
 }
 
-void PostRepository::cachePostObject(const QJsonObject& postObject)
+quint64 PostRepository::cachePostObject(const QJsonObject& postObject)
 {
+    const quint64 sourceObservation = nextObservationSequence();
     const QString postId = postObject.value(QStringLiteral("id")).toString();
     if (postId.isEmpty()) {
-        return;
+        return sourceObservation;
     }
 
     QJsonObject posts;
     posts.insert(postId, postObject);
-    cachePosts(currentCacheAccount(), posts);
+    cachePosts(currentCacheAccount(), posts, sourceObservation);
+    return sourceObservation;
 }
 
-void PostRepository::invalidateCachedPost(const QString& postId)
+quint64 PostRepository::invalidateCachedPost(const QString& postId)
 {
+    const quint64 sourceObservation = nextObservationSequence();
     if (postId.isEmpty()) {
-        return;
+        return sourceObservation;
     }
     const CacheAccount account = currentCacheAccount();
-    if (!account.isValid()) {
-        return;
+    if (account.isValid()) {
+        postCache.removePost(account.server, account.userId, postId, sourceObservation);
     }
-    postCache.removePost(account.server, account.userId, postId);
+    return sourceObservation;
 }
 
 void PostRepository::coalescedGet(const QString& path, JsonCallback callback)
@@ -180,12 +193,18 @@ void PostRepository::coalescedGet(const QString& path, JsonCallback callback)
     if (path.isEmpty()) {
         if (callback) {
             callback(QVariant::fromValue(static_cast<int>(QNetworkReply::ProtocolInvalidOperationError)),
-                     QJsonDocument());
+                     QJsonDocument(), RequestContext {});
         }
         return;
     }
 
-    auto existing = inFlightGets.find(path);
+    const CacheAccount cacheAccount = currentCacheAccount();
+    const QString requestScope = cacheAccount.isValid()
+        ? cacheAccount.server + QChar(0x1f) + cacheAccount.userId
+        : NetworkRequest::host();
+    const QString requestKey = requestScope + QChar(0x1f) + path;
+
+    auto existing = inFlightGets.find(requestKey);
     if (existing != inFlightGets.end()) {
         if (callback) {
             existing->push_back(std::move(callback));
@@ -197,23 +216,29 @@ void PostRepository::coalescedGet(const QString& path, JsonCallback callback)
     if (callback) {
         callbacks.push_back(std::move(callback));
     }
-    inFlightGets.insert(path, std::move(callbacks));
+    inFlightGets.insert(requestKey, std::move(callbacks));
+
+    RequestContext requestContext;
+    requestContext.cacheAccount = cacheAccount;
+    requestContext.observationSequence = nextObservationSequence();
 
     QPointer<PostRepository> guard(this);
     NetworkRequest request(path);
     httpConnector.get(request, HttpResponseCallback(
-        [guard, path](QVariant status, const QJsonDocument& doc) mutable {
+        [guard, requestKey, requestContext](QVariant status, const QJsonDocument& doc) mutable {
             if (!guard) {
                 return;
             }
 
             // Remove before fan-out: a callback may synchronously request the
             // same URL again and that must start a fresh request rather than join
-            // an already completed transaction.
-            QList<JsonCallback> waiting = guard->inFlightGets.take(path);
+            // an already completed transaction. Every joined callback receives
+            // the observation sequence of the actual HTTP request, not the time
+            // at which that logical caller joined it.
+            QList<JsonCallback> waiting = guard->inFlightGets.take(requestKey);
             for (JsonCallback& cb : waiting) {
                 if (cb) {
-                    cb(status, doc);
+                    cb(status, doc, requestContext);
                 }
             }
         }));
@@ -228,11 +253,11 @@ void PostRepository::loadPost(const QString& postId, PostCallback callback)
         return;
     }
 
-    const CacheAccount cacheAccount = currentCacheAccount();
     QPointer<PostRepository> guard(this);
     coalescedGet(QStringLiteral("posts/") + postId,
-        [guard, postId, cacheAccount, callback = std::move(callback)](
-            QVariant status, const QJsonDocument& doc) mutable {
+        [guard, postId, callback = std::move(callback)](
+            QVariant status, const QJsonDocument& doc,
+            const RequestContext& requestContext) mutable {
             PostResult result;
             result.postId = postId;
             if (!guard || status.toInt() != QNetworkReply::NoError || !doc.isObject()) {
@@ -248,7 +273,8 @@ void PostRepository::loadPost(const QString& postId, PostCallback callback)
 
             QJsonObject posts;
             posts.insert(postId, postObject);
-            guard->cachePosts(cacheAccount, posts);
+            guard->cachePosts(requestContext.cacheAccount, posts,
+                              requestContext.observationSequence);
 
             BackendChannel* channel = guard->backend.getStorage().getChannelById(result.channelId);
             if (channel) {
@@ -274,12 +300,12 @@ void PostRepository::loadChannelPage(BackendChannel& channel,
         + QStringLiteral("&per_page=") + QString::number(safePerPage)
         + QStringLiteral("&skipFetchThreads=true&collapsedThreads=true");
 
-    const CacheAccount cacheAccount = currentCacheAccount();
     QPointer<PostRepository> guard(this);
     QPointer<BackendChannel> channelGuard(&channel);
     coalescedGet(path,
-        [guard, channelGuard, cacheAccount, callback = std::move(callback)](
-            QVariant status, const QJsonDocument& doc) mutable {
+        [guard, channelGuard, callback = std::move(callback)](
+            QVariant status, const QJsonDocument& doc,
+            const RequestContext& requestContext) mutable {
             Page result;
             result.success = status.toInt() == QNetworkReply::NoError && doc.isObject();
             if (!result.success || !guard) {
@@ -291,7 +317,8 @@ void PostRepository::loadChannelPage(BackendChannel& channel,
 
             const QJsonObject root = doc.object();
             const QJsonObject posts = root.value(QStringLiteral("posts")).toObject();
-            guard->cachePosts(cacheAccount, posts);
+            guard->cachePosts(requestContext.cacheAccount, posts,
+                              requestContext.observationSequence);
             if (!channelGuard) {
                 if (callback) {
                     callback(result);
@@ -349,12 +376,12 @@ void PostRepository::loadChannelCursor(BackendChannel& channel,
         + QStringLiteral("&per_page=") + QString::number(safePerPage)
         + QStringLiteral("&skipFetchThreads=true&collapsedThreads=true");
 
-    const CacheAccount cacheAccount = currentCacheAccount();
     QPointer<PostRepository> guard(this);
     QPointer<BackendChannel> channelGuard(&channel);
     coalescedGet(path,
-        [guard, channelGuard, cacheAccount, cursorPostId, quietIngest,
-         callback = std::move(callback)](QVariant status, const QJsonDocument& doc) mutable {
+        [guard, channelGuard, cursorPostId, quietIngest,
+         callback = std::move(callback)](QVariant status, const QJsonDocument& doc,
+                                          const RequestContext& requestContext) mutable {
             Page result;
             result.success = status.toInt() == QNetworkReply::NoError && doc.isObject();
             if (!result.success || !guard) {
@@ -366,7 +393,8 @@ void PostRepository::loadChannelCursor(BackendChannel& channel,
 
             const QJsonObject root = doc.object();
             const QJsonObject posts = root.value(QStringLiteral("posts")).toObject();
-            guard->cachePosts(cacheAccount, posts);
+            guard->cachePosts(requestContext.cacheAccount, posts,
+                              requestContext.observationSequence);
             if (!channelGuard) {
                 if (callback) {
                     callback(result);
@@ -560,12 +588,12 @@ void PostRepository::loadThread(BackendChannel& channel,
 
     const bool initialPage = safeDirection == QLatin1String("down")
         && fromPost.isEmpty() && effectiveFromCreateAt == 0;
-    const CacheAccount cacheAccount = currentCacheAccount();
     QPointer<PostRepository> guard(this);
     QPointer<BackendChannel> channelGuard(&channel);
     coalescedGet(path,
-        [guard, channelGuard, cacheAccount, rootId, fromPost, initialPage,
-         callback = std::move(callback)](QVariant status, const QJsonDocument& doc) mutable {
+        [guard, channelGuard, rootId, fromPost, initialPage,
+         callback = std::move(callback)](QVariant status, const QJsonDocument& doc,
+                                          const RequestContext& requestContext) mutable {
             Page result;
             result.success = status.toInt() == QNetworkReply::NoError && doc.isObject();
             if (!result.success || !guard) {
@@ -577,7 +605,8 @@ void PostRepository::loadThread(BackendChannel& channel,
 
             const QJsonObject root = doc.object();
             const QJsonObject posts = root.value(QStringLiteral("posts")).toObject();
-            guard->cachePosts(cacheAccount, posts);
+            guard->cachePosts(requestContext.cacheAccount, posts,
+                              requestContext.observationSequence);
             if (!channelGuard) {
                 if (callback) {
                     callback(result);
