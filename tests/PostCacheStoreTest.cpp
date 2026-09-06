@@ -1,5 +1,6 @@
 #include <QtTest>
 
+#include <QDateTime>
 #include <QJsonObject>
 #include <QTemporaryDir>
 
@@ -40,6 +41,7 @@ private slots:
     void roundTripAndAccountIsolation();
     void selectsChannelRootsAndThreadReplies();
     void enforcesThreadAndGlobalLimits();
+    void admitsOnlyRecentlyOpenedChannels();
 };
 
 void PostCacheStoreTest::roundTripAndAccountIsolation()
@@ -51,6 +53,8 @@ void PostCacheStoreTest::roundTripAndAccountIsolation()
     QVERIFY(cache.open());
     QVERIFY(cache.setAccount(QStringLiteral("https://chat.example/"),
                              QStringLiteral("alice-id")));
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("c1"),
+                                      QDateTime::currentMSecsSinceEpoch()));
 
     const QString message = QStringLiteral("hello cache — compressed JSON survives round trip");
     QJsonObject posts;
@@ -85,6 +89,9 @@ void PostCacheStoreTest::selectsChannelRootsAndThreadReplies()
     QVERIFY(cache.open());
     QVERIFY(cache.setAccount(QStringLiteral("https://chat.example"),
                              QStringLiteral("alice-id")));
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("c1"), now));
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("c2"), now));
 
     QJsonObject posts;
     insertPost(posts, makePost(QStringLiteral("r1"), QStringLiteral("c1"), QString(), 10));
@@ -123,6 +130,8 @@ void PostCacheStoreTest::enforcesThreadAndGlobalLimits()
     QVERIFY(cache.open());
     QVERIFY(cache.setAccount(QStringLiteral("https://chat.example"),
                              QStringLiteral("alice-id")));
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("c1"),
+                                      QDateTime::currentMSecsSinceEpoch()));
 
     PostCacheStore::Limits limits;
     limits.maxBytes = 16 * 1024 * 1024;
@@ -161,6 +170,47 @@ void PostCacheStoreTest::enforcesThreadAndGlobalLimits()
     QVERIFY(stats.postCount <= 3);
     QVERIFY(stats.payloadBytes > 0);
     QVERIFY(stats.databaseBytes > 0);
+}
+
+void PostCacheStoreTest::admitsOnlyRecentlyOpenedChannels()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    PostCacheStore cache(directory.filePath(QStringLiteral("posts.sqlite3")));
+    QVERIFY(cache.open());
+    QVERIFY(cache.setAccount(QStringLiteral("https://chat.example"),
+                             QStringLiteral("alice-id")));
+
+    PostCacheStore::Limits limits;
+    limits.maxChannelIdleMs = 1000;
+    cache.setLimits(limits);
+
+    QJsonObject posts;
+    insertPost(posts, makePost(QStringLiteral("cold"), QStringLiteral("cold-channel"),
+                               QString(), 1));
+    QCOMPARE(cache.storePosts(posts), 0);
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("hot-channel"), now));
+    QJsonObject hotPosts;
+    insertPost(hotPosts, makePost(QStringLiteral("hot"), QStringLiteral("hot-channel"),
+                                  QString(), 2));
+    QCOMPARE(cache.storePosts(hotPosts), 1);
+    QVERIFY(!cache.loadPost(QStringLiteral("hot")).isEmpty());
+
+    // A deliberately old visit may seed metadata, but it must not admit data.
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("old-channel"), now - 2000));
+    QJsonObject oldPosts;
+    insertPost(oldPosts, makePost(QStringLiteral("old"), QStringLiteral("old-channel"),
+                                  QString(), 3));
+    QCOMPARE(cache.storePosts(oldPosts), 0);
+
+    // Let the hot channel become older than the configured horizon and verify
+    // maintenance removes both its post payload and stale usage metadata.
+    QTest::qWait(1100);
+    cache.maintenance();
+    QVERIFY(cache.loadPost(QStringLiteral("hot")).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(PostCacheStoreTest)
