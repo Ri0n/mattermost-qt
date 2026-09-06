@@ -1,0 +1,33 @@
+name: Apply symmetric channel boundary patch
+
+on:
+  push:
+    branches:
+      - chatgpt/post-disk-cache
+    paths:
+      - tools/tmp-symmetric-channel-boundary.py
+      - .github/workflows/apply-symmetric-channel-boundary.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 tools/tmp-symmetric-channel-boundary.py
+      - name: Remove temporary helper
+        run: rm -f tools/tmp-symmetric-channel-boundary.py .github/workflows/apply-symmetric-channel-boundary.yml
+      - name: Commit result
+        run: |
+          git config user.name "Sergei Ilinykh"
+          git config user.email "rion4ik@gmail.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Make channel count reconciliation symmetric"
+          git push origin HEAD:chatgpt/post-disk-cache
