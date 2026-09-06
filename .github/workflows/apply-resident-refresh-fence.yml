@@ -16,6 +16,18 @@ jobs:
         with:
           ref: chatgpt/post-disk-cache
           fetch-depth: 0
+      - name: Fix helper match count
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/scripts/apply-resident-refresh-fence.py')
+          text = p.read_text()
+          old = "    '            guard->ingest(*channelGuard, posts, requestContext.observationSequence);\\n',\n    3,\n)"
+          new = "    '            guard->ingest(*channelGuard, posts, requestContext.observationSequence);\\n',\n    2,\n)"
+          if old not in text:
+              raise SystemExit('expected helper fragment not found')
+          p.write_text(text.replace(old, new, 1))
+          PY
       - name: Apply patch
         run: python3 .github/scripts/apply-resident-refresh-fence.py
       - name: Remove temporary helper
