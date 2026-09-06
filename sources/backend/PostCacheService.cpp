@@ -1,5 +1,6 @@
 #include "PostCacheService.h"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
@@ -34,8 +35,8 @@ QString normalizedServer(QString server)
 
 QString watermarkKey(const QString& server, const QString& userId, const QString& postId)
 {
-    return normalizedServer(server) + QChar(0x1f) + userId.trimmed()
-        + QChar(0x1f) + postId;
+    return normalizedServer(server) + QLatin1Char('\x1f') + userId.trimmed()
+        + QLatin1Char('\x1f') + postId;
 }
 
 } // namespace
