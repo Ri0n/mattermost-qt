@@ -32,8 +32,7 @@ jobs:
           git add sources/chat-area/ChannelPostSource.cpp \
                   sources/chat-area/ChannelPostSource.h \
                   docs/long-list-architecture.md \
-                  docs/post-cache.md \
-                  .github/fix-oldest-boundary.py \
-                  .github/workflows/fix-oldest-boundary.yml
+                  docs/post-cache.md
+          git add -u .github
           git commit -m 'Resolve overestimated channel history boundary'
           git push origin HEAD:chatgpt/post-disk-cache
