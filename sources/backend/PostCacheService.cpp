@@ -196,6 +196,30 @@ public:
         return store->loadThread(channelId, rootId, limit);
     }
 
+    void storeTailWindow(const QString& server,
+                         const QString& userId,
+                         const QString& channelId,
+                         const QString& rootId,
+                         const QStringList& chronologicalPostIds)
+    {
+        if (channelId.isEmpty() || !selectAccount(server, userId)) {
+            return;
+        }
+        store->storeTailWindow(channelId, rootId, chronologicalPostIds);
+    }
+
+    QJsonObject loadTailWindow(const QString& server,
+                               const QString& userId,
+                               const QString& channelId,
+                               const QString& rootId,
+                               int limit)
+    {
+        if (channelId.isEmpty() || limit <= 0 || !selectAccount(server, userId)) {
+            return {};
+        }
+        return store->loadTailWindow(channelId, rootId, limit);
+    }
+
     void shutdown()
     {
         if (store) {
@@ -448,6 +472,125 @@ void PostCacheService::loadThread(const QString& server,
         [currentWorker, server, userId, channelId, rootId, limit, context,
          callback = std::move(callback)]() mutable {
             QJsonObject result = currentWorker->loadThread(
+                server, userId, channelId, rootId, limit);
+            if (!context || !callback) {
+                return;
+            }
+            QMetaObject::invokeMethod(
+                context.data(),
+                [callback = std::move(callback), result = std::move(result)]() mutable {
+                    callback(std::move(result));
+                },
+                Qt::QueuedConnection);
+        },
+        Qt::QueuedConnection);
+}
+
+void PostCacheService::storeChannelTailWindow(
+    const QString& server,
+    const QString& userId,
+    const QString& channelId,
+    const QStringList& chronologicalPostIds)
+{
+    if (!worker || server.trimmed().isEmpty() || userId.trimmed().isEmpty()
+        || channelId.isEmpty()) {
+        return;
+    }
+    PostCacheWorker* const currentWorker = worker;
+    QMetaObject::invokeMethod(
+        currentWorker,
+        [currentWorker, server, userId, channelId, chronologicalPostIds] {
+            currentWorker->storeTailWindow(server, userId, channelId, QString(),
+                                           chronologicalPostIds);
+        },
+        Qt::QueuedConnection);
+}
+
+void PostCacheService::storeThreadTailWindow(
+    const QString& server,
+    const QString& userId,
+    const QString& channelId,
+    const QString& rootId,
+    const QStringList& chronologicalReplyIds)
+{
+    if (!worker || server.trimmed().isEmpty() || userId.trimmed().isEmpty()
+        || channelId.isEmpty() || rootId.isEmpty()) {
+        return;
+    }
+    PostCacheWorker* const currentWorker = worker;
+    QMetaObject::invokeMethod(
+        currentWorker,
+        [currentWorker, server, userId, channelId, rootId,
+         chronologicalReplyIds] {
+            currentWorker->storeTailWindow(server, userId, channelId, rootId,
+                                           chronologicalReplyIds);
+        },
+        Qt::QueuedConnection);
+}
+
+void PostCacheService::loadChannelTailWindow(const QString& server,
+                                             const QString& userId,
+                                             const QString& channelId,
+                                             int limit,
+                                             ReadCallback callback)
+{
+    QPointer<QObject> context(&callbackContext);
+    if (!worker || server.trimmed().isEmpty() || userId.trimmed().isEmpty()
+        || channelId.isEmpty() || limit <= 0) {
+        if (callback) {
+            QMetaObject::invokeMethod(&callbackContext,
+                                      [callback = std::move(callback)]() mutable {
+                                          callback({});
+                                      },
+                                      Qt::QueuedConnection);
+        }
+        return;
+    }
+    PostCacheWorker* const currentWorker = worker;
+    QMetaObject::invokeMethod(
+        currentWorker,
+        [currentWorker, server, userId, channelId, limit, context,
+         callback = std::move(callback)]() mutable {
+            QJsonObject result = currentWorker->loadTailWindow(
+                server, userId, channelId, QString(), limit);
+            if (!context || !callback) {
+                return;
+            }
+            QMetaObject::invokeMethod(
+                context.data(),
+                [callback = std::move(callback), result = std::move(result)]() mutable {
+                    callback(std::move(result));
+                },
+                Qt::QueuedConnection);
+        },
+        Qt::QueuedConnection);
+}
+
+void PostCacheService::loadThreadTailWindow(const QString& server,
+                                            const QString& userId,
+                                            const QString& channelId,
+                                            const QString& rootId,
+                                            int limit,
+                                            ReadCallback callback)
+{
+    QPointer<QObject> context(&callbackContext);
+    if (!worker || server.trimmed().isEmpty() || userId.trimmed().isEmpty()
+        || channelId.isEmpty() || rootId.isEmpty() || limit <= 0) {
+        if (callback) {
+            QMetaObject::invokeMethod(&callbackContext,
+                                      [callback = std::move(callback)]() mutable {
+                                          callback({});
+                                      },
+                                      Qt::QueuedConnection);
+        }
+        return;
+    }
+    PostCacheWorker* const currentWorker = worker;
+    QMetaObject::invokeMethod(
+        currentWorker,
+        [currentWorker, server, userId, channelId, rootId, limit, context,
+         callback = std::move(callback)]() mutable {
+            QJsonObject result = currentWorker->loadTailWindow(
                 server, userId, channelId, rootId, limit);
             if (!context || !callback) {
                 return;

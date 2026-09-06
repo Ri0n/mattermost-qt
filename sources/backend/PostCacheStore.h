@@ -63,6 +63,23 @@ public:
     /** Load a thread root plus newest cached replies. */
     QJsonObject loadThread(const QString& channelId, const QString& rootId, int limit);
 
+    /**
+     * Persist one authoritative oldest->newest tail window. rootId is empty for
+     * the main channel timeline and non-empty for thread replies.
+     */
+    bool storeTailWindow(const QString& channelId,
+                         const QString& rootId,
+                         const QStringList& chronologicalPostIds);
+
+    /**
+     * Load the newest still-complete suffix of a previously observed tail
+     * window. Arbitrary cached rows that were never part of that window are
+     * deliberately ignored.
+     */
+    QJsonObject loadTailWindow(const QString& channelId,
+                               const QString& rootId,
+                               int limit);
+
     /** Invalidate a post whose durable raw representation is no longer trusted. */
     bool removePost(const QString& postId);
 

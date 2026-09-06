@@ -70,6 +70,9 @@ void PostCacheServiceTest::asyncReadsFollowQueuedWrites()
     posts.insert(QStringLiteral("reply"),
                  makePost(QStringLiteral("reply"), channel, root, 200));
     service.storePosts(server, user, posts, 1);
+    service.storeChannelTailWindow(server, user, channel, { root });
+    service.storeThreadTailWindow(server, user, channel, root,
+                                  { QStringLiteral("reply") });
 
     const QJsonObject direct = waitForRead([&](PostCacheService::ReadCallback callback) {
         service.loadPost(server, user, root, std::move(callback));
@@ -87,6 +90,18 @@ void PostCacheServiceTest::asyncReadsFollowQueuedWrites()
     });
     QVERIFY(thread.contains(root));
     QVERIFY(thread.contains(QStringLiteral("reply")));
+
+    const QJsonObject channelTail = waitForRead([&](PostCacheService::ReadCallback callback) {
+        service.loadChannelTailWindow(server, user, channel, 10, std::move(callback));
+    });
+    QCOMPARE(channelTail.size(), 1);
+    QVERIFY(channelTail.contains(root));
+
+    const QJsonObject threadTail = waitForRead([&](PostCacheService::ReadCallback callback) {
+        service.loadThreadTailWindow(server, user, channel, root, 10, std::move(callback));
+    });
+    QCOMPARE(threadTail.size(), 1);
+    QVERIFY(threadTail.contains(QStringLiteral("reply")));
 }
 
 QTEST_MAIN(PostCacheServiceTest)

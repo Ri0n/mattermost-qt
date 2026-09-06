@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QThread>
 
 namespace Mattermost {
@@ -71,6 +72,34 @@ public:
                     const QString& rootId,
                     int limit,
                     ReadCallback callback);
+
+    /** Persist provenance for an authoritative newest main-channel window. */
+    void storeChannelTailWindow(const QString& server,
+                                const QString& userId,
+                                const QString& channelId,
+                                const QStringList& chronologicalPostIds);
+
+    /** Persist provenance for an authoritative newest thread-reply window. */
+    void storeThreadTailWindow(const QString& server,
+                               const QString& userId,
+                               const QString& channelId,
+                               const QString& rootId,
+                               const QStringList& chronologicalReplyIds);
+
+    /** Read the newest still-complete cached main-channel suffix. */
+    void loadChannelTailWindow(const QString& server,
+                               const QString& userId,
+                               const QString& channelId,
+                               int limit,
+                               ReadCallback callback);
+
+    /** Read the newest still-complete cached thread-reply suffix. */
+    void loadThreadTailWindow(const QString& server,
+                              const QString& userId,
+                              const QString& channelId,
+                              const QString& rootId,
+                              int limit,
+                              ReadCallback callback);
 
 private:
     QObject callbackContext;

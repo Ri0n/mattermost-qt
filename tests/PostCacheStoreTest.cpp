@@ -40,6 +40,7 @@ class PostCacheStoreTest final : public QObject
 private slots:
     void roundTripAndAccountIsolation();
     void selectsChannelRootsAndThreadReplies();
+    void tailWindowRequiresProvenanceAndKeepsCompleteSuffix();
     void enforcesThreadAndGlobalLimits();
     void admitsOnlyRecentlyOpenedChannels();
 };
@@ -119,6 +120,60 @@ void PostCacheStoreTest::selectsChannelRootsAndThreadReplies()
     QVERIFY(thread.contains(QStringLiteral("t2")));
     QVERIFY(thread.contains(QStringLiteral("t3")));
     QVERIFY(!thread.contains(QStringLiteral("t1")));
+}
+
+void PostCacheStoreTest::tailWindowRequiresProvenanceAndKeepsCompleteSuffix()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    PostCacheStore cache(directory.filePath(QStringLiteral("posts.sqlite3")));
+    QVERIFY(cache.open());
+    QVERIFY(cache.setAccount(QStringLiteral("https://chat.example"),
+                             QStringLiteral("alice-id")));
+    QVERIFY(cache.recordChannelOpened(QStringLiteral("c1"),
+                                      QDateTime::currentMSecsSinceEpoch()));
+
+    QJsonObject posts;
+    insertPost(posts, makePost(QStringLiteral("r1"), QStringLiteral("c1"), QString(), 10));
+    insertPost(posts, makePost(QStringLiteral("r2"), QStringLiteral("c1"), QString(), 20));
+    insertPost(posts, makePost(QStringLiteral("r3"), QStringLiteral("c1"), QString(), 30));
+    insertPost(posts, makePost(QStringLiteral("t1"), QStringLiteral("c1"),
+                               QStringLiteral("r2"), 21));
+    insertPost(posts, makePost(QStringLiteral("t2"), QStringLiteral("c1"),
+                               QStringLiteral("r2"), 22));
+    insertPost(posts, makePost(QStringLiteral("t3"), QStringLiteral("c1"),
+                               QStringLiteral("r2"), 23));
+    QCOMPARE(cache.storePosts(posts), posts.size());
+
+    // A row bag alone never becomes an adjacency proof.
+    QVERIFY(cache.loadTailWindow(QStringLiteral("c1"), QString(), 10).isEmpty());
+
+    QVERIFY(cache.storeTailWindow(QStringLiteral("c1"), QString(),
+                                  { QStringLiteral("r1"), QStringLiteral("r2"),
+                                    QStringLiteral("r3") }));
+    QJsonObject roots = cache.loadTailWindow(QStringLiteral("c1"), QString(), 10);
+    QCOMPARE(roots.size(), 3);
+
+    // Invalidating a middle row leaves only the newer contiguous suffix usable.
+    QVERIFY(cache.removePost(QStringLiteral("r2")));
+    roots = cache.loadTailWindow(QStringLiteral("c1"), QString(), 10);
+    QCOMPARE(roots.size(), 1);
+    QVERIFY(roots.contains(QStringLiteral("r3")));
+
+    QVERIFY(cache.storeTailWindow(QStringLiteral("c1"), QStringLiteral("r2"),
+                                  { QStringLiteral("t1"), QStringLiteral("t2"),
+                                    QStringLiteral("t3") }));
+    QJsonObject replies = cache.loadTailWindow(QStringLiteral("c1"),
+                                               QStringLiteral("r2"), 2);
+    QCOMPARE(replies.size(), 2);
+    QVERIFY(replies.contains(QStringLiteral("t2")));
+    QVERIFY(replies.contains(QStringLiteral("t3")));
+
+    // Losing the newest row means the stored window can no longer seed a tail.
+    QVERIFY(cache.removePost(QStringLiteral("t3")));
+    QVERIFY(cache.loadTailWindow(QStringLiteral("c1"),
+                                 QStringLiteral("r2"), 10).isEmpty());
 }
 
 void PostCacheStoreTest::enforcesThreadAndGlobalLimits()

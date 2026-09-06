@@ -4,11 +4,13 @@
 #include <utility>
 
 #include <QDateTime>
+#include <QJsonArray>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonParseError>
 #include <QLoggingCategory>
+#include <QSet>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QVariant>
@@ -19,7 +21,7 @@ namespace {
 
 Q_LOGGING_CATEGORY(lcPostCache, "mattermost.cache.posts", QtWarningMsg)
 
-constexpr int SchemaVersion = 2;
+constexpr int SchemaVersion = 3;
 constexpr int InitialMaintenanceDelayMs = 15 * 1000;
 constexpr int LruTouchGranularityMs = 60 * 1000;
 constexpr int VacuumMinFreePages = 128;
@@ -149,6 +151,23 @@ bool PostCacheStore::initializeSchema(bool newDatabase)
             " channel_id TEXT NOT NULL,"
             " last_opened_at INTEGER NOT NULL,"
             " PRIMARY KEY(account_id, channel_id),"
+            " FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE"
+            ") WITHOUT ROWID"))) {
+        return false;
+    }
+
+    // Tail-window provenance is intentionally separate from post rows. A bag
+    // of cached rows does not prove adjacency because direct lookups, LRU
+    // eviction and reaction invalidation can create holes. The ordered ID list
+    // records only a server response that actually proved a newest-edge window.
+    if (!execStatement(QStringLiteral(
+            "CREATE TABLE IF NOT EXISTS tail_windows ("
+            " account_id INTEGER NOT NULL,"
+            " channel_id TEXT NOT NULL,"
+            " root_id TEXT NOT NULL DEFAULT '',"
+            " observed_at INTEGER NOT NULL,"
+            " post_ids BLOB NOT NULL,"
+            " PRIMARY KEY(account_id, channel_id, root_id),"
             " FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE"
             ") WITHOUT ROWID"))) {
         return false;
@@ -411,6 +430,128 @@ QJsonObject PostCacheStore::loadThread(const QString& channelId,
     return result;
 }
 
+bool PostCacheStore::storeTailWindow(const QString& channelId,
+                                         const QString& rootId,
+                                         const QStringList& chronologicalPostIds)
+{
+    if (!hasAccount() || channelId.isEmpty()
+        || !isChannelEligible(channelId, nowMs())) {
+        return false;
+    }
+
+    QJsonArray ids;
+    QSet<QString> seen;
+    for (const QString& postId : chronologicalPostIds) {
+        if (postId.isEmpty() || seen.contains(postId)) {
+            continue;
+        }
+        seen.insert(postId);
+        ids.push_back(postId);
+    }
+
+    QSqlQuery query(database);
+    query.prepare(QStringLiteral(
+        "INSERT INTO tail_windows(account_id, channel_id, root_id, observed_at, post_ids) "
+        "VALUES(?, ?, ?, ?, ?) "
+        "ON CONFLICT(account_id, channel_id, root_id) DO UPDATE SET "
+        "observed_at=excluded.observed_at, post_ids=excluded.post_ids"));
+    query.addBindValue(accountId);
+    query.addBindValue(channelId);
+    query.addBindValue(rootId);
+    query.addBindValue(nowMs());
+    query.addBindValue(QJsonDocument(ids).toJson(QJsonDocument::Compact));
+    if (!query.exec()) {
+        qCWarning(lcPostCache) << "cannot record cached tail window"
+                               << channelId << rootId << query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+QJsonObject PostCacheStore::loadTailWindow(const QString& channelId,
+                                           const QString& rootId,
+                                           int limit)
+{
+    if (!hasAccount() || channelId.isEmpty() || limit <= 0
+        || !isChannelEligible(channelId, nowMs())) {
+        return {};
+    }
+
+    QSqlQuery window(database);
+    window.prepare(QStringLiteral(
+        "SELECT post_ids FROM tail_windows "
+        "WHERE account_id=? AND channel_id=? AND root_id=?"));
+    window.addBindValue(accountId);
+    window.addBindValue(channelId);
+    window.addBindValue(rootId);
+    if (!window.exec() || !window.next()) {
+        return {};
+    }
+
+    QJsonParseError error;
+    const QJsonDocument encoded = QJsonDocument::fromJson(
+        window.value(0).toByteArray(), &error);
+    if (error.error != QJsonParseError::NoError || !encoded.isArray()) {
+        qCWarning(lcPostCache) << "invalid cached tail-window provenance"
+                               << channelId << rootId << error.errorString();
+        return {};
+    }
+
+    const QJsonArray encodedIds = encoded.array();
+    if (encodedIds.isEmpty()) {
+        return {};
+    }
+
+    QStringList ids;
+    ids.reserve(encodedIds.size());
+    for (const QJsonValue& value : encodedIds) {
+        const QString postId = value.toString();
+        if (!postId.isEmpty()) {
+            ids.push_back(postId);
+        }
+    }
+    if (ids.isEmpty()) {
+        return {};
+    }
+
+    // Only a suffix after the newest missing/corrupt row is still known to be
+    // contiguous. This makes row-level invalidation and LRU eviction degrade the
+    // window rather than silently closing a hole and inventing adjacency.
+    const int firstCandidate = std::max(0, static_cast<int>(ids.size()) - limit);
+    QJsonObject reversedSuffix;
+    int firstUsable = static_cast<int>(ids.size());
+    for (int index = static_cast<int>(ids.size()) - 1; index >= firstCandidate; --index) {
+        const QString& postId = ids.at(index);
+        const QJsonObject wrapped = loadPost(postId);
+        const auto postIt = wrapped.constFind(postId);
+        if (postIt == wrapped.constEnd() || !postIt->isObject()) {
+            break;
+        }
+        const QJsonObject post = postIt->toObject();
+        if (post.value(QStringLiteral("channel_id")).toString() != channelId
+            || post.value(QStringLiteral("root_id")).toString() != rootId) {
+            break;
+        }
+        reversedSuffix.insert(postId, post);
+        firstUsable = index;
+    }
+
+    if (firstUsable == static_cast<int>(ids.size())) {
+        return {};
+    }
+
+    QJsonObject result;
+    for (int index = firstUsable; index < ids.size(); ++index) {
+        const QString& postId = ids.at(index);
+        const auto post = reversedSuffix.constFind(postId);
+        if (post == reversedSuffix.constEnd()) {
+            break;
+        }
+        result.insert(postId, *post);
+    }
+    return result;
+}
+
 bool PostCacheStore::removePost(const QString& postId)
 {
     if (!hasAccount() || postId.isEmpty()) {
@@ -613,6 +754,20 @@ bool PostCacheStore::pruneInactiveChannels()
         return false;
     }
     const bool changed = removePosts.numRowsAffected() > 0;
+
+    QSqlQuery removeWindows(database);
+    removeWindows.prepare(QStringLiteral(
+        "DELETE FROM tail_windows WHERE NOT EXISTS ("
+        " SELECT 1 FROM channel_usage u"
+        " WHERE u.account_id=tail_windows.account_id"
+        " AND u.channel_id=tail_windows.channel_id"
+        " AND u.last_opened_at>=?"
+        ")"));
+    removeWindows.addBindValue(cutoff);
+    if (!removeWindows.exec()) {
+        qCWarning(lcPostCache) << "cannot prune inactive tail windows"
+                               << removeWindows.lastError().text();
+    }
 
     QSqlQuery removeUsage(database);
     removeUsage.prepare(QStringLiteral(
