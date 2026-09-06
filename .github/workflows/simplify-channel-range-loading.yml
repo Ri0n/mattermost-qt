@@ -1,0 +1,92 @@
+name: Apply absolute channel paging fix
+
+on:
+  push:
+    branches:
+      - chatgpt/post-disk-cache
+    paths:
+      - .github/workflows/simplify-channel-range-loading.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+
+      - name: Simplify channel range loading
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          cpp = Path("sources/chat-area/ChannelPostSource.cpp")
+          text = cpp.read_text()
+
+          provisional_branch = '''    // A semantic navigation island has exact local adjacency but only an\n    // estimated global offset. Continue resolving it exclusively by identity.\n    if (requestTouchesProvisionalWindow(requestedFirst, requestedLast)) {\n        requestProvisionalRange(first, last);\n        return;\n    }\n\n'''
+          if text.count(provisional_branch) != 1:
+              raise SystemExit("expected provisional request branch exactly once")
+          text = text.replace(provisional_branch, "", 1)
+
+          start_marker = "    // A cursor request can return at most ServerPageSize adjacent rows.\n"
+          end_marker = "\n}\n\nbool ChannelPostSource::canRequestBeforeFirst() const"
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          replacement = '''    // Mattermost channel history has one paging unit here: ten root posts.\n    // Logical list blocks are anchored at the oldest end while Mattermost page\n    // numbers are anchored at the newest end, so one ten-item logical request\n    // can straddle two server pages. Load every absolute page intersecting the\n    // missing range; do not turn already known post identities into paging\n    // cursors. Those identities are useful for semantic-position estimation and\n    // overlap reconciliation, not for choosing the next HTTP request boundary.\n    const int newestPage = pageForIndex(lastMissing);\n    const int oldestPage = pageForIndex(firstMissing);\n    const int pageCount = oldestPage - newestPage + 1;\n    if (pageCount <= 0) {\n        emit rangeRequestFinished(first, last);\n        return;\n    }\n\n    QPointer<ChannelPostSource> guard(this);\n    auto pending = std::make_shared<int>(pageCount);\n    const auto finishPage = [guard, pending, first, last] {\n        if (!guard) {\n            return;\n        }\n        if (--(*pending) == 0) {\n            emit guard->rangeRequestFinished(first, last);\n        }\n    };\n\n    for (int page = newestPage; page <= oldestPage; ++page) {\n        qCDebug(lcTimelineChannel).nospace()\n            << "RANGE_PAGE requested=[" << requestedFirst << ',' << requestedLast\n            << "] missing=[" << firstMissing << ',' << lastMissing\n            << "] page=" << page << " perPage=" << ServerPageSize;\n        PostTimelineService::instance(backend).loadChannelPage(\n            channel, page, ServerPageSize,\n            [guard, page, finishPage](const PostTimelineService::Page& result) {\n                if (!guard) {\n                    return;\n                }\n                if (result.success && !result.postIds.isEmpty()) {\n                    guard->placePage(page, result.postIds);\n                }\n                finishPage();\n            });\n    }\n'''
+          text = text[:start] + replacement + text[end:]
+
+          helper_start = text.index("bool ChannelPostSource::requestTouchesProvisionalWindow")
+          helper_end = text.index("void ChannelPostSource::seedCachedPosts()", helper_start)
+          text = text[:helper_start] + text[helper_end:]
+          cpp.write_text(text)
+
+          header = Path("sources/chat-area/ChannelPostSource.h")
+          h = header.read_text()
+          h = h.replace("#include <QPair>\n", "")
+          old_decls = '''    bool requestTouchesProvisionalWindow(int first, int last) const;\n    void requestProvisionalRange(int first, int last);\n    void finishProvisionalRequests();\n'''
+          if h.count(old_decls) != 1:
+              raise SystemExit("expected provisional helper declarations exactly once")
+          h = h.replace(old_decls, "", 1)
+          old_fields = '''    bool provisionalRequestInFlight = false;\n    QVector<QPair<int, int>> pendingProvisionalRequests;\n'''
+          if h.count(old_fields) != 1:
+              raise SystemExit("expected provisional helper fields exactly once")
+          h = h.replace(old_fields, "", 1)
+          header.write_text(h)
+
+          long_doc = Path("docs/long-list-architecture.md")
+          d = long_doc.read_text()
+          old = '''The source must also distinguish a **nearby continuation** from a **remote seek**. An identity cursor\nmay be used only when an authoritative post lies close enough that one cursor response can reach the\nrequested block. A distant authoritative island is not a reason to walk thousands of messages toward\nthe thumb target. If no such nearby anchor exists, the channel source jumps directly to the bounded\nabsolute page containing the requested logical position, using the normal channel page size. That\npage remains provisional unless it intersects authoritative identity or proves a real oldest/newest boundary.\nThis keeps a jump to the oldest edge O(1) network requests in the normal case instead of O(history).\n'''
+          new = '''Channel history range loading uses a single paging contract: Mattermost absolute pages with\n`per_page=10`. Already known post identities are not reused as `before`/`after` paging boundaries.\nThey are inputs to semantic-position estimation and overlap reconciliation only. Because logical\nblocks are aligned from the oldest end while Mattermost pages are aligned from the newest end, one\nten-item logical request may intersect two server pages; the source loads both and places each via\nits absolute page number. A jump to any scrollbar position is therefore O(1) page requests rather\nthan an identity-cursor walk through history.\n'''
+          if d.count(old) != 1:
+              raise SystemExit("long-list paging paragraph not found exactly once")
+          long_doc.write_text(d.replace(old, new, 1))
+
+          cache_doc = Path("docs/post-cache.md")
+          d = cache_doc.read_text()
+          start = d.index("The channel source therefore uses this provenance order:\n")
+          end = d.index("Every successful range request ends in\n", start)
+          new = '''The channel source keeps two separate concepts:\n\n1. ordinary channel range loading uses absolute `/posts?page=N&per_page=10` pages only;\n2. known post identities and timestamps help estimate semantic targets and reconcile overlap, but\n   are not promoted into `before=<post_id>` / `after=<post_id>` boundaries for ordinary scrolling.\n\nThe ten-post page size is invariant. Logical request blocks are oldest-aligned while Mattermost\npages are newest-aligned, so a ten-item logical block can cross a server-page boundary. In that\ncase the source requests both intersecting pages and places each with `placePage()`. Remote thumb\nseek, normal scrolling and initial tail materialization therefore share exactly the same paging\npath instead of switching between page arithmetic and cursor walks.\n\n'''
+          d = d[:start] + new + d[end:]
+          cache_doc.write_text(d)
+          PY
+
+          if grep -n "loadChannelBefore\|loadChannelAfter" sources/chat-area/ChannelPostSource.cpp | grep -E '^[0-9]+:'; then
+            echo "Note: remaining cursor calls belong only to compatibility/semantic paths shown above."
+          fi
+
+          git rm .github/workflows/simplify-channel-range-loading.yml
+          git config user.name "Sergei Ilinykh"
+          git config user.email "rion4ik@gmail.com"
+          git add sources/chat-area/ChannelPostSource.cpp \
+                  sources/chat-area/ChannelPostSource.h \
+                  docs/long-list-architecture.md \
+                  docs/post-cache.md
+          git diff --cached --check
+          git diff --cached
+          git commit -m "Use absolute pages for channel ranges"
+          git push origin HEAD:chatgpt/post-disk-cache
