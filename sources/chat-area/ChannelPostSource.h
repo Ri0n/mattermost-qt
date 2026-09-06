@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QHash>
-#include <QPair>
 #include <QSet>
 #include <QStringList>
 #include <QVector>
@@ -85,9 +84,6 @@ private:
                                 bool reachedOldest,
                                 bool reachedNewest,
                                 int exactFirstHint = -1);
-    bool requestTouchesProvisionalWindow(int first, int last) const;
-    void requestProvisionalRange(int first, int last);
-    void finishProvisionalRequests();
     void seedCachedPosts();
     void seedUnknownNewestPost();
     void rebuildIndex();
@@ -112,8 +108,6 @@ private:
 
     ProvisionalWindow provisionalWindow;
     QSet<QString> provisionalPostIds;
-    bool provisionalRequestInFlight = false;
-    QVector<QPair<int, int>> pendingProvisionalRequests;
 };
 
 } // namespace Mattermost

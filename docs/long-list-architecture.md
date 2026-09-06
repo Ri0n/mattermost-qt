@@ -257,13 +257,13 @@ A new thumb target increments the seek generation. Results from an older generat
 the memory/disk cache, but `LongListWidget` only materializes what the current viewport/seek needs,
 so stale results have no authority to move the viewport.
 
-The source must also distinguish a **nearby continuation** from a **remote seek**. An identity cursor
-may be used only when an authoritative post lies close enough that one cursor response can reach the
-requested block. A distant authoritative island is not a reason to walk thousands of messages toward
-the thumb target. If no such nearby anchor exists, the channel source jumps directly to the bounded
-absolute page containing the requested logical position, using the normal channel page size. That
-page remains provisional unless it intersects authoritative identity or proves a real oldest/newest boundary.
-This keeps a jump to the oldest edge O(1) network requests in the normal case instead of O(history).
+Channel history range loading uses a single paging contract: Mattermost absolute pages with
+`per_page=10`. Already known post identities are not reused as `before`/`after` paging boundaries.
+They are inputs to semantic-position estimation and overlap reconciliation only. Because logical
+blocks are aligned from the oldest end while Mattermost pages are aligned from the newest end, one
+ten-item logical request may intersect two server pages; the source loads both and places each via
+its absolute page number. A jump to any scrollbar position is therefore O(1) page requests rather
+than an identity-cursor walk through history.
 
 This replaces the old controller-level `TimelineSeekState` state machine.
 

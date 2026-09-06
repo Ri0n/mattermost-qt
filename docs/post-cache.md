@@ -412,21 +412,19 @@ scale and for choosing an initial random-seek page, but deleted roots and
 concurrent server changes can make the count disagree with the rows returned
 by `/channels/{id}/posts`.
 
-The channel source therefore uses this provenance order:
+The channel source keeps two separate concepts:
 
-1. an identity cursor (`before=<post_id>` / `after=<post_id>`) proves adjacency;
-2. overlap with an already authoritative identity proves global placement;
-3. an actual oldest/newest boundary can reconcile stale logical slots;
-4. an absolute page number is only a provisional seed for random seek.
+1. ordinary channel range loading uses absolute `/posts?page=N&per_page=10` pages only;
+2. known post identities and timestamps help estimate semantic targets and reconcile overlap, but
+   are not promoted into `before=<post_id>` / `after=<post_id>` boundaries for ordinary scrolling.
 
-Ordinary scrolling must extend a known window with identity cursors. It must
-not repeatedly overwrite authoritative identities from page-number arithmetic.
-A cursor is only selected when the known anchor lies within one cursor page of
-the missing block. A remote seek (including dragging directly to the oldest
-edge) jumps directly to the bounded absolute page containing the requested
-logical position, using the normal channel page size instead of walking from the
-nearest already-materialized island. The seed is provisional until overlap or a
-real channel boundary proves placement. Every successful range request ends in
+The ten-post page size is invariant. Logical request blocks are oldest-aligned while Mattermost
+pages are newest-aligned, so a ten-item logical block can cross a server-page boundary. In that
+case the source requests both intersecting pages and places each with `placePage()`. Remote thumb
+seek, normal scrolling and initial tail materialization therefore share exactly the same paging
+path instead of switching between page arithmetic and cursor walks.
+
+Every successful range request ends in
 one of three states: new identities were placed, a real boundary removed stale
 logical slots, or the request made no progress and is finished without an
 immediate retry loop.
