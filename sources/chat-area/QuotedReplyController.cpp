@@ -12,6 +12,7 @@
 #include "ChatArea.h"
 #include "QuotedPostPreview.h"
 #include "backend/PostProps.h"
+#include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "chat-area/outgoing-post/OutgoingPostCreator.h"
 #include "ui_ChatArea.h"
@@ -129,7 +130,25 @@ bool QuotedReplyController::eventFilter(QObject* watched, QEvent* event)
         if (editing) {
             mode = Mode::Editing;
             preview->setActivatedCallback({});
-            preview->setPreview(tr("Editing message"), editor->toPlainText());
+
+            QString title = tr("Editing message");
+            if (const BackendPost* editedPost = editor->editingPost()) {
+                const QString replyPostId = editedPost->props.toObject()
+                    .value(QString::fromLatin1(PostProps::ReplyToPostId)).toString();
+                if (!replyPostId.isEmpty()) {
+                    title = tr("Editing reply");
+                    BackendPost* quotedPost = area.channel.postIdToPost.value(
+                        replyPostId, nullptr);
+                    if (quotedPost && !quotedPost->isDeleted) {
+                        const QString author = quotedPost->getDisplayAuthorName();
+                        if (!author.isEmpty()) {
+                            title = tr("Editing reply to %1").arg(author);
+                        }
+                    }
+                }
+            }
+
+            preview->setPreview(title, editor->toPlainText());
         } else if (mode == Mode::Editing) {
             mode = Mode::None;
         }
