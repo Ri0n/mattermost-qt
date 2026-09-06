@@ -1,5 +1,8 @@
 #pragma once
 
+#include <functional>
+#include <vector>
+
 #include <QHash>
 #include <QSet>
 #include <QStringList>
@@ -89,6 +92,10 @@ private:
     void rebuildIndex();
     void removeLogicalRange(int first, int count);
     void placePage(int page, const QStringList& chronologicalIds);
+    void resolveOldestBoundary(int emptyPage, std::function<void()> completion);
+    void probeOldestBoundary();
+    void finishOldestBoundaryProbe();
+    void reconcileRootCount(int actualCount, int page, int returnedCount);
     void prependDiscovered(const QStringList& chronologicalIds);
     void appendLivePost(BackendPost& post);
 
@@ -105,6 +112,13 @@ private:
     int rootCountOverestimate = 0;
     bool moreBeforeFirst = false;
     bool beforeRequestInFlight = false;
+
+    bool oldestBoundaryProbeInFlight = false;
+    int oldestBoundaryNonEmptyPage = -1;
+    int oldestBoundaryEmptyPage = -1;
+    int oldestBoundaryProbeStep = 1;
+    QStringList oldestBoundaryNonEmptyIds;
+    std::vector<std::function<void()>> oldestBoundaryWaiters;
 
     ProvisionalWindow provisionalWindow;
     QSet<QString> provisionalPostIds;
