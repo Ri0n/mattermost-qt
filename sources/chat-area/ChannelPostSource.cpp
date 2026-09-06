@@ -70,7 +70,12 @@ ChannelPostSource::ChannelPostSource(Backend& backendInstance,
     , hasRootCountEstimate(channelInstance.has_total_msg_count_root)
 {
     if (hasRootCountEstimate) {
-        postIds.resize(currentLogicalCount());
+        // A zero message counter is still only an estimate: a channel may
+        // contain count-excluded system roots. Keep one unavailable bootstrap
+        // slot so LongList requests page zero and lets /posts prove empty vs.
+        // non-empty history. An actually empty channel immediately reconciles
+        // back to zero.
+        postIds.resize(std::max(1, currentLogicalCount()));
         seedCachedPosts();
     } else {
         // Without total_msg_count_root there is no honest absolute oldest->newest
