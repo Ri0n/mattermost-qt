@@ -268,6 +268,23 @@ bool BackendPost::updatePostEdits (BackendPost& editedPost)
 		}
 		return true;
 	};
+	const auto sameReactions = [](const std::map<EmojiID, BackendPostReaction>& lhs,
+	                              const std::map<EmojiID, BackendPostReaction>& rhs) {
+		if (lhs.size() != rhs.size()) {
+			return false;
+		}
+		auto left = lhs.cbegin();
+		auto right = rhs.cbegin();
+		for (; left != lhs.cend(); ++left, ++right) {
+			// EmojiID is intentionally orderable for std::map but has no equality
+			// operator. Equivalent keys are therefore !(a < b) && !(b < a).
+			if (left->first < right->first || right->first < left->first
+				|| left->second != right->second) {
+				return false;
+			}
+		}
+		return true;
+	};
 
 	const bool nextDeleted = editedPost.delete_at != 0 || editedPost.isDeleted;
 	const bool nextHidden = editedPost.hidden || !root_id.isEmpty();
@@ -290,7 +307,7 @@ bool BackendPost::updatePostEdits (BackendPost& editedPost)
 		|| hashtags != editedPost.hashtags
 		|| pending_post_id != editedPost.pending_post_id
 		|| !sameFiles(files, editedPost.files)
-		|| reactions != editedPost.reactions
+		|| !sameReactions(reactions, editedPost.reactions)
 		|| reply_count != editedPost.reply_count
 		|| last_reply_at != editedPost.last_reply_at
 		|| threadParticipantUserIds != editedPost.threadParticipantUserIds
