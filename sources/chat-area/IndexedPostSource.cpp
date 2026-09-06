@@ -14,7 +14,8 @@ IndexedPostSource::IndexedPostSource(BackendChannel& channelInstance, QObject* p
 
 bool IndexedPostSource::isAvailable(int index) const
 {
-    return index >= 0 && index < postIds.size() && !postIds.at(index).isEmpty()
+    return index >= 0 && index < static_cast<int>(postIds.size())
+        && !postIds.at(index).isEmpty()
         && channel.postIdToPost.contains(postIds.at(index));
 }
 
@@ -103,7 +104,7 @@ void IndexedPostSource::publishExactWindow(const ExactWindowMutation& mutation)
 bool IndexedPostSource::resizeLogicalTail(int count)
 {
     count = std::max(0, count);
-    if (count == postIds.size()) {
+    if (count == static_cast<int>(postIds.size())) {
         return false;
     }
 
@@ -144,7 +145,8 @@ void IndexedPostSource::eraseLogicalSlots(int first, int count)
 void IndexedPostSource::rebuildIndex()
 {
     postIndexes.clear();
-    for (int index = 0; index < postIds.size(); ++index) {
+    const int count = static_cast<int>(postIds.size());
+    for (int index = 0; index < count; ++index) {
         if (!postIds.at(index).isEmpty()) {
             postIndexes.insert(postIds.at(index), index);
         }
