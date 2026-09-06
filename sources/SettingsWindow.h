@@ -21,6 +21,7 @@
 
 #include <QDialog>
 
+class QSpinBox;
 
 namespace Ui {
 class SettingsWindow;
@@ -37,9 +38,21 @@ public:
     ~SettingsWindow();
 public:
     void applyNewSettings ();
+
 private:
     Ui::SettingsWindow *ui;
+
+    QSpinBox* attachmentCacheSizeMB = nullptr;
+    QSpinBox* diskChannelIdleHours = nullptr;
+    QSpinBox* diskMaxMB = nullptr;
+    QSpinBox* diskMaxPosts = nullptr;
+    QSpinBox* diskMaxThreadReplies = nullptr;
+    QSpinBox* diskMaintenanceMinutes = nullptr;
+    QSpinBox* memoryChannelIdleMinutes = nullptr;
+    QSpinBox* memoryHardMB = nullptr;
+    QSpinBox* memoryTargetMB = nullptr;
+    QSpinBox* memoryPostTtlMinutes = nullptr;
+    QSpinBox* memorySweepSeconds = nullptr;
 };
 
 } /* namespace Mattermost */
-
