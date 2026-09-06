@@ -1,0 +1,31 @@
+name: Apply terminal boundary page optimization
+
+on:
+  push:
+    branches:
+      - chatgpt/post-disk-cache
+    paths:
+      - .github/workflows/apply-terminal-boundary-page.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 tools/apply-terminal-boundary-page.py
+      - name: Validate and commit
+        run: |
+          git diff --check
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git rm tools/apply-terminal-boundary-page.py .github/workflows/apply-terminal-boundary-page.yml
+          git add sources/chat-area/ChannelPostSource.cpp docs/long-list-architecture.md
+          git commit -m 'Materialize terminal boundary candidates'
+          git push origin HEAD:chatgpt/post-disk-cache
