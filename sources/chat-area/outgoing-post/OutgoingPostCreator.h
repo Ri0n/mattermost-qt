@@ -61,6 +61,7 @@ public:
 	void onDragMoveEvent (QDragMoveEvent* event);
 	void onDropEvent (QDropEvent* event);
 	void setStatusLabelText (const QString& string);
+	const BackendPost* editingPost() const { return postToEdit; }
 
 public slots:
 	void onAttachButtonClick ();
