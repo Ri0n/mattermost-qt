@@ -31,6 +31,14 @@ enum Kind {
     Category,
     Channel,
     Thread,
+    VirtualDestination,
+};
+
+/** Local destinations that are not ordinary server sidebar rows. */
+enum Destination {
+    NoDestination = 0,
+    PersonalDestination,
+    SavedDestination,
 };
 
 /**
@@ -51,6 +59,7 @@ enum Role {
     ChannelTypeRole,
     ChannelIdRole,
     ThreadIdRole,
+    DestinationRole,
 };
 
 } // namespace SidebarItem
