@@ -8,20 +8,52 @@
 #include <QDir>
 #include <QHash>
 #include <QMetaObject>
+#include <QSettings>
 #include <QStandardPaths>
 
 #include "PostCacheStore.h"
+#include "Settings.h"
 
 namespace Mattermost {
 namespace {
 
 constexpr int InvalidationWatermarkPruneThreshold = 4096;
 constexpr qint64 InvalidationWatermarkLifetimeMs = 60LL * 60 * 1000;
+constexpr qint64 MiB = 1024LL * 1024;
 
 QString defaultDatabasePath()
 {
     const QDir cacheRoot(QStandardPaths::writableLocation(QStandardPaths::CacheLocation));
     return cacheRoot.filePath(QStringLiteral("post-cache/posts.sqlite3"));
+}
+
+PostCacheStore::Limits configuredLimits()
+{
+    QSettings settings;
+    PostCacheStore::Limits limits;
+    limits.maxBytes = std::max<qint64>(
+        MiB,
+        settings.value(POST_CACHE_DISK_MAX_MB,
+                       POST_CACHE_DISK_MAX_MB_DEFAULT).toLongLong() * MiB);
+    limits.maxPosts = std::max(
+        1,
+        settings.value(POST_CACHE_DISK_MAX_POSTS,
+                       POST_CACHE_DISK_MAX_POSTS_DEFAULT).toInt());
+    limits.maxPostsPerThread = std::max(
+        1,
+        settings.value(POST_CACHE_DISK_MAX_THREAD_REPLIES,
+                       POST_CACHE_DISK_MAX_THREAD_REPLIES_DEFAULT).toInt());
+    limits.maxChannelIdleMs = std::max<qint64>(
+        60LL * 60 * 1000,
+        settings.value(POST_CACHE_DISK_CHANNEL_IDLE_HOURS,
+                       POST_CACHE_DISK_CHANNEL_IDLE_HOURS_DEFAULT).toLongLong()
+            * 60LL * 60 * 1000);
+    limits.maintenanceIntervalMs = std::max(
+        60 * 1000,
+        settings.value(POST_CACHE_DISK_MAINTENANCE_MINUTES,
+                       POST_CACHE_DISK_MAINTENANCE_MINUTES_DEFAULT).toInt()
+            * 60 * 1000);
+    return limits;
 }
 
 QString normalizedServer(QString server)
@@ -44,9 +76,21 @@ QString watermarkKey(const QString& server, const QString& userId, const QString
 class PostCacheWorker final : public QObject
 {
 public:
-    explicit PostCacheWorker(QString path)
+    PostCacheWorker(QString path, PostCacheStore::Limits configuredLimits)
         : databasePath(std::move(path))
+        , limits(std::move(configuredLimits))
     {
+    }
+
+    void recordChannelOpened(const QString& server,
+                             const QString& userId,
+                             const QString& channelId,
+                             qint64 openedAt)
+    {
+        if (channelId.isEmpty() || !selectAccount(server, userId)) {
+            return;
+        }
+        store->recordChannelOpened(channelId, openedAt);
     }
 
     void storePosts(const QString& server,
@@ -131,6 +175,7 @@ private:
         }
         if (!store) {
             store = std::make_unique<PostCacheStore>(databasePath);
+            store->setLimits(limits);
             if (!store->open()) {
                 store.reset();
                 return false;
@@ -157,6 +202,7 @@ private:
     }
 
     QString databasePath;
+    PostCacheStore::Limits limits;
     std::unique_ptr<PostCacheStore> store;
     QHash<QString, InvalidationWatermark> invalidationWatermarks;
 };
@@ -169,7 +215,7 @@ PostCacheService::PostCacheService()
 PostCacheService::PostCacheService(QString databasePath)
 {
     workerThread.setObjectName(QStringLiteral("MattermostPostCache"));
-    worker = new PostCacheWorker(std::move(databasePath));
+    worker = new PostCacheWorker(std::move(databasePath), configuredLimits());
     worker->moveToThread(&workerThread);
     QObject::connect(&workerThread, &QThread::finished,
                      worker, &QObject::deleteLater);
@@ -195,6 +241,25 @@ PostCacheService::~PostCacheService()
         workerThread.wait();
     }
     worker = nullptr;
+}
+
+void PostCacheService::recordChannelOpened(const QString& server,
+                                           const QString& userId,
+                                           const QString& channelId,
+                                           qint64 openedAt)
+{
+    if (!worker || server.trimmed().isEmpty() || userId.trimmed().isEmpty()
+        || channelId.isEmpty()) {
+        return;
+    }
+
+    PostCacheWorker* const currentWorker = worker;
+    QMetaObject::invokeMethod(currentWorker,
+                              [currentWorker, server, userId, channelId, openedAt] {
+                                  currentWorker->recordChannelOpened(server, userId,
+                                                                     channelId, openedAt);
+                              },
+                              Qt::QueuedConnection);
 }
 
 void PostCacheService::storePosts(const QString& server,
