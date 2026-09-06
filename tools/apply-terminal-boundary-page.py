@@ -45,12 +45,12 @@ cpp.write_text(text.replace(old, new, 1))
 
 doc = Path("docs/long-list-architecture.md")
 text = doc.read_text()
-old = '''Near the end of binary search, when at most one unknown ten-post page remains, the source fetches the
-page immediately before the known empty boundary with `per_page=10`. A short result proves the exact
-oldest boundary immediately; a full result adjacent to the empty page proves an exact multiple of ten;
-and an empty result moves the boundary one page inward. In every case any returned posts are already
-useful viewport/prefetch materialization. The phantom logical prefix is removed once the exact count is
-known and normal ten-post paging continues. No identity cursor is introduced by this reconciliation path.
+old = '''Near the end of binary search, when at most one unknown ten-post page remains, the source first fetches
+the known non-empty page with `per_page=10`. A short result proves the exact oldest boundary immediately.
+If it is full, at most the one adjacent candidate page remains; that page either supplies useful data or
+proves an exact multiple-of-ten boundary. In every case returned posts are already useful viewport/
+prefetch materialization. The phantom logical prefix is removed once the exact count is known and normal
+ten-post paging continues. No identity cursor is introduced by this reconciliation path.
 '''
 new = '''Near the end of binary search, when at most two unknown ten-post pages remain, the source stops
 spending one-root probes on that tiny interval and fetches the first unknown page with `per_page=10`.
