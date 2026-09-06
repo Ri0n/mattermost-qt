@@ -32,7 +32,7 @@ public:
      * target. The context is placed exactly when it intersects an authoritative
      * row (or a confirmed channel boundary); otherwise its target gets a
      * timestamp-based estimated absolute position and the whole context remains
-     * provisional until a later cursor expansion intersects authoritative data.
+     * provisional until an absolute page later reconciles it by identity.
      */
     bool adoptNavigationContext(const QString& targetPostId,
                                 const QStringList& chronologicalIds,
@@ -48,9 +48,9 @@ public:
     void requestBeforeFirst(RequestReason reason, quint64 generation) override;
 
 private:
-    // Cursor continuations and absolute range seeds use the same bounded page
-    // size. Remote seeks jump by absolute page number rather than by inflating
-    // per_page or walking from a distant identity anchor.
+    // Channel history range loading always uses Mattermost's ten-post absolute
+    // pages. Identity cursors are reserved for semantic/compatibility paths and
+    // never define ordinary scroll or seek request boundaries.
     static constexpr int ServerPageSize = 10;
 
     struct ProvisionalWindow {
