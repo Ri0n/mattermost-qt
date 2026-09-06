@@ -117,7 +117,6 @@ private:
 	QString parentPostId;
 	QString pendingPostId;
 	AbstractPostSource* postSource = nullptr; // QObject child; owned by ChatArea
-	QWidget* loadingIndicator = nullptr;
 	QTimer* loadingDelayTimer = nullptr;
 	int pendingMessageLoads = 0;
 
