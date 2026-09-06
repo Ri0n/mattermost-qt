@@ -104,9 +104,8 @@ ThreadPostSource::ThreadPostSource(Backend& backendInstance,
                                    BackendChannel& channelInstance,
                                    QString sourceRootId,
                                    QObject* parent)
-    : AbstractPostSource(parent)
+    : IndexedPostSource(channelInstance, parent)
     , backend(backendInstance)
-    , channel(channelInstance)
     , rootId(std::move(sourceRootId))
 {
     postIds.resize(currentLogicalCount());
@@ -143,15 +142,10 @@ ThreadPostSource::ThreadPostSource(Backend& backendInstance,
                     << " old=" << postIds.size()
                     << " new=" << count
                     << " replyCount=" << post.reply_count;
-                postIds.resize(count);
-                if (!postIds.isEmpty()) {
-                    postIds[0] = rootId;
-                }
-                rebuildIndex();
+                resizeLogicalTail(count);
                 qCDebug(lcThreadTimelineTrace).nospace()
                     << "THREAD_SLOTS source=" << static_cast<const void*>(this)
                     << ' ' << slotSummary(postIds);
-                emit itemCountChanged(count);
             }
         }
     });
@@ -169,25 +163,6 @@ ThreadPostSource::ThreadPostSource(Backend& backendInstance,
             emit itemsChanged(index, index);
         }
     });
-}
-
-bool ThreadPostSource::isAvailable(int index) const
-{
-    return index >= 0 && index < postIds.size() && !postIds.at(index).isEmpty()
-        && channel.postIdToPost.contains(postIds.at(index));
-}
-
-BackendPost* ThreadPostSource::postAt(int index) const
-{
-    if (!isAvailable(index)) {
-        return nullptr;
-    }
-    return channel.postIdToPost.value(postIds.at(index), nullptr);
-}
-
-int ThreadPostSource::indexOfPost(const QString& postId) const
-{
-    return postIndexes.value(postId, -1);
 }
 
 int ThreadPostSource::ensurePostIndex(const QString& postId)
@@ -511,55 +486,9 @@ void ThreadPostSource::seedCachedPosts()
     emit rangeAvailable(0, 0);
 }
 
-void ThreadPostSource::rebuildIndex()
-{
-    postIndexes.clear();
-    for (int index = 0; index < postIds.size(); ++index) {
-        if (!postIds.at(index).isEmpty()) {
-            postIndexes.insert(postIds.at(index), index);
-        }
-    }
-}
-
 void ThreadPostSource::placeExactWindow(int first, const QStringList& ids)
 {
-    if (postIds.isEmpty() || ids.isEmpty()) {
-        return;
-    }
-
-    first = std::max(0, std::min(first, static_cast<int>(postIds.size()) - 1));
-    const int count = std::min(static_cast<int>(ids.size()),
-                               static_cast<int>(postIds.size()) - first);
-    if (count <= 0) {
-        return;
-    }
-    const int last = first + count - 1;
-    const QVector<QString> before = postIds;
-
-    // Apply identity changes atomically. Exact cursor windows have authoritative
-    // logical placement, so old provisional occurrences move to this window;
-    // they are not allowed to override the cursor origin.
-    for (int offset = 0; offset < count; ++offset) {
-        const QString& id = ids.at(offset);
-        const int target = first + offset;
-        const int existing = postIndexes.value(id, -1);
-        if (existing >= 0 && existing != target) {
-            postIds[existing].clear();
-        }
-    }
-    for (int offset = 0; offset < count; ++offset) {
-        postIds[first + offset] = ids.at(offset);
-    }
-    rebuildIndex();
-
-    // Newly filled empty slots need only availability. Existing concrete rows
-    // are rematerialized only when their identity really changed.
-    for (int index = 0; index < postIds.size(); ++index) {
-        if (before.at(index) != postIds.at(index) && !before.at(index).isEmpty()) {
-            emit itemsChanged(index, index);
-        }
-    }
-    emit rangeAvailable(first, last);
+    publishExactWindow(assignExactWindow(first, ids));
 }
 
 void ThreadPostSource::placeInitial(const QStringList& ids)
@@ -669,30 +598,11 @@ void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
         << " targetRange=[" << first << ',' << last << ']'
         << " before=" << slotSummary(postIds);
 
-    const QVector<QString> before = postIds;
-    for (int offset = 0; offset < count; ++offset) {
-        const QString& id = ids.at(offset);
-        const int target = first + offset;
-        const int existing = postIndexes.value(id, -1);
-        if (existing >= 0 && existing != target) {
-            postIds[existing].clear();
-        }
-    }
-    for (int offset = 0; offset < count; ++offset) {
-        postIds[first + offset] = ids.at(offset);
-    }
-    rebuildIndex();
+    publishExactWindow(assignExactWindow(first, ids.mid(0, count)));
 
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PLACE_APPROX_DONE source=" << static_cast<const void*>(this)
         << ' ' << slotSummary(postIds);
-
-    for (int index = 0; index < postIds.size(); ++index) {
-        if (before.at(index) != postIds.at(index) && !before.at(index).isEmpty()) {
-            emit itemsChanged(index, index);
-        }
-    }
-    emit rangeAvailable(first, last);
 }
 
 uint64_t ThreadPostSource::estimatedCreateAt(int logicalIndex) const
@@ -771,27 +681,21 @@ void ThreadPostSource::appendLiveReply(BackendPost& post)
     const bool metadataReservedTail = count == oldCount && count > 1
         && postIds.at(count - 1).isEmpty();
     if (count > oldCount) {
-        postIds.resize(count);
+        resizeLogicalTail(count);
     } else if (!metadataReservedTail) {
         // Defensive fallback for a producer that delivers the live reply before
         // root metadata has advanced. In that ordering the event itself is the
         // only evidence that the logical thread grew.
         count = oldCount + 1;
-        postIds.resize(count);
-    }
-    if (!postIds.isEmpty()) {
-        postIds[0] = rootId;
+        resizeLogicalTail(count);
     }
     const int index = count - 1;
-    postIds[index] = post.id;
-    rebuildIndex();
+    publishExactWindow(assignExactWindow(index, QStringList { post.id }));
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_LIVE_APPEND source=" << static_cast<const void*>(this)
         << " post=" << shortId(post.id)
         << " index=" << index
         << ' ' << slotSummary(postIds);
-    emit itemCountChanged(count);
-    emit rangeAvailable(index, index);
 }
 
 } // namespace Mattermost

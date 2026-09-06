@@ -8,7 +8,7 @@
 #include <QStringList>
 #include <QVector>
 
-#include "AbstractPostSource.h"
+#include "IndexedPostSource.h"
 
 namespace Mattermost {
 
@@ -16,7 +16,7 @@ class Backend;
 class BackendChannel;
 
 /** Main-channel root posts mapped onto oldest->newest logical indices. */
-class ChannelPostSource : public AbstractPostSource
+class ChannelPostSource : public IndexedPostSource
 {
     Q_OBJECT
 public:
@@ -24,10 +24,6 @@ public:
                                BackendChannel& channel,
                                QObject* parent = nullptr);
 
-    int itemCount() const override { return static_cast<int>(postIds.size()); }
-    bool isAvailable(int index) const override;
-    BackendPost* postAt(int index) const override;
-    int indexOfPost(const QString& postId) const override;
     int ensurePostIndex(const QString& postId) override;
 
     /**
@@ -95,7 +91,6 @@ private:
                                 int exactFirstHint = -1);
     void seedCachedPosts();
     void seedUnknownNewestPost();
-    void rebuildIndex();
     void removeLogicalRange(int first, int count);
     void placePage(int page, const QStringList& chronologicalIds);
     void probeEstimatedOldestBoundary(std::function<void()> completion);
@@ -112,9 +107,6 @@ private:
     void appendLivePost(BackendPost& post);
 
     Backend& backend;
-    BackendChannel& channel;
-    QVector<QString> postIds;
-    QHash<QString, int> postIndexes;
 
     const bool hasRootCountEstimate;
     // total_msg_count_root is a message-count estimate, not /posts row count.

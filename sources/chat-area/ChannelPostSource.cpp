@@ -64,9 +64,8 @@ QStringList uniqueChronological(const QStringList& ids)
 ChannelPostSource::ChannelPostSource(Backend& backendInstance,
                                      BackendChannel& channelInstance,
                                      QObject* parent)
-    : AbstractPostSource(parent)
+    : IndexedPostSource(channelInstance, parent)
     , backend(backendInstance)
-    , channel(channelInstance)
     , hasRootCountEstimate(channelInstance.has_total_msg_count_root)
 {
     if (hasRootCountEstimate) {
@@ -135,32 +134,8 @@ ChannelPostSource::ChannelPostSource(Backend& backendInstance,
         if (!hasRootCountEstimate) {
             return;
         }
-        const int count = currentLogicalCount();
-        if (count != static_cast<int>(postIds.size())) {
-            postIds.resize(count);
-            rebuildIndex();
-            emit itemCountChanged(count);
-        }
+        resizeLogicalTail(currentLogicalCount());
     });
-}
-
-bool ChannelPostSource::isAvailable(int index) const
-{
-    return index >= 0 && index < postIds.size() && !postIds.at(index).isEmpty()
-        && channel.postIdToPost.contains(postIds.at(index));
-}
-
-BackendPost* ChannelPostSource::postAt(int index) const
-{
-    if (!isAvailable(index)) {
-        return nullptr;
-    }
-    return channel.postIdToPost.value(postIds.at(index), nullptr);
-}
-
-int ChannelPostSource::indexOfPost(const QString& postId) const
-{
-    return postIndexes.value(postId, -1);
 }
 
 int ChannelPostSource::ensurePostIndex(const QString& postId)
@@ -779,18 +754,7 @@ void ChannelPostSource::insertLogicalPrefix(int count)
     if (provisionalWindow.isValid()) {
         provisionalWindow.first += count;
     }
-
-    QVector<QString> next;
-    next.reserve(count + static_cast<int>(postIds.size()));
-    for (int i = 0; i < count; ++i) {
-        next.push_back(QString());
-    }
-    for (const QString& id : std::as_const(postIds)) {
-        next.push_back(id);
-    }
-    postIds = std::move(next);
-    rebuildIndex();
-    emit itemsInserted(0, count);
+    insertEmptyLogicalSlots(0, count);
 }
 
 bool ChannelPostSource::canRequestBeforeFirst() const
@@ -1189,16 +1153,6 @@ void ChannelPostSource::seedUnknownNewestPost()
     rebuildIndex();
 }
 
-void ChannelPostSource::rebuildIndex()
-{
-    postIndexes.clear();
-    for (int index = 0; index < postIds.size(); ++index) {
-        if (!postIds.at(index).isEmpty()) {
-            postIndexes.insert(postIds.at(index), index);
-        }
-    }
-}
-
 void ChannelPostSource::removeLogicalRange(int first, int count)
 {
     first = std::max(0, std::min(first, static_cast<int>(postIds.size())));
@@ -1240,11 +1194,7 @@ void ChannelPostSource::removeLogicalRange(int first, int count)
     for (int index = first; index <= last; ++index) {
         provisionalPostIds.remove(postIds.at(index));
     }
-    for (int i = 0; i < count; ++i) {
-        postIds.removeAt(first);
-    }
-    rebuildIndex();
-    emit itemsRemoved(first, count);
+    eraseLogicalSlots(first, count);
 }
 
 void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
@@ -1277,36 +1227,13 @@ void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
     const int last = first + count - 1;
 
     bool touchesProvisionalIdentity = false;
-    bool mappingChanged = false;
-    QSet<int> concreteChanged;
-
-    for (int offset = 0; offset < count; ++offset) {
-        const QString& id = chronologicalIds.at(offset);
-        if (provisionalPostIds.contains(id)) {
-            touchesProvisionalIdentity = true;
-        }
-        const int existing = postIndexes.value(id, -1);
-        if (existing >= 0 && (existing < first || existing > last)
-            && !postIds.at(existing).isEmpty()) {
-            postIds[existing].clear();
-            concreteChanged.insert(existing);
-            mappingChanged = true;
-        }
-    }
-
-    for (int offset = 0; offset < count; ++offset) {
-        const int index = first + offset;
-        const QString& id = chronologicalIds.at(offset);
-        if (postIds.at(index) != id) {
-            if (!postIds.at(index).isEmpty()) {
-                concreteChanged.insert(index);
-            }
-            postIds[index] = id;
-            mappingChanged = true;
-        }
+    const QStringList pageIds = chronologicalIds.mid(0, count);
+    for (const QString& id : pageIds) {
+        touchesProvisionalIdentity = touchesProvisionalIdentity
+            || provisionalPostIds.contains(id);
         provisionalPostIds.remove(id);
     }
-    rebuildIndex();
+    const ExactWindowMutation mutation = assignExactWindow(first, pageIds);
 
     // An absolute page that happens to intersect the provisional island by ID
     // provides the missing exact offset. Re-adopt the whole local context before
@@ -1317,18 +1244,9 @@ void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
                                window.reachedOldest, window.reachedNewest);
     }
 
-    // Re-fetching an already known page must be a no-op. In particular, do not
-    // emit rangeAvailable/itemsChanged for identical identities: both signals
-    // schedule another synchronization, which used to clear request suppression
-    // and immediately ask for the same impossible oldest range again.
-    if (!mappingChanged) {
-        return;
-    }
-
-    for (int index : std::as_const(concreteChanged)) {
-        emit itemsChanged(index, index);
-    }
-    emit rangeAvailable(first, last);
+    // Re-fetching an already known page is deliberately a no-op. The shared
+    // publisher emits nothing unless the identity mapping actually changed.
+    publishExactWindow(mutation);
 }
 
 void ChannelPostSource::prependDiscovered(const QStringList& chronologicalIds)
@@ -1337,20 +1255,9 @@ void ChannelPostSource::prependDiscovered(const QStringList& chronologicalIds)
         return;
     }
 
-    QVector<QString> combined;
-    combined.reserve(static_cast<int>(chronologicalIds.size()) + static_cast<int>(postIds.size()));
-    for (const QString& id : chronologicalIds) {
-        combined.push_back(id);
-    }
-    for (const QString& id : std::as_const(postIds)) {
-        combined.push_back(id);
-    }
-
     const int inserted = static_cast<int>(chronologicalIds.size());
-    postIds = std::move(combined);
-    rebuildIndex();
-    emit itemsInserted(0, inserted);
-    emit rangeAvailable(0, inserted - 1);
+    insertEmptyLogicalSlots(0, inserted);
+    publishExactWindow(assignExactWindow(0, chronologicalIds));
 }
 
 void ChannelPostSource::appendLivePost(BackendPost& post)
@@ -1369,12 +1276,9 @@ void ChannelPostSource::appendLivePost(BackendPost& post)
     if (count <= postIds.size()) {
         count = static_cast<int>(postIds.size()) + 1;
     }
-    postIds.resize(count);
+    resizeLogicalTail(count);
     const int index = count - 1;
-    postIds[index] = post.id;
-    postIndexes.insert(post.id, index);
-    emit itemCountChanged(count);
-    emit rangeAvailable(index, index);
+    publishExactWindow(assignExactWindow(index, QStringList { post.id }));
 }
 
 } // namespace Mattermost
