@@ -19,19 +19,40 @@ jobs:
         with:
           ref: chatgpt/sidebar-personal
           fetch-depth: 0
-      - name: Fix helper matcher
+      - name: Stabilize helper anchors
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('.github/apply_sidebar_personal.py')
-          s = p.read_text()
+          import re
+
+          helper = Path('.github/apply_sidebar_personal.py')
+          s = helper.read_text()
           s = s.replace(
               r'void Backend::createDirectChannel \(const BackendUser& user\)\n\{.*?\n\}\n\nvoid Backend::retrieveChannelPosts',
               r'void Backend::createDirectChannel \(const BackendUser& user\)\n\{.*?\n\}\n\nvoid Backend::addUserToChannel')
           s = s.replace(
               'void Backend::retrieveChannelPosts"""',
               'void Backend::addUserToChannel"""')
-          p.write_text(s)
+
+          # The old header aligns this member with a variable number of tabs.
+          # Add the new flag directly, then remove only that brittle helper call.
+          header = Path('sources/channel-tree/ChannelTree.h')
+          h = header.read_text()
+          h, count = re.subn(
+              r'(\tbool\t+renderingSidebar;\n)(\};)',
+              r'\1    bool                                personalUserConnected = false;\n\2',
+              h, count=1)
+          if count != 1:
+              raise SystemExit('renderingSidebar member not found')
+          header.write_text(h)
+
+          s, count = re.subn(
+              r'replace_once\(\n    "sources/channel-tree/ChannelTree\.h",\n    """\\tbool.*?personalUserConnected = false;\\n\};\\n""",\n\)\n\n# ChannelTree implementation\.',
+              '# ChannelTree implementation.',
+              s, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit('helper renderingSidebar replace block not found')
+          helper.write_text(s)
           PY
       - name: Apply patch
         run: python3 .github/apply_sidebar_personal.py
