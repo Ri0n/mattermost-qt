@@ -424,8 +424,8 @@ case the source requests both intersecting pages and places each with `placePage
 seek, normal scrolling and initial tail materialization therefore share exactly the same paging
 path instead of switching between page arithmetic and cursor walks. A successful empty absolute
 page is also authoritative boundary evidence: when `total_msg_count_root` overstates `/posts`
-history, the source resolves the real oldest page with absolute ten-post probes, removes the phantom
-logical prefix, and keeps using the corrected page arithmetic afterward.
+history, the source resolves the exact root count with absolute `per_page=1` offset probes, removes
+that phantom logical prefix, then returns to ten-post pages for visible/prefetched history.
 
 Every successful range request ends in
 one of three states: new identities were placed, a real boundary removed stale
