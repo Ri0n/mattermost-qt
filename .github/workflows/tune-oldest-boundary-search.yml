@@ -1,0 +1,28 @@
+name: Tune oldest boundary search
+
+on:
+  push:
+    paths:
+      - '.github/workflows/tune-oldest-boundary-search.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+      - name: Apply patch
+        run: python3 tune-oldest-boundary-search.py
+      - name: Validate and commit
+        run: |
+          git diff --check
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add -A
+          git commit -m 'Skip redundant oldest-page probe'
+          git push origin HEAD:chatgpt/post-disk-cache
