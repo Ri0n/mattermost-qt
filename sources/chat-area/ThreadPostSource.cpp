@@ -312,7 +312,7 @@ void ThreadPostSource::requestRange(int first,
     }
 
     if (lastMissing >= 1
-        && lastMissing + 1 < postIds.size()
+        && lastMissing + 1 < static_cast<int>(postIds.size())
         && isAuthoritativeIndex(lastMissing + 1)) {
         const int anchorIndex = lastMissing + 1;
         const QString anchorId = postIds.at(anchorIndex);
@@ -568,7 +568,7 @@ void ThreadPostSource::validateCachedTail()
     }
 
     QPointer<ThreadPostSource> guard(this);
-    if (postIds.size() - 1 <= ServerBlockSize) {
+    if (static_cast<int>(postIds.size()) - 1 <= ServerBlockSize) {
         PostTimelineService::instance(backend).loadThreadPage(
             channel, rootId, ServerBlockSize, QString(), 0,
             [guard](const PostTimelineService::Page& result) {
@@ -592,7 +592,7 @@ void ThreadPostSource::validateCachedTail()
 
 bool ThreadPostSource::isAuthoritativeIndex(int index) const
 {
-    if (index < 0 || index >= postIds.size()) {
+    if (index < 0 || index >= static_cast<int>(postIds.size())) {
         return false;
     }
     const QString& id = postIds.at(index);
@@ -726,7 +726,7 @@ void ThreadPostSource::placeApproximate(int targetIndex, const QStringList& ids)
         << " targetRange=[" << first << ',' << last << ']'
         << " before=" << slotSummary(postIds);
 
-    publishExactWindow(assignExactWindow(first, ids.mid(0, count)));
+    placeExactWindow(first, ids.mid(0, count));
 
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PLACE_APPROX_DONE source=" << static_cast<const void*>(this)

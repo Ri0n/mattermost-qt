@@ -159,6 +159,11 @@ public:
     QString							purpose;
     int								type;
     uint64_t						last_post_at;
+    // Newest root-post timestamp. Unlike last_post_at, thread replies do not
+    // advance this value, so it is the correct freshness marker for the main
+    // channel root timeline/cache suffix. Older servers may omit the field;
+    // the constructor then falls back to last_post_at.
+    uint64_t                         last_root_post_at;
     int								total_msg_count;
     int								total_msg_count_root;
     bool								has_total_msg_count_root;

@@ -92,6 +92,9 @@ BackendChannel::BackendChannel (Storage& storage, const QJsonObject& jsonObject)
 	type = getChannelType (jsonObject);
 
 	last_post_at = jsonObject.value("last_post_at").toVariant().toULongLong();
+	last_root_post_at = jsonObject.contains("last_root_post_at")
+		? jsonObject.value("last_root_post_at").toVariant().toULongLong()
+		: last_post_at;
 
 	total_msg_count = jsonObject.value("total_msg_count").toInt();
 	has_total_msg_count_root = jsonObject.contains("total_msg_count_root");

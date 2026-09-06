@@ -1121,8 +1121,8 @@ void ChannelPostSource::seedCachedPosts()
     // absolute logical positions; semantic navigation adopts those on demand.
     const BackendPost* newest = cached.last();
     if (postIds.size() > cached.size()
-        && channel.last_post_at != 0
-        && newest->create_at < channel.last_post_at) {
+        && channel.last_root_post_at != 0
+        && newest->create_at < channel.last_root_post_at) {
         return;
     }
 
@@ -1139,7 +1139,7 @@ void ChannelPostSource::seedCachedPosts()
 
 void ChannelPostSource::seedUnknownNewestPost()
 {
-    if (hasRootCountEstimate || channel.last_post_at == 0) {
+    if (hasRootCountEstimate || channel.last_root_post_at == 0) {
         return;
     }
 
@@ -1149,7 +1149,7 @@ void ChannelPostSource::seedUnknownNewestPost()
     }
 
     BackendPost* newest = cached.last();
-    if (!newest || newest->create_at < channel.last_post_at) {
+    if (!newest || newest->create_at < channel.last_root_post_at) {
         return;
     }
 
@@ -1176,13 +1176,13 @@ void ChannelPostSource::hydrateCachedTail()
 
             BackendPost* newest = guard->channel.postIdToPost.value(
                 result.postIds.last(), nullptr);
-            if (!newest || (guard->channel.last_post_at != 0
-                            && newest->create_at != guard->channel.last_post_at)) {
+            if (!newest || (guard->channel.last_root_post_at != 0
+                            && newest->create_at != guard->channel.last_root_post_at)) {
                 qCDebug(lcTimelineChannel).nospace()
                     << "CACHE_TAIL_SKIP channel=" << guard->channel.id
                     << " reason=newest-mismatch cached="
                     << (newest ? newest->create_at : 0)
-                    << " channel=" << guard->channel.last_post_at;
+                    << " channel=" << guard->channel.last_root_post_at;
                 return;
             }
 

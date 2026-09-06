@@ -329,8 +329,11 @@ It consumes only provenance-backed tail windows; arbitrary cached rows never bec
 
 A cached contiguous tail window may give an immediate first paint, but SQLite does not know the
 current absolute `/posts?page=N&per_page=10` grid after remote traffic changed the channel. The source
-also requires the cached newest post timestamp to match current channel `last_post_at`; otherwise the
-window is retained only as ordinary cached bodies and is not mapped as the current suffix.
+also requires the cached newest root timestamp to match current channel `last_root_post_at`; otherwise
+the window is retained only as ordinary cached bodies and is not mapped as the current suffix. This
+must not use `last_post_at`, because a thread reply advances general channel activity without changing
+the root-post timeline. Older server payloads that omit `last_root_post_at` fall back to
+`last_post_at` in `BackendChannel`.
 
 Therefore a cached channel window is a **newest-aligned provisional suffix** only:
 
