@@ -344,21 +344,17 @@ void ChannelPostSource::resolveOldestBoundary(int emptyPage,
         oldestBoundaryWaiters.push_back(std::move(completion));
     }
 
-    // page=N with per_page=1 addresses exactly the Nth root from the newest
-    // edge. Convert the empty ten-post page into an empty-offset upper bound and
-    // resolve the exact boundary with one-post probes. The ten-post page size is
-    // reserved for materialization/prefetch, not boundary discovery.
-    const int emptyOffset = std::max(0, emptyPage) * ServerPageSize;
+    emptyPage = std::max(0, emptyPage);
     if (oldestBoundaryProbeInFlight) {
-        if (oldestBoundaryEmptyOffset < 0 || emptyOffset < oldestBoundaryEmptyOffset) {
-            oldestBoundaryEmptyOffset = emptyOffset;
+        if (oldestBoundaryEmptyPage < 0 || emptyPage < oldestBoundaryEmptyPage) {
+            oldestBoundaryEmptyPage = emptyPage;
         }
         return;
     }
 
     oldestBoundaryProbeInFlight = true;
-    oldestBoundaryNonEmptyOffset = -1;
-    oldestBoundaryEmptyOffset = emptyOffset;
+    oldestBoundaryNonEmptyPage = -1;
+    oldestBoundaryEmptyPage = emptyPage;
     oldestBoundaryProbeStep = 1;
     probeOldestBoundary();
 }
@@ -369,20 +365,15 @@ void ChannelPostSource::probeOldestBoundary()
         return;
     }
 
-    if (oldestBoundaryEmptyOffset == 0) {
+    if (oldestBoundaryEmptyPage == 0) {
         reconcileRootCount(0);
         finishOldestBoundaryProbe();
         return;
     }
 
-    if (oldestBoundaryNonEmptyOffset >= 0
-        && oldestBoundaryEmptyOffset == oldestBoundaryNonEmptyOffset + 1) {
-        const int actualCount = oldestBoundaryEmptyOffset;
-        reconcileRootCount(actualCount);
-
-        // Probes establish only the count. Once the coordinate system is exact,
-        // fetch the real oldest visible block with the normal ten-post policy.
-        const int page = (actualCount - 1) / ServerPageSize;
+    if (oldestBoundaryNonEmptyPage >= 0
+        && oldestBoundaryEmptyPage == oldestBoundaryNonEmptyPage + 1) {
+        const int page = oldestBoundaryNonEmptyPage;
         qCDebug(lcTimelineChannel).nospace()
             << "OLDEST_BOUNDARY_PAGE page=" << page
             << " perPage=" << ServerPageSize;
@@ -395,6 +386,8 @@ void ChannelPostSource::probeOldestBoundary()
                     return;
                 }
                 if (result.success && !result.postIds.isEmpty()) {
+                    guard->reconcileRootCount(
+                        page * ServerPageSize + static_cast<int>(result.postIds.size()));
                     guard->placePage(page, result.postIds);
                 }
                 guard->finishOldestBoundaryProbe();
@@ -402,26 +395,31 @@ void ChannelPostSource::probeOldestBoundary()
         return;
     }
 
-    int offset = -1;
-    if (oldestBoundaryNonEmptyOffset < 0) {
-        offset = std::max(0, oldestBoundaryEmptyOffset - oldestBoundaryProbeStep);
-        oldestBoundaryProbeStep = std::min(oldestBoundaryEmptyOffset + 1,
+    int page = -1;
+    if (oldestBoundaryNonEmptyPage < 0) {
+        page = std::max(0, oldestBoundaryEmptyPage - oldestBoundaryProbeStep);
+        oldestBoundaryProbeStep = std::min(oldestBoundaryEmptyPage + 1,
                                            oldestBoundaryProbeStep * 2);
     } else {
-        offset = oldestBoundaryNonEmptyOffset
-            + (oldestBoundaryEmptyOffset - oldestBoundaryNonEmptyOffset) / 2;
+        page = oldestBoundaryNonEmptyPage
+            + (oldestBoundaryEmptyPage - oldestBoundaryNonEmptyPage) / 2;
     }
 
+    // Search in normal ten-post page coordinates, but probe only the first root
+    // of each candidate page. With per_page=1, page=(P * 10) addresses exactly
+    // the offset at which normal page P would begin.
+    const int offset = page * ServerPageSize;
     qCDebug(lcTimelineChannel).nospace()
-        << "OLDEST_BOUNDARY_PROBE offset=" << offset
-        << " nonEmpty=" << oldestBoundaryNonEmptyOffset
-        << " empty=" << oldestBoundaryEmptyOffset
+        << "OLDEST_BOUNDARY_PROBE page=" << page
+        << " offset=" << offset
+        << " nonEmpty=" << oldestBoundaryNonEmptyPage
+        << " empty=" << oldestBoundaryEmptyPage
         << " perPage=1";
 
     QPointer<ChannelPostSource> guard(this);
     PostTimelineService::instance(backend).loadChannelPage(
         channel, offset, 1,
-        [guard, offset](const PostTimelineService::Page& result) {
+        [guard, page, offset](const PostTimelineService::Page& result) {
             if (!guard || !guard->oldestBoundaryProbeInFlight) {
                 return;
             }
@@ -432,15 +430,16 @@ void ChannelPostSource::probeOldestBoundary()
 
             const bool exists = !result.postIds.isEmpty();
             qCDebug(lcTimelineChannel).nospace()
-                << "OLDEST_BOUNDARY_RESULT offset=" << offset
+                << "OLDEST_BOUNDARY_RESULT page=" << page
+                << " offset=" << offset
                 << " exists=" << exists;
 
             if (exists) {
-                guard->oldestBoundaryNonEmptyOffset = std::max(
-                    guard->oldestBoundaryNonEmptyOffset, offset);
+                guard->oldestBoundaryNonEmptyPage = std::max(
+                    guard->oldestBoundaryNonEmptyPage, page);
             } else {
-                guard->oldestBoundaryEmptyOffset = std::min(
-                    guard->oldestBoundaryEmptyOffset, offset);
+                guard->oldestBoundaryEmptyPage = std::min(
+                    guard->oldestBoundaryEmptyPage, page);
             }
             guard->probeOldestBoundary();
         });
@@ -451,8 +450,8 @@ void ChannelPostSource::finishOldestBoundaryProbe()
     auto waiters = std::move(oldestBoundaryWaiters);
     oldestBoundaryWaiters.clear();
     oldestBoundaryProbeInFlight = false;
-    oldestBoundaryNonEmptyOffset = -1;
-    oldestBoundaryEmptyOffset = -1;
+    oldestBoundaryNonEmptyPage = -1;
+    oldestBoundaryEmptyPage = -1;
     oldestBoundaryProbeStep = 1;
 
     for (auto& waiter : waiters) {

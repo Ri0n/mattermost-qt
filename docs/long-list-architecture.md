@@ -268,12 +268,13 @@ therefore O(1) page requests rather than an identity-cursor walk through history
 `total_msg_count_root` may overestimate the rows returned by `/posts` because deleted roots can be
 omitted from history. If an absolute page calculated from that estimate is successfully fetched but
 empty, the source treats the empty response as boundary evidence instead of leaving a black logical
-range. Boundary discovery switches to `per_page=1`: in that coordinate system `page=N` asks only
-whether the root at newest-offset N exists. The source probes backward from the empty ten-post page
-with exponentially increasing offset steps, then binary-searches the remaining item interval. The
-first empty one-post offset is the exact real root count. The phantom logical prefix is removed once,
-then the actual oldest viewport block is fetched with the normal `per_page=10` policy. No identity
-cursor is introduced by this reconciliation path.
+range. Boundary search stays in ten-post page coordinates but tests each candidate page with one
+root only: candidate page P is probed as `page=P*10&per_page=1`, which asks whether the first offset
+of that ten-post page exists. Exponential stepping followed by binary search therefore keeps the same
+request count without downloading ten posts per probe. Once the last existing page is known, that
+page alone is fetched with `per_page=10`; its returned length gives the exact real root count and
+materializes the oldest viewport block. The phantom logical prefix is then removed once and normal
+ten-post paging continues. No identity cursor is introduced by this reconciliation path.
 
 This replaces the old controller-level `TimelineSeekState` state machine.
 

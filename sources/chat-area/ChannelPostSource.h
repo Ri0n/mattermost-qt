@@ -52,8 +52,8 @@ public:
 
 private:
     // Visible/prefetch channel ranges use Mattermost's ten-post absolute
-    // pages. Boundary discovery deliberately uses per_page=1 probes so it does
-    // not fetch viewport-sized payloads merely to test whether an offset exists.
+    // pages. Boundary discovery probes candidate page starts with per_page=1 so
+    // binary search does not fetch viewport-sized payloads.
     static constexpr int ServerPageSize = 10;
 
     struct ProvisionalWindow {
@@ -116,8 +116,8 @@ private:
     // Shared reconciliation state lets concurrent empty range requests wait on
     // one absolute-page search instead of starting competing boundary probes.
     bool oldestBoundaryProbeInFlight = false;
-    int oldestBoundaryNonEmptyOffset = -1;
-    int oldestBoundaryEmptyOffset = -1;
+    int oldestBoundaryNonEmptyPage = -1;
+    int oldestBoundaryEmptyPage = -1;
     int oldestBoundaryProbeStep = 1;
     std::vector<std::function<void()>> oldestBoundaryWaiters;
 
