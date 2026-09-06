@@ -106,9 +106,14 @@ publishExactWindow(...)
         +-- rangeAvailable for newly authoritative/available window
 ```
 
-Fetching an identical page twice produces no source signals. This matters because `rangeAvailable`
-and `itemsChanged` both schedule list synchronization; emitting them for an identity no-op can turn a
-boundary mismatch into a tight repeat-request loop.
+Fetching an identical page twice currently produces no source signals. This matters because
+`rangeAvailable` and `itemsChanged` both schedule list synchronization; emitting them for an identity
+no-op can turn a boundary mismatch into a tight repeat-request loop.
+
+This identity no-op rule must remain separate from future resident-body availability. Once Phase 3 can
+evict a `BackendPost` while retaining its source ID, rematerializing that same ID must publish
+"resident body available again" even though the logical identity mapping did not change. That path
+should be an explicit availability/rematerialization notification, not a fake identity mutation.
 
 An empty string remains an **unavailable logical slot**, not a fake post and not a widget placeholder.
 Only `LongListWidget` owns its estimated pixel height.

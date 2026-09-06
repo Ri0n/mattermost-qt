@@ -347,6 +347,24 @@ tail or cursor evidence before claiming exact logical adjacency when the full th
 The shared `IndexedPostSource` only performs identity-slot mutation after a concrete source decides
 whether placement is exact or provisional. See `post-source-architecture.md`.
 
+### Stable identity versus resident availability
+
+The planned resident cache deliberately keeps logical source IDs after their `BackendPost` body is
+evicted. Therefore two state changes must remain independent:
+
+```text
+identity mapping changes
+    -> itemsChanged / structural slot signals
+
+identity unchanged, resident body rematerialized
+    -> availability/rematerialization notification only
+```
+
+Current no-op suppression for an identical authoritative page is correct while every mapped ID is
+resident. Phase 3 must add an explicit rematerialization availability path rather than making an
+identical page pretend that its identity mapping changed. This preserves both request-loop protection
+and safe body eviction.
+
 ## Channel paging authority
 
 Ordinary channel history keeps one invariant transport page size:
