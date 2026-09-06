@@ -19,8 +19,10 @@
 
 #include "SettingsWindow.h"
 
+#include <QDir>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGroupBox>
 #include <QIntValidator>
 #include <QLabel>
