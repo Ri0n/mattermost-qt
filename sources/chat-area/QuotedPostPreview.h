@@ -18,6 +18,9 @@ public:
     explicit QuotedPostPreview(QWidget* parent = nullptr, int maximumLines = 2);
 
     void setPost(const BackendPost& post);
+    void setPreview(const QString& title,
+                    const QString& message,
+                    bool hasAttachments = false);
     void setActivatedCallback(std::function<void()> callback);
 
 protected:

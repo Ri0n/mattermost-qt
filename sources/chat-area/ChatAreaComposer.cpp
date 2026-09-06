@@ -31,6 +31,7 @@
 #include <QTimer>
 
 #include "ChatLogWidget.h"
+#include "QuotedReplyController.h"
 #include "ui_ChatArea.h"
 
 namespace Mattermost {
@@ -121,6 +122,12 @@ void ChatArea::setupComposerUi()
     }
     ui->sendButton->setFont(sendFont);
 
+    // No textual status belongs to the left of the input: it changes the
+    // editor's horizontal geometry. Transient send state is rendered in the
+    // fixed attach-action slot, and persistent edit/reply state lives above the
+    // editor as a compact context preview.
+    ui->composerStatusLabel->hide();
+
     // The action buttons are owner-drawn by ThemeIconButton. Do not attach a
     // stylesheet merely to suppress Breeze's hover frame: QStyleSheetStyle was
     // also the source of stale inherited palette roles during theme changes.
@@ -130,6 +137,10 @@ void ChatArea::setupComposerUi()
     const int verticalPadding = std::max(
         2, ui->outgoingPostCreator->fontMetrics().lineSpacing() * 2 / 5);
     ui->composerLayout->setContentsMargins(0, verticalPadding, 0, verticalPadding);
+
+    // Install the context controller eagerly so it also observes edit mode,
+    // which can be entered without first using quoted replies.
+    QuotedReplyController::instance(*this);
 
     loadingIndicator = new LoadingIndicator(this);
     ui->composerLayout->insertWidget(0, loadingIndicator, 0, Qt::AlignBottom);
