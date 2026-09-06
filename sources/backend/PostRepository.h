@@ -22,6 +22,7 @@
 #include <QVariant>
 
 #include "HTTPConnector.h"
+#include "PostCacheService.h"
 
 namespace Mattermost {
 
@@ -138,7 +139,20 @@ public:
                             uint64_t fromCreateAt,
                             PageCallback callback);
 
+    /** Queue one full WebSocket post snapshot into the persistent cache. */
+    void cachePostObject(const QJsonObject& postObject);
+
+    /** Invalidate a cached post after delete/reaction-only WebSocket changes. */
+    void invalidateCachedPost(const QString& postId);
+
 private:
+    struct CacheAccount {
+        QString server;
+        QString userId;
+
+        bool isValid() const { return !server.isEmpty() && !userId.isEmpty(); }
+    };
+
     using JsonCallback = std::function<void(QVariant, const QJsonDocument&)>;
 
     explicit PostRepository(Backend& backend);
@@ -160,6 +174,9 @@ private:
                     const QString& direction,
                     PageCallback callback);
 
+    CacheAccount currentCacheAccount() const;
+    void cachePosts(const CacheAccount& account, const QJsonObject& postsObject);
+
     static QStringList chronologicalOrder(const QJsonObject& postsObject,
                                           const QString& rootId = QString());
     static QStringList allChronologicalOrder(const QJsonObject& postsObject);
@@ -169,6 +186,7 @@ private:
 
     Backend& backend;
     HTTPConnector httpConnector;
+    PostCacheService postCache;
     QHash<QString, QList<JsonCallback>> inFlightGets;
 };
 

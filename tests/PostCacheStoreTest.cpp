@@ -163,5 +163,5 @@ void PostCacheStoreTest::enforcesThreadAndGlobalLimits()
     QVERIFY(stats.databaseBytes > 0);
 }
 
-QTEST_APPLESS_MAIN(PostCacheStoreTest)
+QTEST_GUILESS_MAIN(PostCacheStoreTest)
 #include "PostCacheStoreTest.moc"

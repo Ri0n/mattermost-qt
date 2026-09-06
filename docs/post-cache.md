@@ -17,10 +17,17 @@ ChannelPostSource / ThreadPostSource
                 |
                 v
         PostTimelineService
+       (PostRepository today)
                 |
         +-------+-------+
         |               |
-  resident posts      SQLite
+ resident posts    PostCacheService
+                        |
+                 dedicated QThread
+                        |
+                  PostCacheStore
+                        |
+                      SQLite
         |               |
         +-------+-------+
                 |
@@ -69,6 +76,45 @@ contained in it are cached.
 The cache is intentionally not encrypted at rest in this first implementation. Account scoping
 prevents accidental cross-account reuse inside the client, but it is not filesystem encryption.
 
+## SQLite thread ownership and asynchronous writes
+
+SQLite work must never block the UI/network callback thread. `PostCacheStore` is deliberately a
+synchronous, thread-confined object; `PostCacheService` is the asynchronous boundary.
+
+`PostCacheService` owns one dedicated `QThread`. The worker lazily constructs `PostCacheStore` from
+inside that thread, so the `QSqlDatabase` connection and the store's periodic maintenance timer are
+created, used and destroyed on the same thread. `PostCacheStore` is never constructed on one thread
+and then moved with a live SQL connection.
+
+Every queued operation carries its complete account key:
+
+```text
+(server, Mattermost user id, operation payload)
+```
+
+The worker selects that account immediately before executing the operation. There is intentionally
+no mutable "current account" on the calling thread: a queued write produced for account A must still
+go to account A even if the UI logs out and selects account B before SQLite processes it.
+
+For REST requests the account key is captured when the repository starts the logical request, not
+when the response callback eventually runs. For WebSocket events it is captured when the event is
+handled. This prevents an old delayed response from being filed under a newly selected account.
+
+Writes are **write-behind physically, write-through logically**:
+
+```text
+successful server payload
+        |
+queue durable cache command
+        |
+update resident model / deliver callback
+```
+
+The UI does not wait for an SQLite commit because the cache is disposable and never server
+authority. A process crash between queueing and commit may lose cache warming, but cannot lose user
+or server state. Normal `PostCacheService` destruction drains all earlier queued commands, runs a
+final maintenance pass and destroys the SQL connection on the worker thread before joining it.
+
 ## Disk limits and compaction
 
 Persistent limits are global across the SQLite file unless stated otherwise:
@@ -90,8 +136,8 @@ synchronous=NORMAL
 auto_vacuum=INCREMENTAL
 ```
 
-A very-coarse maintenance timer runs every ten minutes even when the cache receives no lookups. A
-maintenance pass:
+A very-coarse maintenance timer runs every ten minutes on the cache worker thread even when the
+cache receives no lookups. A maintenance pass:
 
 1. re-enforces per-thread and global LRU limits;
 2. executes `PRAGMA optimize`;
@@ -109,28 +155,40 @@ for an absolute Mattermost page number. New posts can shift all absolute page bo
 
 Therefore:
 
-- direct post lookup may be satisfied from SQLite immediately;
-- a bounded newest suffix may seed a channel/thread resident model;
+- direct post lookup may eventually be satisfied from SQLite immediately;
+- a bounded newest suffix may eventually seed a channel/thread resident model;
 - HTTP remains authoritative for absolute channel page placement and for proving oldest/newest
   boundaries;
 - stale successful work may populate SQLite but never gains viewport authority by itself.
 
 This preserves the provisional/authoritative rules in `long-list-architecture.md`.
 
+Cache-first hydration is deliberately not enabled yet. `BackendChannel::mergePostContext()` currently
+skips a post ID that is already resident, and `BackendPost::updatePostEdits()` does not perform a full
+raw-JSON refresh. Hydrating an older SQLite snapshot first would therefore allow a later fresh HTTP
+snapshot with the same ID to be ignored. Full existing-post refresh semantics are a prerequisite for
+using SQLite as a read tier.
+
 ## Write-through and invalidation
 
-Full JSON responses received by `PostTimelineService` are written through to SQLite before they are
-considered durable cache hits.
+The write side of service integration is active.
 
-WebSocket handling should follow the same rule:
+All successful post-bearing REST responses handled by `PostRepository` queue their full `posts`
+objects into SQLite before resident ingestion. This covers direct post retrieval, channel pages,
+channel cursor windows and thread windows. A successful response can still warm the durable cache if
+the requesting `BackendChannel` has disappeared before the response arrives.
+
+WebSocket handling uses the same durable rules and queues the cache operation before looking up the
+resident channel:
 
 - new post: upsert the event's full post object;
 - edited post: upsert the event's full post object;
 - deleted post: remove the cached row;
-- reaction-only event without a full replacement post object: invalidate the cached row unless the
-  raw JSON can be patched losslessly.
+- reaction added/removed: invalidate the cached row because these events do not contain a lossless
+  full replacement post object.
 
-Deleting/invalidation is preferable to keeping a known-stale reaction/deletion snapshot.
+Deleting/invalidation is preferable to keeping a known-stale reaction/deletion snapshot. A later
+REST fetch can repopulate that row with authoritative raw JSON.
 
 ## Resident-memory policy
 
@@ -175,7 +233,9 @@ This pointer/lease step is required before enforcing the 500 MiB resident cap. A
 
 ### Phase 1 — durable store
 
-- add `PostCacheStore` and SQLite schema;
+Implemented in this PR:
+
+- `PostCacheStore` and SQLite schema;
 - compressed raw JSON;
 - account isolation;
 - LRU limits and timed incremental vacuum;
@@ -183,10 +243,19 @@ This pointer/lease step is required before enforcing the 500 MiB resident cap. A
 
 ### Phase 2 — service integration
 
+Implemented write side:
+
+- dedicated asynchronous `PostCacheService` / SQLite worker thread;
+- capture account identity with every queued operation;
 - write all HTTP-ingested post objects through to SQLite;
-- direct `loadPost()` cache hit before HTTP, followed by background validation;
-- seed a small newest channel/thread window from SQLite before normal server range fetch;
-- WebSocket write-through/invalidation.
+- WebSocket new/edit write-through;
+- WebSocket delete/reaction invalidation.
+
+Still required before enabling reads:
+
+- full refresh semantics when fresh JSON arrives for an already resident `BackendPost`;
+- direct `loadPost()` cache hit followed by background validation;
+- seed a small newest channel/thread window from SQLite before normal server range fetch.
 
 ### Phase 3 — bounded resident cache
 

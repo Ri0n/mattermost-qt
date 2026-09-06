@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -26,6 +26,7 @@
 
 #include <QJsonDocument>
 #include "Backend.h"
+#include "PostRepository.h"
 #include "Storage.h"
 #include "UserProfileService.h"
 #include "log.h"
@@ -54,6 +55,11 @@ void WebSocketEventHandler::handleEvent (const ChannelViewedEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostEvent& event)
 {
+	// Cache the authoritative raw event even if this channel is not currently
+	// materialized in Storage. The disk cache is account-scoped and survives the
+	// resident channel object's lifetime.
+	PostRepository::instance(backend).cachePostObject(event.postObject);
+
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 
 	if (!channel) {
@@ -70,6 +76,8 @@ void WebSocketEventHandler::handleEvent (const PostEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostEditedEvent& event)
 {
+	PostRepository::instance(backend).cachePostObject(event.postObject);
+
 	BackendTeam* team = storage.getTeamById (event.teamId);
 	QString teamName = team ? team->name : event.teamId;
 
@@ -99,6 +107,8 @@ void WebSocketEventHandler::handleEvent (const PostEditedEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostDeletedEvent& event)
 {
+	PostRepository::instance(backend).invalidateCachedPost(event.postId);
+
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 
 	LOG_DEBUG ("Delete post in  '" << (channel ? channel->name : event.channelId)
@@ -112,6 +122,10 @@ void WebSocketEventHandler::handleEvent (const PostDeletedEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostReactionAddedEvent& event)
 {
+	// Reaction events do not contain a lossless full post object. Invalidate the
+	// durable snapshot rather than persisting reaction metadata known to be stale.
+	PostRepository::instance(backend).invalidateCachedPost(event.postId);
+
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 
 	if (!channel) {
@@ -125,6 +139,8 @@ void WebSocketEventHandler::handleEvent (const PostReactionAddedEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostReactionRemovedEvent& event)
 {
+	PostRepository::instance(backend).invalidateCachedPost(event.postId);
+
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 
 	if (!channel) {
