@@ -18,6 +18,7 @@ class QWidget;
 namespace Mattermost {
 
 inline constexpr char ComposerBusyTextProperty[] = "_mmqt_composer_busy_text";
+inline constexpr char ComposerMessageLoadingProperty[] = "_mmqt_composer_message_loading";
 
 /**
  * Borderless composer action button. The normal QPushButton style is not
@@ -25,10 +26,12 @@ inline constexpr char ComposerBusyTextProperty[] = "_mmqt_composer_busy_text";
  * QStyleSheetStyle wrapper is unnecessary. Both symbolic icons and the textual
  * send glyph are drawn from the same current application palette.
  *
- * The attach action also owns the composer's transient busy presentation. When
- * ComposerBusyTextProperty is non-empty, the paperclip is replaced in-place by
- * the same compact spinner used for message loading, keeping composer geometry
- * stable while a post or attachment is in flight.
+ * The attach action also owns the composer's transient busy presentation. A
+ * send/upload operation uses ComposerBusyTextProperty while chat-history
+ * loading uses ComposerMessageLoadingProperty. Either state replaces the
+ * paperclip in-place with the same centered compact spinner, keeping composer
+ * geometry stable. Independent properties allow overlapping operations to end
+ * without clearing each other's busy presentation.
  */
 class ThemeIconButton final : public QPushButton
 {
