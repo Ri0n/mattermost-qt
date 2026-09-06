@@ -65,9 +65,17 @@ public:
 	bool isOwnPollPost () 	const;
 	QString getDisplayAuthorName () const;
 	QDateTime getCreationTime () const;
-	/** Replace all server-backed fields while keeping this object's address stable. */
+	/**
+	 * Replace server-backed fields from an already parsed snapshot without
+	 * changing this object's address or immutable timeline identity.
+	 * @return true when observable post state changed.
+	 */
 	bool updatePostEdits (BackendPost& editedPost);
-	/** Parse and apply one authoritative full post snapshot in place. */
+	/**
+	 * Parse and apply one authoritative full post snapshot in place. Local
+	 * annotations absent from raw REST/cache JSON are preserved.
+	 * @return true when observable post state changed.
+	 */
 	bool refreshFromJson (const QJsonObject& jsonObject, const Storage& storage);
 	void addReaction (QString userName, QString emojiName);
 	void removeReaction (QString userName, QString emojiName);
