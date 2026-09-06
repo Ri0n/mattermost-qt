@@ -55,14 +55,29 @@ void WebSocketEventHandler::handleEvent (const ChannelViewedEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostEvent& event)
 {
-	// Cache the authoritative raw event even if this channel is not currently
-	// materialized in Storage. The disk cache is account-scoped and survives the
-	// resident channel object's lifetime.
-	PostRepository::instance(backend).cachePostObject(event.postObject);
+	auto& repository = PostRepository::instance(backend);
+
+	// A busy joined channel is not cache interest. Persist the full event only
+	// while the user has opened this channel inside the configured disk horizon.
+	if (repository.shouldCacheChannelOnDisk(event.channelId)) {
+		repository.cachePostObject(event.postObject);
+	}
 
 	BackendChannel* channel = storage.getChannelById (event.channelId);
-
 	if (!channel) {
+		return;
+	}
+
+	if (!repository.shouldRetainChannelInMemory(event.channelId)) {
+		// Global unread/mention/desktop-notification consumers still need the
+		// event, but an inactive cold channel must not gain a durable BackendPost.
+		// Backend::onNewPost is currently a same-thread direct signal, so this
+		// transient object is valid for the complete synchronous fan-out.
+		BackendPost transientPost(event.postObject, storage);
+		LOG_DEBUG ("Transient post in cold channel '" << channel->getTeamAndChannelName()
+		           << "' by " << transientPost.getDisplayAuthorName() << ": "
+		           << transientPost.message);
+		emit backend.onNewPost (*channel, transientPost);
 		return;
 	}
 
@@ -76,7 +91,10 @@ void WebSocketEventHandler::handleEvent (const PostEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostEditedEvent& event)
 {
-	PostRepository::instance(backend).cachePostObject(event.postObject);
+	auto& repository = PostRepository::instance(backend);
+	if (repository.shouldCacheChannelOnDisk(event.channelId)) {
+		repository.cachePostObject(event.postObject);
+	}
 
 	BackendTeam* team = storage.getTeamById (event.teamId);
 	QString teamName = team ? team->name : event.teamId;
@@ -84,6 +102,12 @@ void WebSocketEventHandler::handleEvent (const PostEditedEvent& event)
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 
 	if (!channel) {
+		return;
+	}
+
+	const QString postId = event.postObject.value(QStringLiteral("id")).toString();
+	if (!repository.shouldRetainChannelInMemory(event.channelId)
+		&& !channel->postIdToPost.contains(postId)) {
 		return;
 	}
 
@@ -107,6 +131,8 @@ void WebSocketEventHandler::handleEvent (const PostEditedEvent& event)
 
 void WebSocketEventHandler::handleEvent (const PostDeletedEvent& event)
 {
+	// Invalidations are never admission-gated: a cold channel may still have a
+	// previously cached row that is now known to be stale.
 	PostRepository::instance(backend).invalidateCachedPost(event.postId);
 
 	BackendChannel* channel = storage.getChannelById (event.channelId);
@@ -128,7 +154,7 @@ void WebSocketEventHandler::handleEvent (const PostReactionAddedEvent& event)
 
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 
-	if (!channel) {
+	if (!channel || !channel->postIdToPost.contains(event.postId)) {
 		return;
 	}
 
@@ -143,7 +169,7 @@ void WebSocketEventHandler::handleEvent (const PostReactionRemovedEvent& event)
 
 	BackendChannel* channel = storage.getChannelById (event.channelId);
 
-	if (!channel) {
+	if (!channel || !channel->postIdToPost.contains(event.postId)) {
 		return;
 	}
 
@@ -316,7 +342,7 @@ void WebSocketEventHandler::handleEvent (const UserLeaveTeamEvent& event)
 			emit channel->onLeave ();
 		}
 
-		emit (team->onLeave());
+		emit (team.onLeave());
 		storage.eraseTeam (team->id);
 	} else {
 		for (auto &channel: team->channels) {
