@@ -46,6 +46,7 @@
 #include "chat-area/ChatLogWidget.h"
 #include "chat-area/QuotedReplyFormat.h"
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
+#include "ui/ThemeIconWidgets.h"
 
 namespace Mattermost {
 namespace {
@@ -154,6 +155,21 @@ OutgoingPostCreator::~OutgoingPostCreator()
 
 void OutgoingPostCreator::setStatusLabelText(const QString& string)
 {
+	// Transient send/upload state belongs in the fixed attach-action slot. This
+	// keeps the editor geometry stable instead of inserting variable-width text
+	// to its left. Editing mode remains a persistent textual state and therefore
+	// continues to use composerStatusLabel.
+	if (attachButton && string.isEmpty()) {
+		attachButton->setProperty(ComposerBusyTextProperty, QString());
+		attachButton->setToolTip(tr("Attach File"));
+	}
+
+	if (attachButton && outgoingPostData && !string.isEmpty()) {
+		attachButton->setProperty(ComposerBusyTextProperty, string);
+		attachButton->setToolTip(string);
+		return;
+	}
+
 	if (statusLabel) {
 		statusLabel->setText(string);
 	}
@@ -322,8 +338,20 @@ void OutgoingPostCreator::startSendPostSequence()
 	sendRetryTimer.start(25000);
 	setReadOnly(true);
 	updateSendButtonState();
+
+	QString activityText;
+	if (!outgoingPostData->attachmentPaths.isEmpty()) {
+		activityText = outgoingPostData->attachmentPaths.size() == 1
+			? tr("Uploading attachment…") : tr("Uploading attachments…");
+	} else if (outgoingPostData->postToEdit) {
+		activityText = tr("Saving edited message…");
+	} else if (outgoingPostData->pollData) {
+		activityText = tr("Sending poll…");
+	} else {
+		activityText = tr("Sending message…");
+	}
+	setStatusLabelText(activityText);
 	prepareAndSendPost();
-	setStatusLabelText(isEditingPost() ? tr("Saving edit…") : tr("Sending message…"));
 }
 
 void OutgoingPostCreator::prepareAndSendPost()
@@ -342,12 +370,16 @@ void OutgoingPostCreator::prepareAndSendPost()
 			const qsizetype uploadedFilesCount = outgoingPostData->attachmentIds.size();
 			const qsizetype remainingFileCount = outgoingPostData->attachmentPaths.size();
 
-			setStatusLabelText("Attached file " + QString::number(uploadedFilesCount)
-			                   + " of " + QString::number(uploadedFilesCount + remainingFileCount));
-
 			qDebug() << "Remaining file count:" << remainingFileCount;
 			if (remainingFileCount == 0) {
+				setStatusLabelText(outgoingPostData->postToEdit
+					? tr("Saving edited message…") : tr("Sending message…"));
 				sendPost();
+			} else {
+				setStatusLabelText(
+					tr("Uploading attachments · %1 of %2 complete")
+						.arg(uploadedFilesCount)
+						.arg(uploadedFilesCount + remainingFileCount));
 			}
 		});
 	}
