@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include <QSet>
 #include <QString>
 
 #include "IndexedPostSource.h"
@@ -37,6 +38,10 @@ private:
     int currentLogicalCount() const;
     int nearestEmptyIndex(int preferred) const;
     void seedCachedPosts();
+    void hydrateCachedTail();
+    void validateCachedTail();
+    bool isAuthoritativeIndex(int index) const;
+    void pruneProvisionalPostIds();
     void placeExactWindow(int first, const QStringList& ids);
     void placeInitial(const QStringList& ids);
     void placeTail(const QStringList& ids);
@@ -47,6 +52,7 @@ private:
 
     Backend& backend;
     QString rootId;
+    QSet<QString> provisionalPostIds;
 };
 
 } // namespace Mattermost

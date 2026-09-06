@@ -90,6 +90,8 @@ private:
                                 int exactFirstHint = -1);
     void seedCachedPosts();
     void seedUnknownNewestPost();
+    void hydrateCachedTail();
+    void validateCachedTail();
     void removeLogicalRange(int first, int count);
     void placePage(int page, const QStringList& chronologicalIds);
     void probeEstimatedOldestBoundary(std::function<void()> completion);

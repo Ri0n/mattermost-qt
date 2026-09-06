@@ -136,6 +136,10 @@ ChannelPostSource::ChannelPostSource(Backend& backendInstance,
         }
         resizeLogicalTail(currentLogicalCount());
     });
+
+    if (hasRootCountEstimate) {
+        QTimer::singleShot(0, this, [this] { hydrateCachedTail(); });
+    }
 }
 
 int ChannelPostSource::ensurePostIndex(const QString& postId)
@@ -1151,6 +1155,95 @@ void ChannelPostSource::seedUnknownNewestPost()
 
     postIds.push_back(newest->id);
     rebuildIndex();
+}
+
+void ChannelPostSource::hydrateCachedTail()
+{
+    if (!hasRootCountEstimate || postIds.isEmpty()) {
+        return;
+    }
+
+    PostTimelineService& repository = PostTimelineService::instance(backend);
+    repository.recordChannelOpened(channel.id);
+    QPointer<ChannelPostSource> guard(this);
+    repository.loadCachedChannelTail(
+        channel, ServerPageSize,
+        [guard](const PostTimelineService::Page& result) {
+            if (!guard || !result.success || result.postIds.isEmpty()
+                || guard->provisionalWindow.isValid()) {
+                return;
+            }
+
+            BackendPost* newest = guard->channel.postIdToPost.value(
+                result.postIds.last(), nullptr);
+            if (!newest || (guard->channel.last_post_at != 0
+                            && newest->create_at != guard->channel.last_post_at)) {
+                qCDebug(lcTimelineChannel).nospace()
+                    << "CACHE_TAIL_SKIP channel=" << guard->channel.id
+                    << " reason=newest-mismatch cached="
+                    << (newest ? newest->create_at : 0)
+                    << " channel=" << guard->channel.last_post_at;
+                return;
+            }
+
+            const int usableCount = std::min(
+                static_cast<int>(result.postIds.size()),
+                static_cast<int>(guard->postIds.size()));
+            if (usableCount <= 0) {
+                return;
+            }
+            const QStringList ids = result.postIds.mid(
+                result.postIds.size() - usableCount);
+            const int first = static_cast<int>(guard->postIds.size()) - usableCount;
+
+            // A cache window may fill empty startup slots, but it may not move
+            // or overwrite an identity the source already mapped independently.
+            for (int offset = 0; offset < usableCount; ++offset) {
+                const int target = first + offset;
+                const QString& id = ids.at(offset);
+                const int existingIndex = guard->indexOfPost(id);
+                if ((existingIndex >= 0 && existingIndex != target)
+                    || (!guard->postIds.at(target).isEmpty()
+                        && guard->postIds.at(target) != id)) {
+                    qCDebug(lcTimelineChannel).nospace()
+                        << "CACHE_TAIL_SKIP channel=" << guard->channel.id
+                        << " reason=identity-collision target=" << target
+                        << " id=" << id;
+                    return;
+                }
+            }
+
+            for (const QString& id : ids) {
+                if (guard->indexOfPost(id) < 0) {
+                    guard->provisionalPostIds.insert(id);
+                }
+            }
+            const ExactWindowMutation mutation = guard->assignExactWindow(first, ids);
+            guard->publishExactWindow(mutation);
+            qCDebug(lcTimelineChannel).nospace()
+                << "CACHE_TAIL_HYDRATE channel=" << guard->channel.id
+                << " first=" << first
+                << " last=" << (first + usableCount - 1)
+                << " count=" << usableCount;
+            guard->validateCachedTail();
+        });
+}
+
+void ChannelPostSource::validateCachedTail()
+{
+    QPointer<ChannelPostSource> guard(this);
+    PostTimelineService::instance(backend).loadChannelPage(
+        channel, 0, ServerPageSize,
+        [guard](const PostTimelineService::Page& result) {
+            if (!guard || !result.success) {
+                return;
+            }
+            if (result.postIds.isEmpty()) {
+                guard->reconcileRootCount(0);
+                return;
+            }
+            guard->placePage(0, result.postIds);
+        });
 }
 
 void ChannelPostSource::removeLogicalRange(int first, int count)

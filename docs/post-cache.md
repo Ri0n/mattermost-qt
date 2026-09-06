@@ -407,7 +407,9 @@ Implemented prerequisites for reads:
 Read-side status:
 
 - direct `loadPost()` cache hit followed by background HTTP validation is implemented;
-- still required: seed a small newest channel/thread window from SQLite before normal server range fetch.
+- provenance-backed newest channel/thread window hydration is implemented as provisional first paint
+  followed immediately by normal authoritative HTTP validation;
+- arbitrary cached row bags are never packed into a logical range.
 
 ### Phase 3 — bounded resident cache
 

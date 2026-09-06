@@ -71,7 +71,7 @@ historical neighbors belong.
 ## Raw snapshot representation
 
 Persistent storage keeps compact Mattermost post JSON rather than a second normalized C++ schema.
-Only fields required for lookup, ordering and eviction are duplicated into SQLite columns:
+Only fields required for lookup, ordering and eviction are duplicated into SQLite post columns:
 
 ```text
 post_id
@@ -82,6 +82,12 @@ update_at
 last_access
 compressed raw JSON payload
 ```
+
+A separate `tail_windows` table records the ordered IDs of server responses that actually proved a
+newest edge. This provenance is essential: a set of individually cached rows is not a contiguous
+window. Direct post lookups, reaction invalidation and LRU eviction can all create holes. Window reads
+therefore ignore arbitrary row bags and return only the newest still-complete suffix after the last
+missing/corrupt row.
 
 Benefits:
 
@@ -316,13 +322,15 @@ Only server observations (HTTP/full WebSocket snapshots) refresh resident object
 
 ## Newest-window hydration contract
 
-The next read-side step is bounded newest-window hydration for channels and threads. The design is
-already constrained even before the final wiring is enabled.
+Bounded newest-window hydration is enabled for channels with a logical count estimate and for threads.
+It consumes only provenance-backed tail windows; arbitrary cached rows never become a range.
 
 ### Channel
 
-A cached set of recent root posts may give an immediate first paint, but SQLite does not know the
-current absolute `/posts?page=N&per_page=10` grid after remote traffic changed the channel.
+A cached contiguous tail window may give an immediate first paint, but SQLite does not know the
+current absolute `/posts?page=N&per_page=10` grid after remote traffic changed the channel. The source
+also requires the cached newest post timestamp to match current channel `last_post_at`; otherwise the
+window is retained only as ordinary cached bodies and is not mapped as the current suffix.
 
 Therefore a cached channel window is a **newest-aligned provisional suffix** only:
 
@@ -340,9 +348,11 @@ A cached suffix must never manufacture `page=0` authority merely from timestamps
 
 ### Thread
 
-A cached thread read contains the root plus a bounded set of recent replies. The same rule applies:
-cache data can provide provisional newest reply identities, but the thread source still needs initial,
-tail or cursor evidence before claiming exact logical adjacency when the full thread is not cached.
+A provenance-backed thread window contains a bounded ordered set of recent replies. The source
+requires its newest cached reply timestamp to match the root's current `last_reply_at`, then publishes
+those IDs provisionally into tail slots. Provisional IDs are displayable but are deliberately treated
+as missing for request planning and may not serve as thread cursors. A normal initial/tail HTTP request
+is dispatched immediately and upgrades/replaces the mapping with endpoint-authoritative adjacency.
 
 The shared `IndexedPostSource` only performs identity-slot mutation after a concrete source decides
 whether placement is exact or provisional. See `post-source-architecture.md`.

@@ -78,6 +78,11 @@ public:
                          int perPage,
                          PageCallback callback);
 
+    /** Load a provenance-backed cached newest main-channel suffix. */
+    void loadCachedChannelTail(BackendChannel& channel,
+                               int limit,
+                               PageCallback callback);
+
     /** Extend an arbitrary channel window toward older posts from a known post. */
     void loadChannelBefore(BackendChannel& channel,
                            const QString& beforePostId,
@@ -131,6 +136,12 @@ public:
                         int perPage,
                         uint64_t lastReplyAt,
                         PageCallback callback);
+
+    /** Load a provenance-backed cached newest thread-reply suffix. */
+    void loadCachedThreadTail(BackendChannel& channel,
+                              const QString& rootId,
+                              int limit,
+                              PageCallback callback);
 
     /** Seed a disconnected random middle thread window by creation timestamp. */
     void loadThreadFromTime(BackendChannel& channel,

@@ -377,6 +377,61 @@ void PostRepository::loadPost(const QString& postId, PostCallback callback)
         });
 }
 
+void PostRepository::loadCachedChannelTail(BackendChannel& channel,
+                                               int limit,
+                                               PageCallback callback)
+{
+    Page miss;
+    const int safeLimit = std::max(1, limit);
+    const CacheAccount account = currentCacheAccount();
+    if (!account.isValid() || channel.id.isEmpty()) {
+        if (callback) {
+            callback(miss);
+        }
+        return;
+    }
+
+    const quint64 readObservation = nextObservationSequence();
+    QPointer<PostRepository> guard(this);
+    QPointer<BackendChannel> channelGuard(&channel);
+    const QString channelId = channel.id;
+    postCache.loadChannelTailWindow(
+        account.server, account.userId, channelId, safeLimit,
+        [guard, channelGuard, account, channelId, readObservation,
+         callback = std::move(callback)](QJsonObject posts) mutable {
+            Page result;
+            if (!guard || !channelGuard || posts.isEmpty()) {
+                if (callback) {
+                    callback(result);
+                }
+                return;
+            }
+
+            const CacheAccount current = guard->currentCacheAccount();
+            if (!current.isValid() || current.server != account.server
+                || current.userId != account.userId || channelGuard->id != channelId) {
+                if (callback) {
+                    callback(result);
+                }
+                return;
+            }
+
+            guard->ingestCached(*channelGuard, posts, readObservation, true);
+            const QStringList ordered = chronologicalOrder(posts);
+            for (const QString& id : ordered) {
+                BackendPost* post = channelGuard->postIdToPost.value(id, nullptr);
+                if (post && post->channel_id == channelId && post->root_id.isEmpty()
+                    && !post->hidden) {
+                    result.postIds.push_back(id);
+                }
+            }
+            result.success = !result.postIds.isEmpty();
+            if (callback) {
+                callback(result);
+            }
+        });
+}
+
 void PostRepository::loadChannelPage(BackendChannel& channel,
                                      int page,
                                      int perPage,
@@ -392,7 +447,7 @@ void PostRepository::loadChannelPage(BackendChannel& channel,
     QPointer<PostRepository> guard(this);
     QPointer<BackendChannel> channelGuard(&channel);
     coalescedGet(path,
-        [guard, channelGuard, callback = std::move(callback)](
+        [guard, channelGuard, safePage, safePerPage, callback = std::move(callback)](
             QVariant status, const QJsonDocument& doc,
             const RequestContext& requestContext) mutable {
             Page result;
@@ -417,6 +472,13 @@ void PostRepository::loadChannelPage(BackendChannel& channel,
 
             guard->ingest(*channelGuard, posts, requestContext.observationSequence);
             result.postIds = chronologicalOrder(posts);
+            if (safePage == 0 && safePerPage == 10
+                && requestContext.cacheAccount.isValid()) {
+                guard->postCache.storeChannelTailWindow(
+                    requestContext.cacheAccount.server,
+                    requestContext.cacheAccount.userId,
+                    channelGuard->id, result.postIds);
+            }
             result.prevPostId = root.value(QStringLiteral("prev_post_id")).toString();
             result.nextPostId = root.value(QStringLiteral("next_post_id")).toString();
             if (callback) {
@@ -610,6 +672,61 @@ void PostRepository::loadThreadAfter(BackendChannel& channel,
                QStringLiteral("down"), std::move(callback));
 }
 
+void PostRepository::loadCachedThreadTail(BackendChannel& channel,
+                                              const QString& rootId,
+                                              int limit,
+                                              PageCallback callback)
+{
+    Page miss;
+    const int safeLimit = std::max(1, limit);
+    const CacheAccount account = currentCacheAccount();
+    if (!account.isValid() || channel.id.isEmpty() || rootId.isEmpty()) {
+        if (callback) {
+            callback(miss);
+        }
+        return;
+    }
+
+    const quint64 readObservation = nextObservationSequence();
+    QPointer<PostRepository> guard(this);
+    QPointer<BackendChannel> channelGuard(&channel);
+    const QString channelId = channel.id;
+    postCache.loadThreadTailWindow(
+        account.server, account.userId, channelId, rootId, safeLimit,
+        [guard, channelGuard, account, channelId, rootId, readObservation,
+         callback = std::move(callback)](QJsonObject posts) mutable {
+            Page result;
+            if (!guard || !channelGuard || posts.isEmpty()) {
+                if (callback) {
+                    callback(result);
+                }
+                return;
+            }
+
+            const CacheAccount current = guard->currentCacheAccount();
+            if (!current.isValid() || current.server != account.server
+                || current.userId != account.userId || channelGuard->id != channelId) {
+                if (callback) {
+                    callback(result);
+                }
+                return;
+            }
+
+            guard->ingestCached(*channelGuard, posts, readObservation, true);
+            const QStringList ordered = chronologicalOrder(posts, rootId);
+            for (const QString& id : ordered) {
+                BackendPost* post = channelGuard->postIdToPost.value(id, nullptr);
+                if (post && post->channel_id == channelId && post->root_id == rootId) {
+                    result.postIds.push_back(id);
+                }
+            }
+            result.success = !result.postIds.isEmpty();
+            if (callback) {
+                callback(result);
+            }
+        });
+}
+
 void PostRepository::loadThreadTail(BackendChannel& channel,
                                     const QString& rootId,
                                     int perPage,
@@ -677,10 +794,11 @@ void PostRepository::loadThread(BackendChannel& channel,
 
     const bool initialPage = safeDirection == QLatin1String("down")
         && fromPost.isEmpty() && effectiveFromCreateAt == 0;
+    const bool tailPage = safeDirection == QLatin1String("up") && fromPost.isEmpty();
     QPointer<PostRepository> guard(this);
     QPointer<BackendChannel> channelGuard(&channel);
     coalescedGet(path,
-        [guard, channelGuard, rootId, fromPost, initialPage,
+        [guard, channelGuard, rootId, fromPost, initialPage, tailPage,
          callback = std::move(callback)](QVariant status, const QJsonDocument& doc,
                                           const RequestContext& requestContext) mutable {
             Page result;
@@ -714,6 +832,18 @@ void PostRepository::loadThread(BackendChannel& channel,
             result.prevPostId = root.value(QStringLiteral("prev_post_id")).toString();
             result.nextPostId = root.value(QStringLiteral("next_post_id")).toString();
             result.hasNext = root.value(QStringLiteral("has_next")).toBool();
+
+            const bool initialReachedNewest = initialPage && !result.hasNext
+                && result.nextPostId.isEmpty();
+            if ((tailPage || initialReachedNewest)
+                && requestContext.cacheAccount.isValid()) {
+                QStringList tailIds = chronologicalOrder(posts, rootId);
+                tailIds.removeAll(rootId);
+                guard->postCache.storeThreadTailWindow(
+                    requestContext.cacheAccount.server,
+                    requestContext.cacheAccount.userId,
+                    channelGuard->id, rootId, tailIds);
+            }
             if (callback) {
                 callback(result);
             }

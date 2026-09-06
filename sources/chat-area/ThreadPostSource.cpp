@@ -6,6 +6,7 @@
 
 #include <QLoggingCategory>
 #include <QPointer>
+#include <QTimer>
 
 #include "backend/Backend.h"
 #include "backend/PostTimelineService.h"
@@ -163,6 +164,8 @@ ThreadPostSource::ThreadPostSource(Backend& backendInstance,
             emit itemsChanged(index, index);
         }
     });
+
+    QTimer::singleShot(0, this, [this] { hydrateCachedTail(); });
 }
 
 int ThreadPostSource::ensurePostIndex(const QString& postId)
@@ -264,7 +267,7 @@ void ThreadPostSource::requestRange(int first,
     int firstMissing = -1;
     int lastMissing = -1;
     for (int index = requestedFirst; index <= requestedLast; ++index) {
-        if (!postIds.at(index).isEmpty()) {
+        if (isAuthoritativeIndex(index)) {
             continue;
         }
         if (firstMissing < 0) {
@@ -275,7 +278,7 @@ void ThreadPostSource::requestRange(int first,
 
     // Once either side of a gap is known, that identity is a stronger anchor
     // than a timestamp estimate. Fill sequentially from the adjacent cursor.
-    if (firstMissing > 0 && !postIds.at(firstMissing - 1).isEmpty()) {
+    if (firstMissing > 0 && isAuthoritativeIndex(firstMissing - 1)) {
         const int anchorIndex = firstMissing - 1;
         const QString anchorId = postIds.at(anchorIndex);
         BackendPost* anchorPost = channel.postIdToPost.value(anchorId, nullptr);
@@ -310,7 +313,7 @@ void ThreadPostSource::requestRange(int first,
 
     if (lastMissing >= 1
         && lastMissing + 1 < postIds.size()
-        && !postIds.at(lastMissing + 1).isEmpty()) {
+        && isAuthoritativeIndex(lastMissing + 1)) {
         const int anchorIndex = lastMissing + 1;
         const QString anchorId = postIds.at(anchorIndex);
         BackendPost* anchorPost = channel.postIdToPost.value(anchorId, nullptr);
@@ -486,9 +489,134 @@ void ThreadPostSource::seedCachedPosts()
     emit rangeAvailable(0, 0);
 }
 
+void ThreadPostSource::hydrateCachedTail()
+{
+    BackendPost* root = rootPost();
+    if (!root || postIds.size() <= 1 || root->reply_count <= 0) {
+        return;
+    }
+
+    PostTimelineService& repository = PostTimelineService::instance(backend);
+    repository.recordChannelOpened(channel.id);
+    QPointer<ThreadPostSource> guard(this);
+    repository.loadCachedThreadTail(
+        channel, rootId, ServerBlockSize,
+        [guard](const PostTimelineService::Page& result) {
+            if (!guard || !result.success || result.postIds.isEmpty()) {
+                return;
+            }
+            BackendPost* root = guard->rootPost();
+            BackendPost* newest = guard->channel.postIdToPost.value(
+                result.postIds.last(), nullptr);
+            if (!root || !newest || (root->last_reply_at != 0
+                                     && newest->create_at != root->last_reply_at)) {
+                qCDebug(lcThreadTimelineTrace).nospace()
+                    << "THREAD_CACHE_TAIL_SKIP source="
+                    << static_cast<const void*>(guard.data())
+                    << " reason=newest-mismatch cached="
+                    << (newest ? newest->create_at : 0)
+                    << " root=" << (root ? root->last_reply_at : 0);
+                return;
+            }
+
+            const int usableCount = std::min(
+                static_cast<int>(result.postIds.size()),
+                static_cast<int>(guard->postIds.size()) - 1);
+            if (usableCount <= 0) {
+                return;
+            }
+            const QStringList ids = result.postIds.mid(
+                result.postIds.size() - usableCount);
+            const int first = static_cast<int>(guard->postIds.size()) - usableCount;
+            for (int offset = 0; offset < usableCount; ++offset) {
+                const int target = first + offset;
+                const QString& id = ids.at(offset);
+                const int existingIndex = guard->indexOfPost(id);
+                if ((existingIndex >= 0 && existingIndex != target)
+                    || (!guard->postIds.at(target).isEmpty()
+                        && guard->postIds.at(target) != id)) {
+                    qCDebug(lcThreadTimelineTrace).nospace()
+                        << "THREAD_CACHE_TAIL_SKIP source="
+                        << static_cast<const void*>(guard.data())
+                        << " reason=identity-collision target=" << target
+                        << " id=" << shortId(id);
+                    return;
+                }
+            }
+
+            for (const QString& id : ids) {
+                if (guard->indexOfPost(id) < 0) {
+                    guard->provisionalPostIds.insert(id);
+                }
+            }
+            const ExactWindowMutation mutation = guard->assignExactWindow(first, ids);
+            guard->publishExactWindow(mutation);
+            qCDebug(lcThreadTimelineTrace).nospace()
+                << "THREAD_CACHE_TAIL_HYDRATE source="
+                << static_cast<const void*>(guard.data())
+                << " target=[" << first << ',' << (first + usableCount - 1) << ']'
+                << " ids=" << idsSummary(ids);
+            guard->validateCachedTail();
+        });
+}
+
+void ThreadPostSource::validateCachedTail()
+{
+    BackendPost* root = rootPost();
+    if (!root) {
+        return;
+    }
+
+    QPointer<ThreadPostSource> guard(this);
+    if (postIds.size() - 1 <= ServerBlockSize) {
+        PostTimelineService::instance(backend).loadThreadPage(
+            channel, rootId, ServerBlockSize, QString(), 0,
+            [guard](const PostTimelineService::Page& result) {
+                if (!guard || !result.success || result.postIds.isEmpty()) {
+                    return;
+                }
+                guard->placeInitial(result.postIds);
+            });
+        return;
+    }
+
+    PostTimelineService::instance(backend).loadThreadTail(
+        channel, rootId, ServerBlockSize, root->last_reply_at,
+        [guard](const PostTimelineService::Page& result) {
+            if (!guard || !result.success || result.postIds.isEmpty()) {
+                return;
+            }
+            guard->placeTail(result.postIds);
+        });
+}
+
+bool ThreadPostSource::isAuthoritativeIndex(int index) const
+{
+    if (index < 0 || index >= postIds.size()) {
+        return false;
+    }
+    const QString& id = postIds.at(index);
+    return !id.isEmpty() && !provisionalPostIds.contains(id);
+}
+
+void ThreadPostSource::pruneProvisionalPostIds()
+{
+    for (auto it = provisionalPostIds.begin(); it != provisionalPostIds.end();) {
+        if (indexOfPost(*it) < 0) {
+            it = provisionalPostIds.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void ThreadPostSource::placeExactWindow(int first, const QStringList& ids)
 {
+    for (const QString& id : ids) {
+        provisionalPostIds.remove(id);
+    }
     publishExactWindow(assignExactWindow(first, ids));
+    pruneProvisionalPostIds();
 }
 
 void ThreadPostSource::placeInitial(const QStringList& ids)
