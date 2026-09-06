@@ -91,6 +91,7 @@ should be logical-count reconciliation only. Transport-specific boundary evidenc
 `LongListWidget` must stay unaware of Mattermost counts, pages and cursors.
 
 ## Stability requirements
+
 A page response that does not change logical identity mapping must not cause existing visible
 `PostWidget`s to be destroyed and recreated.
 
