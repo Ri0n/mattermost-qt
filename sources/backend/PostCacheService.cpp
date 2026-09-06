@@ -161,7 +161,15 @@ public:
         if (postId.isEmpty() || !selectAccount(server, userId)) {
             return {};
         }
-        return store->loadPost(postId);
+
+        // PostCacheStore uses one posts-object shape for all read queries,
+        // including a direct lookup: { postId: rawPost }. The service-level
+        // direct API intentionally unwraps that container so callers cannot
+        // accidentally treat the key wrapper as Mattermost post JSON.
+        const QJsonObject posts = store->loadPost(postId);
+        const auto post = posts.constFind(postId);
+        return post != posts.cend() && post->isObject() ? post->toObject()
+                                                        : QJsonObject {};
     }
 
     QJsonObject loadLatestChannelRoots(const QString& server,
