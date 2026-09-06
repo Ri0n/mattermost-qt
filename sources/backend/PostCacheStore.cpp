@@ -439,6 +439,10 @@ bool PostCacheStore::storeTailWindow(const QString& channelId,
         return false;
     }
 
+    // QString() is a null string and QSql binds it as SQL NULL. Main-channel
+    // provenance deliberately uses the non-null empty string as its root key.
+    const QString storageRootId = rootId.isNull() ? QStringLiteral("") : rootId;
+
     QJsonArray ids;
     QSet<QString> seen;
     for (const QString& postId : chronologicalPostIds) {
@@ -457,7 +461,7 @@ bool PostCacheStore::storeTailWindow(const QString& channelId,
         "observed_at=excluded.observed_at, post_ids=excluded.post_ids"));
     query.addBindValue(accountId);
     query.addBindValue(channelId);
-    query.addBindValue(rootId);
+    query.addBindValue(storageRootId);
     query.addBindValue(nowMs());
     query.addBindValue(QJsonDocument(ids).toJson(QJsonDocument::Compact));
     if (!query.exec()) {
@@ -477,13 +481,14 @@ QJsonObject PostCacheStore::loadTailWindow(const QString& channelId,
         return {};
     }
 
+    const QString storageRootId = rootId.isNull() ? QStringLiteral("") : rootId;
     QSqlQuery window(database);
     window.prepare(QStringLiteral(
         "SELECT post_ids FROM tail_windows "
         "WHERE account_id=? AND channel_id=? AND root_id=?"));
     window.addBindValue(accountId);
     window.addBindValue(channelId);
-    window.addBindValue(rootId);
+    window.addBindValue(storageRootId);
     if (!window.exec() || !window.next()) {
         return {};
     }
