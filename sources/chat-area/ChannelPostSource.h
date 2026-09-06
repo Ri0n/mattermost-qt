@@ -127,6 +127,7 @@ private:
     int oldestBoundaryNonEmptyPage = -1;
     int oldestBoundaryEmptyPage = -1;
     int oldestBoundaryProbeStep = 1;
+    int oldestBoundarySearchLimitPage = -1;
     std::vector<std::function<void()>> oldestBoundaryWaiters;
 
     ProvisionalWindow provisionalWindow;
