@@ -21,6 +21,7 @@ class BackendChannel;
  */
 class IndexedPostSource : public AbstractPostSource
 {
+    Q_OBJECT
 public:
     explicit IndexedPostSource(BackendChannel& channel, QObject* parent = nullptr);
 
