@@ -139,11 +139,29 @@ public:
                             uint64_t fromCreateAt,
                             PageCallback callback);
 
-    /** Queue one full WebSocket post snapshot into the persistent cache. */
-    void cachePostObject(const QJsonObject& postObject);
+    /**
+     * Record an explicit channel-opening/read gesture. The timestamp is a
+     * Mattermost epoch-millisecond value; zero means now.
+     */
+    void recordChannelOpened(const QString& channelId, quint64 openedAt = 0);
 
-    /** Invalidate a cached post after delete/reaction-only WebSocket changes. */
-    void invalidateCachedPost(const QString& postId);
+    /** Whether post bodies from this channel may remain materialized in RAM. */
+    bool shouldRetainChannelInMemory(const QString& channelId) const;
+
+    /** Whether full post payloads from this channel are worth persisting. */
+    bool shouldCacheChannelOnDisk(const QString& channelId) const;
+
+    /**
+     * Queue one full WebSocket post snapshot into the persistent cache and
+     * return its per-backend observation sequence.
+     */
+    quint64 cachePostObject(const QJsonObject& postObject);
+
+    /**
+     * Invalidate a cached post after delete/reaction-only WebSocket changes and
+     * return its per-backend observation sequence.
+     */
+    quint64 invalidateCachedPost(const QString& postId);
 
 private:
     struct CacheAccount {
@@ -153,7 +171,14 @@ private:
         bool isValid() const { return !server.isEmpty() && !userId.isEmpty(); }
     };
 
-    using JsonCallback = std::function<void(QVariant, const QJsonDocument&)>;
+    struct RequestContext {
+        CacheAccount cacheAccount;
+        quint64 observationSequence = 0;
+    };
+
+    using JsonCallback = std::function<void(QVariant,
+                                            const QJsonDocument&,
+                                            const RequestContext&)>;
 
     explicit PostRepository(Backend& backend);
 
@@ -175,7 +200,10 @@ private:
                     PageCallback callback);
 
     CacheAccount currentCacheAccount() const;
-    void cachePosts(const CacheAccount& account, const QJsonObject& postsObject);
+    quint64 nextObservationSequence();
+    void cachePosts(const CacheAccount& account,
+                    const QJsonObject& postsObject,
+                    quint64 observationSequence);
 
     static QStringList chronologicalOrder(const QJsonObject& postsObject,
                                           const QString& rootId = QString());
@@ -188,6 +216,8 @@ private:
     HTTPConnector httpConnector;
     PostCacheService postCache;
     QHash<QString, QList<JsonCallback>> inFlightGets;
+    QHash<QString, qint64> channelOpenedAtByAccount;
+    quint64 observationSequence = 0;
 };
 
 } // namespace Mattermost

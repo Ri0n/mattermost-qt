@@ -26,6 +26,8 @@ public:
         qint64 maxBytes = 5LL * 1024 * 1024 * 1024;
         int maxPosts = 10000;
         int maxPostsPerThread = 1000;
+        qint64 maxChannelIdleMs = 10LL * 60 * 60 * 1000;
+        int maintenanceIntervalMs = 10 * 60 * 1000;
     };
 
     struct Stats {
@@ -46,6 +48,9 @@ public:
     bool setAccount(const QString& server, const QString& userId);
     bool hasAccount() const { return accountId >= 0; }
 
+    /** Record a user reading gesture for channel admission/retention policy. */
+    bool recordChannelOpened(const QString& channelId, qint64 openedAt);
+
     /** Upsert full Mattermost post JSON objects keyed by their post id. */
     int storePosts(const QJsonObject& postsObject);
 
@@ -65,7 +70,7 @@ public:
     Limits currentLimits() const { return limits; }
     Stats stats() const;
 
-    /** Enforce LRU limits and reclaim SQLite free pages incrementally. */
+    /** Enforce channel/LRU limits and reclaim SQLite free pages incrementally. */
     void maintenance();
 
 private:
@@ -77,6 +82,8 @@ private:
     QJsonObject decodePost(const QByteArray& payload) const;
     QJsonObject readPostQuery(QSqlQuery& query, bool touchRows);
     bool touchPosts(const QStringList& postIds, qint64 timestamp);
+    bool isChannelEligible(const QString& channelId, qint64 timestamp) const;
+    bool pruneInactiveChannels();
     bool pruneThreadLimits();
     bool pruneGlobalLimits();
     void vacuumFreelist();

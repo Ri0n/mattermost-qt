@@ -19,8 +19,7 @@ namespace {
 
 Q_LOGGING_CATEGORY(lcPostCache, "mattermost.cache.posts", QtWarningMsg)
 
-constexpr int SchemaVersion = 1;
-constexpr int MaintenanceIntervalMs = 10 * 60 * 1000;
+constexpr int SchemaVersion = 2;
 constexpr int InitialMaintenanceDelayMs = 15 * 1000;
 constexpr int LruTouchGranularityMs = 60 * 1000;
 constexpr int VacuumMinFreePages = 128;
@@ -45,7 +44,7 @@ PostCacheStore::PostCacheStore(QString path, QObject* parent)
                          .arg(static_cast<qulonglong>(reinterpret_cast<quintptr>(this)),
                               0, 16))
 {
-    maintenanceTimer.setInterval(MaintenanceIntervalMs);
+    maintenanceTimer.setInterval(limits.maintenanceIntervalMs);
     maintenanceTimer.setTimerType(Qt::VeryCoarseTimer);
     connect(&maintenanceTimer, &QTimer::timeout, this, [this] {
         maintenance();
@@ -145,10 +144,24 @@ bool PostCacheStore::initializeSchema(bool newDatabase)
     }
 
     if (!execStatement(QStringLiteral(
+            "CREATE TABLE IF NOT EXISTS channel_usage ("
+            " account_id INTEGER NOT NULL,"
+            " channel_id TEXT NOT NULL,"
+            " last_opened_at INTEGER NOT NULL,"
+            " PRIMARY KEY(account_id, channel_id),"
+            " FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE"
+            ") WITHOUT ROWID"))) {
+        return false;
+    }
+
+    if (!execStatement(QStringLiteral(
             "CREATE INDEX IF NOT EXISTS posts_timeline_idx "
             "ON posts(account_id, channel_id, root_id, create_at, post_id)"))
         || !execStatement(QStringLiteral(
             "CREATE INDEX IF NOT EXISTS posts_lru_idx ON posts(last_access)"))
+        || !execStatement(QStringLiteral(
+            "CREATE INDEX IF NOT EXISTS channel_usage_open_idx "
+            "ON channel_usage(account_id, last_opened_at)"))
         || !execStatement(QStringLiteral("PRAGMA user_version=%1").arg(SchemaVersion))) {
         return false;
     }
@@ -203,9 +216,53 @@ bool PostCacheStore::setAccount(const QString& server, const QString& userId)
     return true;
 }
 
+bool PostCacheStore::recordChannelOpened(const QString& channelId, qint64 openedAt)
+{
+    if (!hasAccount() || channelId.isEmpty()) {
+        return false;
+    }
+
+    const qint64 effectiveOpenedAt = openedAt > 0 ? openedAt : nowMs();
+    QSqlQuery query(database);
+    query.prepare(QStringLiteral(
+        "INSERT INTO channel_usage(account_id, channel_id, last_opened_at) "
+        "VALUES(?, ?, ?) "
+        "ON CONFLICT(account_id, channel_id) DO UPDATE SET "
+        "last_opened_at=MAX(channel_usage.last_opened_at, excluded.last_opened_at)"));
+    query.addBindValue(accountId);
+    query.addBindValue(channelId);
+    query.addBindValue(effectiveOpenedAt);
+    if (!query.exec()) {
+        qCWarning(lcPostCache) << "cannot record channel cache usage" << channelId
+                               << query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
 int PostCacheStore::storePosts(const QJsonObject& postsObject)
 {
     if (!hasAccount() || postsObject.isEmpty()) {
+        return 0;
+    }
+
+    const qint64 timestamp = nowMs();
+    QJsonObject eligiblePosts;
+    for (auto it = postsObject.constBegin(); it != postsObject.constEnd(); ++it) {
+        if (!it->isObject()) {
+            continue;
+        }
+        const QJsonObject post = it->toObject();
+        const QString postId = post.value(QStringLiteral("id")).toString(it.key());
+        const QString channelId = post.value(QStringLiteral("channel_id")).toString();
+        if (postId.isEmpty() || channelId.isEmpty()
+            || !isChannelEligible(channelId, timestamp)) {
+            continue;
+        }
+        eligiblePosts.insert(postId, post);
+    }
+
+    if (eligiblePosts.isEmpty()) {
         return 0;
     }
 
@@ -224,19 +281,11 @@ int PostCacheStore::storePosts(const QJsonObject& postsObject)
         "create_at=excluded.create_at, update_at=excluded.update_at, "
         "last_access=excluded.last_access, payload=excluded.payload"));
 
-    const qint64 timestamp = nowMs();
     int stored = 0;
-    for (auto it = postsObject.constBegin(); it != postsObject.constEnd(); ++it) {
-        if (!it->isObject()) {
-            continue;
-        }
-
+    for (auto it = eligiblePosts.constBegin(); it != eligiblePosts.constEnd(); ++it) {
         const QJsonObject post = it->toObject();
         const QString postId = post.value(QStringLiteral("id")).toString(it.key());
         const QString channelId = post.value(QStringLiteral("channel_id")).toString();
-        if (postId.isEmpty() || channelId.isEmpty()) {
-            continue;
-        }
 
         query.bindValue(0, accountId);
         query.bindValue(1, postId);
@@ -290,7 +339,8 @@ QJsonObject PostCacheStore::loadPost(const QString& postId)
 
 QJsonObject PostCacheStore::loadLatestChannelRoots(const QString& channelId, int limit)
 {
-    if (!hasAccount() || channelId.isEmpty() || limit <= 0) {
+    if (!hasAccount() || channelId.isEmpty() || limit <= 0
+        || !isChannelEligible(channelId, nowMs())) {
         return {};
     }
 
@@ -314,7 +364,8 @@ QJsonObject PostCacheStore::loadThread(const QString& channelId,
                                        const QString& rootId,
                                        int limit)
 {
-    if (!hasAccount() || channelId.isEmpty() || rootId.isEmpty() || limit <= 0) {
+    if (!hasAccount() || channelId.isEmpty() || rootId.isEmpty() || limit <= 0
+        || !isChannelEligible(channelId, nowMs())) {
         return {};
     }
 
@@ -384,7 +435,11 @@ void PostCacheStore::setLimits(const Limits& newLimits)
     limits.maxBytes = std::max<qint64>(1, newLimits.maxBytes);
     limits.maxPosts = std::max(1, newLimits.maxPosts);
     limits.maxPostsPerThread = std::max(1, newLimits.maxPostsPerThread);
+    limits.maxChannelIdleMs = std::max<qint64>(1, newLimits.maxChannelIdleMs);
+    limits.maintenanceIntervalMs = std::max(1000, newLimits.maintenanceIntervalMs);
+    maintenanceTimer.setInterval(limits.maintenanceIntervalMs);
     if (database.isOpen()) {
+        pruneInactiveChannels();
         pruneThreadLimits();
         pruneGlobalLimits();
     }
@@ -417,6 +472,7 @@ void PostCacheStore::maintenance()
         return;
     }
 
+    pruneInactiveChannels();
     pruneThreadLimits();
     pruneGlobalLimits();
     execStatement(QStringLiteral("PRAGMA optimize"));
@@ -515,6 +571,58 @@ bool PostCacheStore::touchPosts(const QStringList& postIds, qint64 timestamp)
         }
     }
     return true;
+}
+
+bool PostCacheStore::isChannelEligible(const QString& channelId, qint64 timestamp) const
+{
+    if (!hasAccount() || channelId.isEmpty()) {
+        return false;
+    }
+
+    QSqlQuery query(database);
+    query.prepare(QStringLiteral(
+        "SELECT last_opened_at FROM channel_usage "
+        "WHERE account_id=? AND channel_id=?"));
+    query.addBindValue(accountId);
+    query.addBindValue(channelId);
+    if (!query.exec() || !query.next()) {
+        return false;
+    }
+    return query.value(0).toLongLong() >= timestamp - limits.maxChannelIdleMs;
+}
+
+bool PostCacheStore::pruneInactiveChannels()
+{
+    if (!database.isOpen()) {
+        return false;
+    }
+
+    const qint64 cutoff = nowMs() - limits.maxChannelIdleMs;
+    QSqlQuery removePosts(database);
+    removePosts.prepare(QStringLiteral(
+        "DELETE FROM posts WHERE NOT EXISTS ("
+        " SELECT 1 FROM channel_usage u"
+        " WHERE u.account_id=posts.account_id"
+        " AND u.channel_id=posts.channel_id"
+        " AND u.last_opened_at>=?"
+        ")"));
+    removePosts.addBindValue(cutoff);
+    if (!removePosts.exec()) {
+        qCWarning(lcPostCache) << "cannot prune inactive channel posts"
+                               << removePosts.lastError().text();
+        return false;
+    }
+    const bool changed = removePosts.numRowsAffected() > 0;
+
+    QSqlQuery removeUsage(database);
+    removeUsage.prepare(QStringLiteral(
+        "DELETE FROM channel_usage WHERE last_opened_at<?"));
+    removeUsage.addBindValue(cutoff);
+    if (!removeUsage.exec()) {
+        qCWarning(lcPostCache) << "cannot prune inactive channel usage"
+                               << removeUsage.lastError().text();
+    }
+    return changed;
 }
 
 bool PostCacheStore::pruneThreadLimits()

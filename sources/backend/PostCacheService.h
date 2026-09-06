@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QtGlobal>
 #include <QJsonObject>
 #include <QString>
 #include <QThread>
@@ -27,15 +28,23 @@ public:
     PostCacheService(PostCacheService&&) = delete;
     PostCacheService& operator=(PostCacheService&&) = delete;
 
+    /** Queue one channel-open observation for persistent admission policy. */
+    void recordChannelOpened(const QString& server,
+                             const QString& userId,
+                             const QString& channelId,
+                             qint64 openedAt);
+
     /** Queue full raw Mattermost post objects for durable storage. */
     void storePosts(const QString& server,
                     const QString& userId,
-                    const QJsonObject& postsObject);
+                    const QJsonObject& postsObject,
+                    quint64 observationSequence);
 
     /** Queue invalidation of one raw post snapshot. */
     void removePost(const QString& server,
                     const QString& userId,
-                    const QString& postId);
+                    const QString& postId,
+                    quint64 observationSequence);
 
 private:
     QThread workerThread;

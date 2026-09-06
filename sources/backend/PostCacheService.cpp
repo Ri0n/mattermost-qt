@@ -1,16 +1,25 @@
 #include "PostCacheService.h"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 
+#include <QDateTime>
 #include <QDir>
+#include <QHash>
 #include <QMetaObject>
+#include <QSettings>
 #include <QStandardPaths>
 
 #include "PostCacheStore.h"
+#include "Settings.h"
 
 namespace Mattermost {
 namespace {
+
+constexpr int InvalidationWatermarkPruneThreshold = 4096;
+constexpr qint64 InvalidationWatermarkLifetimeMs = 60LL * 60 * 1000;
+constexpr qint64 MiB = 1024LL * 1024;
 
 QString defaultDatabasePath()
 {
@@ -18,34 +27,130 @@ QString defaultDatabasePath()
     return cacheRoot.filePath(QStringLiteral("post-cache/posts.sqlite3"));
 }
 
+PostCacheStore::Limits configuredLimits()
+{
+    QSettings settings;
+    PostCacheStore::Limits limits;
+    limits.maxBytes = std::max<qint64>(
+        MiB,
+        settings.value(POST_CACHE_DISK_MAX_MB,
+                       POST_CACHE_DISK_MAX_MB_DEFAULT).toLongLong() * MiB);
+    limits.maxPosts = std::max(
+        1,
+        settings.value(POST_CACHE_DISK_MAX_POSTS,
+                       POST_CACHE_DISK_MAX_POSTS_DEFAULT).toInt());
+    limits.maxPostsPerThread = std::max(
+        1,
+        settings.value(POST_CACHE_DISK_MAX_THREAD_REPLIES,
+                       POST_CACHE_DISK_MAX_THREAD_REPLIES_DEFAULT).toInt());
+    limits.maxChannelIdleMs = std::max<qint64>(
+        60LL * 60 * 1000,
+        settings.value(POST_CACHE_DISK_CHANNEL_IDLE_HOURS,
+                       POST_CACHE_DISK_CHANNEL_IDLE_HOURS_DEFAULT).toLongLong()
+            * 60LL * 60 * 1000);
+    limits.maintenanceIntervalMs = std::max(
+        60 * 1000,
+        settings.value(POST_CACHE_DISK_MAINTENANCE_MINUTES,
+                       POST_CACHE_DISK_MAINTENANCE_MINUTES_DEFAULT).toInt()
+            * 60 * 1000);
+    return limits;
+}
+
+QString normalizedServer(QString server)
+{
+    server = server.trimmed();
+    while (server.endsWith(QLatin1Char('/'))) {
+        server.chop(1);
+    }
+    return server;
+}
+
+QString watermarkKey(const QString& server, const QString& userId, const QString& postId)
+{
+    return normalizedServer(server) + QLatin1Char('\x1f') + userId.trimmed()
+        + QLatin1Char('\x1f') + postId;
+}
+
 } // namespace
 
 class PostCacheWorker final : public QObject
 {
 public:
-    explicit PostCacheWorker(QString path)
+    PostCacheWorker(QString path, PostCacheStore::Limits configuredLimits)
         : databasePath(std::move(path))
+        , limits(std::move(configuredLimits))
     {
+    }
+
+    void recordChannelOpened(const QString& server,
+                             const QString& userId,
+                             const QString& channelId,
+                             qint64 openedAt)
+    {
+        if (channelId.isEmpty() || !selectAccount(server, userId)) {
+            return;
+        }
+        store->recordChannelOpened(channelId, openedAt);
     }
 
     void storePosts(const QString& server,
                     const QString& userId,
-                    const QJsonObject& postsObject)
+                    const QJsonObject& postsObject,
+                    quint64 observationSequence)
     {
-        if (postsObject.isEmpty() || !selectAccount(server, userId)) {
+        if (postsObject.isEmpty()) {
             return;
         }
-        store->storePosts(postsObject);
+
+        QJsonObject eligiblePosts;
+        for (auto it = postsObject.constBegin(); it != postsObject.constEnd(); ++it) {
+            if (!it->isObject()) {
+                continue;
+            }
+            const QJsonObject postObject = it->toObject();
+            const QString postId = postObject.value(QStringLiteral("id")).toString(it.key());
+            if (postId.isEmpty()) {
+                continue;
+            }
+
+            const auto watermark = invalidationWatermarks.constFind(
+                watermarkKey(server, userId, postId));
+            if (watermark != invalidationWatermarks.cend()
+                && watermark->observationSequence >= observationSequence) {
+                // A delete/reaction event observed after this REST request was
+                // dispatched makes its eventual response stale for this post.
+                continue;
+            }
+            eligiblePosts.insert(postId, postObject);
+        }
+
+        if (eligiblePosts.isEmpty() || !selectAccount(server, userId)) {
+            pruneInvalidationWatermarks();
+            return;
+        }
+        store->storePosts(eligiblePosts);
+        pruneInvalidationWatermarks();
     }
 
     void removePost(const QString& server,
                     const QString& userId,
-                    const QString& postId)
+                    const QString& postId,
+                    quint64 observationSequence)
     {
-        if (postId.isEmpty() || !selectAccount(server, userId)) {
+        if (postId.isEmpty()) {
             return;
         }
-        store->removePost(postId);
+
+        const QString key = watermarkKey(server, userId, postId);
+        InvalidationWatermark& watermark = invalidationWatermarks[key];
+        watermark.observationSequence = std::max(watermark.observationSequence,
+                                                 observationSequence);
+        watermark.createdAt = QDateTime::currentMSecsSinceEpoch();
+
+        if (selectAccount(server, userId)) {
+            store->removePost(postId);
+        }
+        pruneInvalidationWatermarks();
     }
 
     void shutdown()
@@ -54,9 +159,15 @@ public:
             store->maintenance();
             store.reset();
         }
+        invalidationWatermarks.clear();
     }
 
 private:
+    struct InvalidationWatermark {
+        quint64 observationSequence = 0;
+        qint64 createdAt = 0;
+    };
+
     bool selectAccount(const QString& server, const QString& userId)
     {
         if (server.trimmed().isEmpty() || userId.trimmed().isEmpty()) {
@@ -64,6 +175,7 @@ private:
         }
         if (!store) {
             store = std::make_unique<PostCacheStore>(databasePath);
+            store->setLimits(limits);
             if (!store->open()) {
                 store.reset();
                 return false;
@@ -72,8 +184,27 @@ private:
         return store->setAccount(server, userId);
     }
 
+    void pruneInvalidationWatermarks()
+    {
+        if (invalidationWatermarks.size() <= InvalidationWatermarkPruneThreshold) {
+            return;
+        }
+
+        const qint64 cutoff = QDateTime::currentMSecsSinceEpoch()
+            - InvalidationWatermarkLifetimeMs;
+        for (auto it = invalidationWatermarks.begin(); it != invalidationWatermarks.end();) {
+            if (it->createdAt < cutoff) {
+                it = invalidationWatermarks.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
     QString databasePath;
+    PostCacheStore::Limits limits;
     std::unique_ptr<PostCacheStore> store;
+    QHash<QString, InvalidationWatermark> invalidationWatermarks;
 };
 
 PostCacheService::PostCacheService()
@@ -84,7 +215,7 @@ PostCacheService::PostCacheService()
 PostCacheService::PostCacheService(QString databasePath)
 {
     workerThread.setObjectName(QStringLiteral("MattermostPostCache"));
-    worker = new PostCacheWorker(std::move(databasePath));
+    worker = new PostCacheWorker(std::move(databasePath), configuredLimits());
     worker->moveToThread(&workerThread);
     QObject::connect(&workerThread, &QThread::finished,
                      worker, &QObject::deleteLater);
@@ -112,9 +243,29 @@ PostCacheService::~PostCacheService()
     worker = nullptr;
 }
 
+void PostCacheService::recordChannelOpened(const QString& server,
+                                           const QString& userId,
+                                           const QString& channelId,
+                                           qint64 openedAt)
+{
+    if (!worker || server.trimmed().isEmpty() || userId.trimmed().isEmpty()
+        || channelId.isEmpty()) {
+        return;
+    }
+
+    PostCacheWorker* const currentWorker = worker;
+    QMetaObject::invokeMethod(currentWorker,
+                              [currentWorker, server, userId, channelId, openedAt] {
+                                  currentWorker->recordChannelOpened(server, userId,
+                                                                     channelId, openedAt);
+                              },
+                              Qt::QueuedConnection);
+}
+
 void PostCacheService::storePosts(const QString& server,
                                   const QString& userId,
-                                  const QJsonObject& postsObject)
+                                  const QJsonObject& postsObject,
+                                  quint64 observationSequence)
 {
     if (!worker || server.trimmed().isEmpty() || userId.trimmed().isEmpty()
         || postsObject.isEmpty()) {
@@ -123,15 +274,18 @@ void PostCacheService::storePosts(const QString& server,
 
     PostCacheWorker* const currentWorker = worker;
     QMetaObject::invokeMethod(currentWorker,
-                              [currentWorker, server, userId, postsObject] {
-                                  currentWorker->storePosts(server, userId, postsObject);
+                              [currentWorker, server, userId, postsObject,
+                               observationSequence] {
+                                  currentWorker->storePosts(server, userId, postsObject,
+                                                            observationSequence);
                               },
                               Qt::QueuedConnection);
 }
 
 void PostCacheService::removePost(const QString& server,
                                   const QString& userId,
-                                  const QString& postId)
+                                  const QString& postId,
+                                  quint64 observationSequence)
 {
     if (!worker || server.trimmed().isEmpty() || userId.trimmed().isEmpty()
         || postId.isEmpty()) {
@@ -140,8 +294,10 @@ void PostCacheService::removePost(const QString& server,
 
     PostCacheWorker* const currentWorker = worker;
     QMetaObject::invokeMethod(currentWorker,
-                              [currentWorker, server, userId, postId] {
-                                  currentWorker->removePost(server, userId, postId);
+                              [currentWorker, server, userId, postId,
+                               observationSequence] {
+                                  currentWorker->removePost(server, userId, postId,
+                                                           observationSequence);
                               },
                               Qt::QueuedConnection);
 }
