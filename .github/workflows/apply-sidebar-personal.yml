@@ -19,6 +19,20 @@ jobs:
         with:
           ref: chatgpt/sidebar-personal
           fetch-depth: 0
+      - name: Fix helper matcher
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/apply_sidebar_personal.py')
+          s = p.read_text()
+          s = s.replace(
+              r'void Backend::createDirectChannel \\(const BackendUser& user\\)\\n\\{.*?\\n\\}\\n\\nvoid Backend::retrieveChannelPosts',
+              r'void Backend::createDirectChannel \\(const BackendUser& user\\)\\n\\{.*?\\n\\}\\n\\nvoid Backend::addUserToChannel')
+          s = s.replace(
+              'void Backend::retrieveChannelPosts"""',
+              'void Backend::addUserToChannel"""')
+          p.write_text(s)
+          PY
       - name: Apply patch
         run: python3 .github/apply_sidebar_personal.py
       - name: Remove temporary helper
