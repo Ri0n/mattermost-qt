@@ -55,6 +55,8 @@ private:
     // Boundary discovery probes only the first offset of candidate pages with
     // per_page=1; only the resolved oldest page is materialized with ten posts.
     static constexpr int ServerPageSize = 10;
+    // Heuristic only: correctness never depends on this ratio.
+    static constexpr int InitialBoundaryProbePercent = 3;
 
     struct ProvisionalWindow {
         QString targetPostId;
@@ -77,6 +79,7 @@ private:
 
     int currentLogicalCount() const;
     int pageForIndex(int index) const;
+    int initialBoundaryProbePages() const;
     int estimateIndexForPost(const BackendPost& post) const;
     int findFreeWindowFirst(const QVector<QString>& ids,
                             int windowSize,
@@ -94,6 +97,7 @@ private:
     void placePage(int page, const QStringList& chronologicalIds);
     void resolveOldestBoundary(int emptyPage, std::function<void()> completion);
     void probeOldestBoundary();
+    void loadOldestBoundaryPage(int page);
     void finishOldestBoundaryProbe();
     void reconcileRootCount(int actualCount);
     void prependDiscovered(const QStringList& chronologicalIds);
@@ -119,6 +123,7 @@ private:
     int oldestBoundaryNonEmptyPage = -1;
     int oldestBoundaryEmptyPage = -1;
     int oldestBoundaryProbeStep = 1;
+    int oldestBoundaryFullPageChecked = -1;
     std::vector<std::function<void()>> oldestBoundaryWaiters;
 
     ProvisionalWindow provisionalWindow;

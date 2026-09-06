@@ -79,8 +79,18 @@ the viewport/buffer must continue with before/after post cursors. Repeating the 
 against a known adjacent gap is a bug: it can leave a permanent estimated-height hole or, if known
 identities are relocated to the estimate, create an identity ping-pong and visible tremor.
 
-## Stability requirements
+## Count and boundary differences from channel history
 
+Channel history needs an absolute-page boundary repair because `total_msg_count_root` may count rows
+that ordinary `/channels/{id}/posts` history does not return. Threads deliberately do not inherit that
+page-probing algorithm. Mattermost `Thread.ReplyCount` excludes deleted replies, and the thread endpoint
+is cursor/time based (`fromCreateAt`, `fromPost`, `direction`) rather than an absolute `page=N` space.
+
+If a future server/plugin configuration produces a real thread count mismatch, the common abstraction
+should be logical-count reconciliation only. Transport-specific boundary evidence remains in the source;
+`LongListWidget` must stay unaware of Mattermost counts, pages and cursors.
+
+## Stability requirements
 A page response that does not change logical identity mapping must not cause existing visible
 `PostWidget`s to be destroyed and recreated.
 

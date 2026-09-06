@@ -355,7 +355,8 @@ void ChannelPostSource::resolveOldestBoundary(int emptyPage,
     oldestBoundaryProbeInFlight = true;
     oldestBoundaryNonEmptyPage = -1;
     oldestBoundaryEmptyPage = emptyPage;
-    oldestBoundaryProbeStep = 1;
+    oldestBoundaryProbeStep = initialBoundaryProbePages();
+    oldestBoundaryFullPageChecked = -1;
     probeOldestBoundary();
 }
 
@@ -371,27 +372,37 @@ void ChannelPostSource::probeOldestBoundary()
         return;
     }
 
+    // For a small channel the 3% heuristic is less than one server
+    // page. Fetch the immediately preceding block in full: it is likely
+    // the actual oldest page and, unlike a one-post probe, is useful to
+    // the viewport if that guess is right. Mark step 1 as consumed so
+    // an empty result falls back to exponential one-post probing.
+    if (oldestBoundaryNonEmptyPage < 0 && oldestBoundaryProbeStep == 1) {
+        oldestBoundaryProbeStep = 2;
+        loadOldestBoundaryPage(std::max(0, oldestBoundaryEmptyPage - 1));
+        return;
+    }
+
     if (oldestBoundaryNonEmptyPage >= 0
         && oldestBoundaryEmptyPage == oldestBoundaryNonEmptyPage + 1) {
-        const int page = oldestBoundaryNonEmptyPage;
-        qCDebug(lcTimelineChannel).nospace()
-            << "OLDEST_BOUNDARY_PAGE page=" << page
-            << " perPage=" << ServerPageSize;
+        if (oldestBoundaryFullPageChecked == oldestBoundaryNonEmptyPage) {
+  reconcileRootCount((oldestBoundaryNonEmptyPage + 1) * ServerPageSize);
+  finishOldestBoundaryProbe();
+        } else {
+  loadOldestBoundaryPage(oldestBoundaryNonEmptyPage);
+        }
+        return;
+    }
 
-        QPointer<ChannelPostSource> guard(this);
-        PostTimelineService::instance(backend).loadChannelPage(
-            channel, page, ServerPageSize,
-            [guard, page](const PostTimelineService::Page& result) {
-                if (!guard || !guard->oldestBoundaryProbeInFlight) {
-                    return;
-                }
-                if (result.success && !result.postIds.isEmpty()) {
-                    guard->reconcileRootCount(
-                        page * ServerPageSize + static_cast<int>(result.postIds.size()));
-                    guard->placePage(page, result.postIds);
-                }
-                guard->finishOldestBoundaryProbe();
-            });
+    // With one unknown ten-post page left between known data and known
+    // emptiness, first materialize the known non-empty page. A short
+    // result proves the boundary immediately and avoids the final
+    // one-post probe; a full result is useful prefetch and the binary
+    // search continues normally.
+    if (oldestBoundaryNonEmptyPage >= 0
+        && oldestBoundaryEmptyPage == oldestBoundaryNonEmptyPage + 2
+        && oldestBoundaryFullPageChecked != oldestBoundaryNonEmptyPage) {
+        loadOldestBoundaryPage(oldestBoundaryNonEmptyPage);
         return;
     }
 
@@ -399,10 +410,10 @@ void ChannelPostSource::probeOldestBoundary()
     if (oldestBoundaryNonEmptyPage < 0) {
         page = std::max(0, oldestBoundaryEmptyPage - oldestBoundaryProbeStep);
         oldestBoundaryProbeStep = std::min(oldestBoundaryEmptyPage + 1,
-                                           oldestBoundaryProbeStep * 2);
+                                 oldestBoundaryProbeStep * 2);
     } else {
         page = oldestBoundaryNonEmptyPage
-            + (oldestBoundaryEmptyPage - oldestBoundaryNonEmptyPage) / 2;
+  + (oldestBoundaryEmptyPage - oldestBoundaryNonEmptyPage) / 2;
     }
 
     // Search in normal ten-post page coordinates, but probe only the first root
@@ -414,34 +425,94 @@ void ChannelPostSource::probeOldestBoundary()
         << " offset=" << offset
         << " nonEmpty=" << oldestBoundaryNonEmptyPage
         << " empty=" << oldestBoundaryEmptyPage
+        << " step=" << oldestBoundaryProbeStep
         << " perPage=1";
 
     QPointer<ChannelPostSource> guard(this);
     PostTimelineService::instance(backend).loadChannelPage(
         channel, offset, 1,
         [guard, page, offset](const PostTimelineService::Page& result) {
-            if (!guard || !guard->oldestBoundaryProbeInFlight) {
-                return;
-            }
-            if (!result.success) {
-                guard->finishOldestBoundaryProbe();
-                return;
-            }
+  if (!guard || !guard->oldestBoundaryProbeInFlight) {
+      return;
+  }
+  if (!result.success) {
+      guard->finishOldestBoundaryProbe();
+      return;
+  }
 
-            const bool exists = !result.postIds.isEmpty();
-            qCDebug(lcTimelineChannel).nospace()
-                << "OLDEST_BOUNDARY_RESULT page=" << page
-                << " offset=" << offset
-                << " exists=" << exists;
+  const bool exists = !result.postIds.isEmpty();
+  qCDebug(lcTimelineChannel).nospace()
+      << "OLDEST_BOUNDARY_RESULT page=" << page
+      << " offset=" << offset
+      << " exists=" << exists;
 
-            if (exists) {
-                guard->oldestBoundaryNonEmptyPage = std::max(
-                    guard->oldestBoundaryNonEmptyPage, page);
-            } else {
-                guard->oldestBoundaryEmptyPage = std::min(
-                    guard->oldestBoundaryEmptyPage, page);
-            }
-            guard->probeOldestBoundary();
+  if (exists) {
+      guard->oldestBoundaryNonEmptyPage = std::max(
+          guard->oldestBoundaryNonEmptyPage, page);
+  } else {
+      guard->oldestBoundaryEmptyPage = std::min(
+          guard->oldestBoundaryEmptyPage, page);
+  }
+  guard->probeOldestBoundary();
+        });
+}
+
+void ChannelPostSource::loadOldestBoundaryPage(int page)
+{
+    if (!oldestBoundaryProbeInFlight) {
+        return;
+    }
+
+    page = std::max(0, page);
+    oldestBoundaryFullPageChecked = page;
+    qCDebug(lcTimelineChannel).nospace()
+        << "OLDEST_BOUNDARY_PAGE page=" << page
+        << " perPage=" << ServerPageSize;
+
+    QPointer<ChannelPostSource> guard(this);
+    PostTimelineService::instance(backend).loadChannelPage(
+        channel, page, ServerPageSize,
+        [guard, page](const PostTimelineService::Page& result) {
+  if (!guard || !guard->oldestBoundaryProbeInFlight) {
+      return;
+  }
+  if (!result.success) {
+      guard->finishOldestBoundaryProbe();
+      return;
+  }
+
+  qCDebug(lcTimelineChannel).nospace()
+      << "OLDEST_BOUNDARY_PAGE_RESULT page=" << page
+      << " returned=" << result.postIds.size();
+
+  if (result.postIds.isEmpty()) {
+      guard->oldestBoundaryEmptyPage = std::min(
+          guard->oldestBoundaryEmptyPage, page);
+      if (guard->oldestBoundaryNonEmptyPage >= page) {
+          guard->oldestBoundaryNonEmptyPage = -1;
+      }
+      guard->oldestBoundaryFullPageChecked = -1;
+      guard->probeOldestBoundary();
+      return;
+  }
+
+  guard->oldestBoundaryNonEmptyPage = std::max(
+      guard->oldestBoundaryNonEmptyPage, page);
+  const int returned = static_cast<int>(result.postIds.size());
+  if (returned < ServerPageSize) {
+      guard->reconcileRootCount(page * ServerPageSize + returned);
+      guard->placePage(page, result.postIds);
+      guard->finishOldestBoundaryProbe();
+      return;
+  }
+
+  guard->placePage(page, result.postIds);
+  if (guard->oldestBoundaryEmptyPage == page + 1) {
+      guard->reconcileRootCount((page + 1) * ServerPageSize);
+      guard->finishOldestBoundaryProbe();
+      return;
+  }
+  guard->probeOldestBoundary();
         });
 }
 
@@ -453,6 +524,7 @@ void ChannelPostSource::finishOldestBoundaryProbe()
     oldestBoundaryNonEmptyPage = -1;
     oldestBoundaryEmptyPage = -1;
     oldestBoundaryProbeStep = 1;
+    oldestBoundaryFullPageChecked = -1;
 
     for (auto& waiter : waiters) {
         if (waiter) {
@@ -547,6 +619,14 @@ int ChannelPostSource::pageForIndex(int index) const
     }
     index = std::max(0, std::min(index, static_cast<int>(postIds.size()) - 1));
     return (static_cast<int>(postIds.size()) - 1 - index) / ServerPageSize;
+}
+
+int ChannelPostSource::initialBoundaryProbePages() const
+{
+    const qint64 numerator = static_cast<qint64>(postIds.size())
+        * InitialBoundaryProbePercent;
+    const qint64 denominator = 100LL * ServerPageSize;
+    return std::max(1, static_cast<int>((numerator + denominator - 1) / denominator));
 }
 
 int ChannelPostSource::estimateIndexForPost(const BackendPost& post) const

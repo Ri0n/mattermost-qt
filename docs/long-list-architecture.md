@@ -268,13 +268,22 @@ therefore O(1) page requests rather than an identity-cursor walk through history
 `total_msg_count_root` may overestimate the rows returned by `/posts` because deleted roots can be
 omitted from history. If an absolute page calculated from that estimate is successfully fetched but
 empty, the source treats the empty response as boundary evidence instead of leaving a black logical
-range. Boundary search stays in ten-post page coordinates but tests each candidate page with one
+range. Boundary search stays in ten-post page coordinates but tests distant candidate pages with one
 root only: candidate page P is probed as `page=P*10&per_page=1`, which asks whether the first offset
-of that ten-post page exists. Exponential stepping followed by binary search therefore keeps the same
-request count without downloading ten posts per probe. Once the last existing page is known, that
-page alone is fetched with `per_page=10`; its returned length gives the exact real root count and
-materializes the oldest viewport block. The phantom logical prefix is then removed once and normal
-ten-post paging continues. No identity cursor is introduced by this reconciliation path.
+of that ten-post page exists.
+
+The first exponential step is a heuristic 3% of the estimated root count, rounded to ten-post pages.
+This ratio affects latency only; correctness does not depend on it. If 3% is no larger than one page,
+the immediately preceding page is fetched with `per_page=10` instead, because a small channel is cheap
+to materialize and that request is likely to be the actual oldest block. If the 3% probe is still empty,
+the step grows exponentially until data brackets the boundary, then binary search refines it.
+
+Near the end of binary search, when only one unknown ten-post page remains between known data and
+known emptiness, the source first fetches the known non-empty page with `per_page=10`. A short result
+proves the exact oldest boundary immediately and is already useful viewport materialization; a full
+result remains useful prefetch and the one-post search continues. The phantom logical prefix is removed
+once the exact count is known and normal ten-post paging continues. No identity cursor is introduced by
+this reconciliation path.
 
 This replaces the old controller-level `TimelineSeekState` state machine.
 
