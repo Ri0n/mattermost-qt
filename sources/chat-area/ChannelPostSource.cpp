@@ -300,11 +300,11 @@ void ChannelPostSource::requestRange(int first,
     }
 
     int rightAnchor = lastMissing + 1;
-    while (rightAnchor < postIds.size()
+    while (rightAnchor < static_cast<int>(postIds.size())
            && !isAuthoritativePost(postIds.at(rightAnchor))) {
         ++rightAnchor;
     }
-    if (rightAnchor >= postIds.size()) {
+    if (rightAnchor >= static_cast<int>(postIds.size())) {
         rightAnchor = -1;
     }
 
@@ -346,7 +346,7 @@ void ChannelPostSource::requestRange(int first,
                             if (reachedNewest) {
                                 const int expectedLast = anchorIndex
                                     + static_cast<int>(result.postIds.size());
-                                const int removeCount = guard->postIds.size()
+                                const int removeCount = static_cast<int>(guard->postIds.size())
                                     - expectedLast - 1;
                                 if (removeCount > 0) {
                                     guard->rootCountOverestimate += removeCount;
@@ -431,7 +431,7 @@ void ChannelPostSource::requestRange(int first,
                 if (reachedOldest && page > 0) {
                     const int actualCount = page * ServerPageSize
                         + static_cast<int>(result.postIds.size());
-                    const int phantomPrefix = guard->postIds.size() - actualCount;
+                    const int phantomPrefix = static_cast<int>(guard->postIds.size()) - actualCount;
                     if (phantomPrefix > 0) {
                         guard->rootCountOverestimate += phantomPrefix;
                         guard->removeLogicalRange(0, phantomPrefix);
