@@ -1,0 +1,29 @@
+name: Apply post cache read side
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-post-cache-read-side.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 .github/scripts/apply-post-cache-read-side.py
+      - name: Remove temporary helper
+        run: rm .github/scripts/apply-post-cache-read-side.py .github/workflows/apply-post-cache-read-side.yml
+      - name: Commit result
+        run: |
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add -A
+          git commit -m 'Enable cache-first direct post reads'
+          git push origin HEAD:chatgpt/post-disk-cache
