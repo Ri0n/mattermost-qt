@@ -18,22 +18,20 @@ constexpr qint64 HourMs = 60LL * MinuteMs;
 
 qint64 configuredMemoryChannelHorizonMs()
 {
-    static const qint64 value = std::max<qint64>(
+    return std::max<qint64>(
         MinuteMs,
         QSettings().value(POST_CACHE_MEMORY_CHANNEL_IDLE_MINUTES,
                           POST_CACHE_MEMORY_CHANNEL_IDLE_MINUTES_DEFAULT).toLongLong()
             * MinuteMs);
-    return value;
 }
 
 qint64 configuredDiskChannelHorizonMs()
 {
-    static const qint64 value = std::max<qint64>(
+    return std::max<qint64>(
         HourMs,
         QSettings().value(POST_CACHE_DISK_CHANNEL_IDLE_HOURS,
                           POST_CACHE_DISK_CHANNEL_IDLE_HOURS_DEFAULT).toLongLong()
             * HourMs);
-    return value;
 }
 
 QString channelInterestKey(const QString& server,

@@ -998,11 +998,34 @@ void LongListWidget::materializeAvailable(const Range& range)
 
 void LongListWidget::evictOutside(const Range& keepRange, int preferredCenter)
 {
-    Q_UNUSED(preferredCenter)
+    // maxMaterializedItems is a residency budget, not the size of the current
+    // viewport window. Keep already-created widgets while there is budget so
+    // short chats and nearby back-scrolls never churn rows unnecessarily.
+    int excess = static_cast<int>(materialized.size()) - maxMaterializedItems;
+    if (excess <= 0) {
+        return;
+    }
+
+    QVector<int> candidates;
     const QVector<int> current = materializedIndices();
+    candidates.reserve(current.size());
     for (int index : current) {
-        if (keepRange.contains(index)) {
-            continue;
+        if (!keepRange.contains(index)) {
+            candidates.push_back(index);
+        }
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [preferredCenter](int lhs, int rhs) {
+        const int lhsDistance = lhs < preferredCenter
+            ? preferredCenter - lhs : lhs - preferredCenter;
+        const int rhsDistance = rhs < preferredCenter
+            ? preferredCenter - rhs : rhs - preferredCenter;
+        return lhsDistance > rhsDistance;
+    });
+
+    for (int index : candidates) {
+        if (excess <= 0) {
+            break;
         }
         QWidget* widget = materialized.take(index);
         if (!widget) {
@@ -1011,6 +1034,7 @@ void LongListWidget::evictOutside(const Range& keepRange, int preferredCenter)
         widgetIndexes.remove(widget);
         widget->removeEventFilter(this);
         destroyItemWidget(index, widget);
+        --excess;
     }
 }
 
@@ -1333,6 +1357,28 @@ void LongListWidget::onSliderMoved(int value)
     if (target < 0) {
         return;
     }
+
+    // A thumb drag inside already concrete data is ordinary scrolling. In
+    // particular, do not turn a one-pixel move near the bottom into a seek that
+    // recentres the newest post and snaps the scrollbar back to the end. The
+    // same rule also lets a small fully-resident chat materialize a new viewport
+    // immediately instead of flashing an empty seek window.
+    const Range viewportDesired = desiredRangeForViewport();
+    bool viewportBodiesReady = viewportDesired.isValid();
+    if (viewportBodiesReady) {
+        for (int index = viewportDesired.first; index <= viewportDesired.last; ++index) {
+            if (!available.testBit(index)) {
+                viewportBodiesReady = false;
+                break;
+            }
+        }
+    }
+    if (materialized.contains(target) || viewportBodiesReady) {
+        clearSeek();
+        scheduleSync(RequestReason::Scroll);
+        return;
+    }
+
     if (!seekActive || target != seekTarget) {
         ++seekGeneration;
         seekTarget = target;
@@ -1354,15 +1400,16 @@ int LongListWidget::logicalTargetForScrollValue(int value) const
     if (logicalCount <= 0) {
         return -1;
     }
-    const QScrollBar* bar = verticalScrollBar();
-    if (logicalCount == 1 || bar->maximum() <= bar->minimum()) {
-        return 0;
-    }
-    value = std::max(bar->minimum(), std::min(value, bar->maximum()));
-    const long double fraction = static_cast<long double>(value - bar->minimum())
-        / static_cast<long double>(bar->maximum() - bar->minimum());
-    return std::max(0, std::min(logicalCount - 1,
-        static_cast<int>(std::llround(fraction * (logicalCount - 1)))));
+
+    // Scrollbar values represent the viewport's top content offset, not a post
+    // ordinal. Map the centre of that viewport through the height index so the
+    // bottom scrollbar position targets the centre of the last visible rows
+    // rather than always targeting the final logical item.
+    const qint64 top = contentOffsetForScrollValue(value);
+    const qint64 center = std::min<qint64>(
+        std::max<qint64>(0, heights.totalHeight() - 1),
+        top + std::max(0, viewport()->height() / 2));
+    return heights.indexAtPixel(center);
 }
 
 void LongListWidget::clearSeek()

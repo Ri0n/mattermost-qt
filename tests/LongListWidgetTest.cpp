@@ -179,6 +179,60 @@ private slots:
         QVERIFY(concrete.contains(visible.last));
     }
 
+    void visitedRowsStayMaterializedUntilBudgetIsReached()
+    {
+        TestLongListWidget list;
+        list.resize(480, 180);
+        list.setDefaultItemHeight(60);
+        list.setMaterializationLimit(200);
+        list.setItemCount(21);
+        list.setRangeAvailable(0, 20);
+        list.show();
+        settleEvents();
+
+        for (int index = 0; index < 21; ++index) {
+            list.scrollToIndex(index, Mattermost::LongListWidget::Alignment::Center);
+            settleEvents(4);
+        }
+
+        QCOMPARE(list.materializedCount(), 21);
+    }
+
+    void tinyThumbDragInsideResidentWindowDoesNotSnapToEnd()
+    {
+        TestLongListWidget list;
+        list.resize(480, 240);
+        list.setDefaultItemHeight(60);
+        list.setMaterializationLimit(200);
+        list.setSeekDebounceMs(0);
+        list.setItemCount(21);
+        list.setRangeAvailable(0, 20);
+        list.show();
+        settleEvents();
+        list.scrollToEnd();
+        settleEvents();
+
+        QScrollBar* bar = list.verticalScrollBar();
+        QVERIFY(bar->maximum() > 1);
+        const int draggedValue = bar->maximum() - 1;
+
+        bar->setSliderDown(true);
+        bar->setValue(draggedValue);
+        QVERIFY(QMetaObject::invokeMethod(bar, "sliderMoved",
+                                          Qt::DirectConnection,
+                                          Q_ARG(int, draggedValue)));
+        settleEvents(12);
+
+        QCOMPARE(bar->value(), draggedValue);
+        const auto visible = list.visibleRange();
+        QVERIFY(visible.isValid());
+        for (int index = visible.first; index <= visible.last; ++index) {
+            QVERIFY2(list.itemWidget(index) != nullptr,
+                     "A fully available small chat must not expose an empty viewport during thumb drag");
+        }
+        bar->setSliderDown(false);
+    }
+
     void delayedRowGrowthKeepsStickyBottom()
     {
         TestLongListWidget list;
