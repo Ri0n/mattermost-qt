@@ -1,0 +1,29 @@
+name: Apply resident refresh prerequisite patch
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-resident-refresh-fence.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+      - name: Apply patch
+        run: python3 .github/scripts/apply-resident-refresh-fence.py
+      - name: Remove temporary helper
+        run: rm .github/scripts/apply-resident-refresh-fence.py .github/workflows/apply-resident-refresh-fence.yml
+      - name: Commit result
+        run: |
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add -A
+          git commit -m 'Make resident post refresh cache-safe'
+          git push origin HEAD:chatgpt/post-disk-cache
