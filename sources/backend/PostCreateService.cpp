@@ -9,6 +9,7 @@
 #include "Backend.h"
 #include "NetworkRequest.h"
 #include "PostRepository.h"
+#include "QByteArrayCreator.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendNewPollData.h"
 #include "backend/types/BackendPost.h"
@@ -68,7 +69,8 @@ void PostCreateService::createPost(BackendChannel& channel,
 
     QPointer<PostCreateService> guard(this);
     NetworkRequest request(QStringLiteral("posts"));
-    httpConnector.post(request, json, HttpResponseCallback(
+    const QByteArrayCreator payload(json);
+    httpConnector.post(request, payload, HttpResponseCallback(
         [guard, callback = std::move(callback)](QVariant status,
                                                 const QJsonDocument& doc) mutable {
             BackendPost* post = nullptr;
@@ -99,7 +101,8 @@ void PostCreateService::editPost(const QString& postId,
 
     QPointer<PostCreateService> guard(this);
     NetworkRequest request(QStringLiteral("posts/") + postId + QStringLiteral("/patch"));
-    httpConnector.put(request, json, HttpResponseCallback(
+    const QByteArrayCreator payload(json);
+    httpConnector.put(request, payload, HttpResponseCallback(
         [guard, callback = std::move(callback)](QVariant status,
                                                 const QJsonDocument& doc) mutable {
             BackendPost* post = nullptr;
@@ -150,7 +153,8 @@ void PostCreateService::submitPoll(BackendChannel& channel,
     }
     json.insert(QStringLiteral("submission"), submission);
 
-    httpConnector.post(request, json, HttpResponseCallback(
+    const QByteArrayCreator payload(json);
+    httpConnector.post(request, payload, HttpResponseCallback(
         [callback = std::move(callback)](QVariant status, QByteArray) mutable {
             if (callback) {
                 callback(status.toInt() == QNetworkReply::NoError);
