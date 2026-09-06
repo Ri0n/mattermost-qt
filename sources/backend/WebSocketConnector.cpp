@@ -28,6 +28,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QRandomGenerator>
 #include <QTimer>
 #include <QUrl>
@@ -46,6 +49,74 @@ constexpr int MinReconnectDelayMs = 3000;
 constexpr int MaxReconnectDelayMs = 300000;
 constexpr int ReconnectJitterMs = 2000;
 constexpr int BackoffThreshold = 7;
+constexpr char BrowserUserAgent[] =
+    "Mozilla/5.0 (X11; Linux x86_64; rv:149.0) Gecko/20100101 Firefox/149.0";
+
+void setWebSocketScheme(QUrl& url)
+{
+    if (url.scheme() == QLatin1String("https")) {
+        url.setScheme(QStringLiteral("wss"));
+    } else if (url.scheme() == QLatin1String("http")) {
+        url.setScheme(QStringLiteral("ws"));
+    }
+}
+
+QUrl websocketEndpoint(const QUrl& apiBaseUrl, const QJsonObject& config)
+{
+    QUrl base;
+    const QString configuredUrl = config.value(QStringLiteral("WebsocketURL")).toString();
+    if (!configuredUrl.isEmpty()) {
+        base = QUrl(configuredUrl);
+        setWebSocketScheme(base);
+    }
+
+    if (!base.isValid() || base.host().isEmpty()) {
+        base = apiBaseUrl;
+
+        QString path = base.path();
+        const QString apiSuffix = QStringLiteral("api/v4/");
+        if (path.endsWith(apiSuffix)) {
+            path.chop(apiSuffix.size());
+        }
+        base.setPath(path);
+        setWebSocketScheme(base);
+
+        if (base.port() < 0) {
+            const QString portKey = base.scheme() == QLatin1String("wss")
+                ? QStringLiteral("WebsocketSecurePort")
+                : QStringLiteral("WebsocketPort");
+            bool ok = false;
+            const int configuredPort = config.value(portKey).toString().toInt(&ok);
+            if (ok && configuredPort > 0 && configuredPort <= 65535) {
+                base.setPort(configuredPort);
+            }
+        }
+    }
+
+    QString path = base.path();
+    while (path.endsWith(QLatin1Char('/'))) {
+        path.chop(1);
+    }
+    path += QStringLiteral("/api/v4/websocket");
+    base.setPath(path);
+    base.setQuery(QString());
+    base.setFragment(QString());
+    return base;
+}
+
+QByteArray webOrigin(const QUrl& websocketUrl)
+{
+    QUrl origin(websocketUrl);
+    if (origin.scheme() == QLatin1String("wss")) {
+        origin.setScheme(QStringLiteral("https"));
+    } else if (origin.scheme() == QLatin1String("ws")) {
+        origin.setScheme(QStringLiteral("http"));
+    }
+    origin.setPath(QString());
+    origin.setQuery(QString());
+    origin.setFragment(QString());
+    return origin.toEncoded();
+}
 
 template<typename T>
 void handler (WebSocketConnector& conn, const QJsonObject& data, const QJsonObject& broadcast)
@@ -99,11 +170,14 @@ bool printEvent (const QString& name)
 
 struct WebSocketConnector::Private {
 	QWebSocket webSocket;
+	QNetworkAccessManager configNetworkManager;
 	QString token;
+	QUrl apiBaseUrl;
 	QUrl endpointUrl;
 	QTimer heartbeatTimer;
 	QTimer reconnectTimer;
 	QString connectionId;
+	quint64 configGeneration = 0;
 	int responseSequence = 1;
 	int serverSequence = 0;
 	int pendingPingSequence = 0;
@@ -182,9 +256,7 @@ WebSocketConnector::~WebSocketConnector () = default;
 
 void WebSocketConnector::open (const QString& urlString, const QString& authToken)
 {
-	d->endpointUrl = QUrl (urlString + "websocket");
-	d->endpointUrl.setScheme ("wss");
-
+	d->apiBaseUrl = QUrl(urlString);
 	d->token = authToken;
 	d->connectionId.clear ();
 	d->responseSequence = 1;
@@ -199,7 +271,48 @@ void WebSocketConnector::open (const QString& urlString, const QString& authToke
 	d->reconnectTimer.stop ();
 	stopHeartbeat ();
 
-	openSocket ();
+	const quint64 generation = ++d->configGeneration;
+	QUrl configUrl = d->apiBaseUrl;
+	QString configPath = configUrl.path();
+	if (!configPath.endsWith(QLatin1Char('/'))) {
+		configPath += QLatin1Char('/');
+	}
+	configPath += QStringLiteral("config/client");
+	configUrl.setPath(configPath);
+	configUrl.setQuery(QStringLiteral("format=old"));
+
+	QNetworkRequest request(configUrl);
+	request.setRawHeader("User-Agent", BrowserUserAgent);
+	request.setRawHeader("X-Requested-With", "XMLHttpRequest");
+	if (!d->token.isEmpty()) {
+		request.setRawHeader("Cookie", "MMAUTHTOKEN=" + d->token.toUtf8());
+	}
+
+	QNetworkReply* reply = d->configNetworkManager.get(request);
+	connect(reply, &QNetworkReply::finished, this, [this, reply, generation] {
+		if (generation != d->configGeneration || d->token.isEmpty()) {
+			reply->deleteLater();
+			return;
+		}
+
+		QJsonObject config;
+		if (reply->error() == QNetworkReply::NoError) {
+			const QJsonDocument document = QJsonDocument::fromJson(reply->readAll());
+			if (document.isObject()) {
+				config = document.object();
+			}
+		} else {
+			LOG_DEBUG("Mattermost client config request failed: "
+			          << reply->error() << " " << reply->errorString()
+			          << ". Falling back to the login URL for WebSocket");
+		}
+		reply->deleteLater();
+
+		d->endpointUrl = websocketEndpoint(d->apiBaseUrl, config);
+		LOG_DEBUG("Mattermost WebSocket endpoint resolved to "
+		          << d->endpointUrl.toString(QUrl::RemovePassword));
+		openSocket();
+	});
 }
 
 void WebSocketConnector::close ()
@@ -240,8 +353,10 @@ QUrl WebSocketConnector::socketUrl () const
 	QUrlQuery query (url);
 	query.removeAllQueryItems (QStringLiteral("connection_id"));
 	query.removeAllQueryItems (QStringLiteral("sequence_number"));
+	query.removeAllQueryItems (QStringLiteral("posted_ack"));
 	query.addQueryItem (QStringLiteral("connection_id"), d->connectionId);
 	query.addQueryItem (QStringLiteral("sequence_number"), QString::number(d->serverSequence));
+	query.addQueryItem (QStringLiteral("posted_ack"), QStringLiteral("true"));
 	url.setQuery (query);
 	return url;
 }
@@ -254,7 +369,14 @@ void WebSocketConnector::openSocket ()
 
 	const QUrl url = socketUrl ();
 	LOG_DEBUG ("WebSocket opening " << url.toString(QUrl::RemovePassword));
-	d->webSocket.open (url);
+
+	QNetworkRequest request(url);
+	request.setRawHeader("User-Agent", BrowserUserAgent);
+	request.setRawHeader("Origin", webOrigin(url));
+	request.setRawHeader("Cookie", "MMAUTHTOKEN=" + d->token.toUtf8());
+	request.setRawHeader("Pragma", "no-cache");
+	request.setRawHeader("Cache-Control", "no-cache");
+	d->webSocket.open (request);
 }
 
 void WebSocketConnector::doHandshake ()
@@ -313,6 +435,7 @@ void WebSocketConnector::sendPing ()
 
 void WebSocketConnector::reset ()
 {
+	++d->configGeneration;
 	d->reconnectTimer.stop ();
 	stopHeartbeat ();
 	d->connectionId.clear ();
