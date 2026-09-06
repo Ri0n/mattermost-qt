@@ -450,17 +450,20 @@ void ChannelPostSource::probeOldestBoundary()
 
     // If the 3% heuristic is only one page, materializing the candidate block
     // is cheaper than maintaining a separate probe phase. Once binary search
-    // leaves at most one unknown page, materialize the known non-empty page
-    // first: if it is short, the boundary is proved without probing that last
-    // unknown page. A full page then needs at most the one adjacent page.
+    // leaves at most two unknown pages, stop spending one-root probes on them:
+    // materialize the first unknown ten-post page instead. A short/empty page
+    // resolves the boundary immediately; a full page needs at most one adjacent
+    // ten-post page and both payloads are useful to the viewport/prefetch window.
     if ((oldestBoundaryNonEmptyPage < 0 && oldestBoundaryProbeStep == 1)
         || (oldestBoundaryNonEmptyPage >= 0 && oldestBoundaryEmptyPage >= 0
-            && oldestBoundaryEmptyPage - oldestBoundaryNonEmptyPage <= 2)) {
+            && oldestBoundaryEmptyPage - oldestBoundaryNonEmptyPage <= 3)) {
         if (oldestBoundaryNonEmptyPage < 0) {
             oldestBoundaryProbeStep = 2;
             loadOldestBoundaryPage(std::max(0, oldestBoundaryEmptyPage - 1));
-        } else {
+        } else if (oldestBoundaryEmptyPage == oldestBoundaryNonEmptyPage + 1) {
             loadOldestBoundaryPage(oldestBoundaryNonEmptyPage);
+        } else {
+            loadOldestBoundaryPage(oldestBoundaryNonEmptyPage + 1);
         }
         return;
     }

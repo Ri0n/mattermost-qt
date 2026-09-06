@@ -281,12 +281,13 @@ empty; the estimated page itself is fetched only if the search actually reaches 
 is no larger than one page, the normal ten-post path is used instead because a small channel is cheap
 to materialize.
 
-Near the end of binary search, when at most one unknown ten-post page remains, the source first fetches
-the known non-empty page with `per_page=10`. A short result proves the exact oldest boundary immediately.
-If it is full, at most the one adjacent candidate page remains; that page either supplies useful data or
-proves an exact multiple-of-ten boundary. In every case returned posts are already useful viewport/
-prefetch materialization. The phantom logical prefix is removed once the exact count is known and normal
-ten-post paging continues. No identity cursor is introduced by this reconciliation path.
+Near the end of binary search, when at most two unknown ten-post pages remain, the source stops
+spending one-root probes on that tiny interval and fetches the first unknown page with `per_page=10`.
+A short result proves the exact oldest boundary immediately; an empty result tightens the boundary; and
+a full page requires at most one adjacent ten-post page to finish. In every case returned posts are
+already useful viewport/prefetch materialization. The phantom logical prefix is removed once the exact
+count is known and normal ten-post paging continues. No identity cursor is introduced by this
+reconciliation path.
 
 This replaces the old controller-level `TimelineSeekState` state machine.
 
