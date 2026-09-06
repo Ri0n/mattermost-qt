@@ -46,36 +46,61 @@ private:
 private slots:
     void ignoresPresenceForNonUserRows()
     {
-        const auto publicWithPresence = renderItem(SidebarItem::Channel, BackendChannel::publicChannel,
-                                                      QStringLiteral("online"));
-        const auto publicWithoutPresence = renderItem(SidebarItem::Channel, BackendChannel::publicChannel, QString());
+        const auto publicWithPresence = renderItem(SidebarItem::Channel,
+                                                   BackendChannel::publicChannel,
+                                                   QStringLiteral("online"));
+        const auto publicWithoutPresence = renderItem(SidebarItem::Channel,
+                                                      BackendChannel::publicChannel,
+                                                      QString());
         QVERIFY(publicWithPresence == publicWithoutPresence);
 
-        const auto privateWithPresence = renderItem(SidebarItem::Channel, BackendChannel::privateChannel,
-                                                       QStringLiteral("away"));
-        const auto privateWithoutPresence = renderItem(SidebarItem::Channel, BackendChannel::privateChannel, QString());
+        const auto privateWithPresence = renderItem(SidebarItem::Channel,
+                                                    BackendChannel::privateChannel,
+                                                    QStringLiteral("away"));
+        const auto privateWithoutPresence = renderItem(SidebarItem::Channel,
+                                                       BackendChannel::privateChannel,
+                                                       QString());
         QVERIFY(privateWithPresence == privateWithoutPresence);
 
-        const auto groupWithPresence = renderItem(SidebarItem::Channel, BackendChannel::groupChannel,
-                                                     QStringLiteral("dnd"));
-        const auto groupWithoutPresence = renderItem(SidebarItem::Channel, BackendChannel::groupChannel, QString());
+        const auto groupWithPresence = renderItem(SidebarItem::Channel,
+                                                  BackendChannel::groupChannel,
+                                                  QStringLiteral("dnd"));
+        const auto groupWithoutPresence = renderItem(SidebarItem::Channel,
+                                                     BackendChannel::groupChannel,
+                                                     QString());
         QVERIFY(groupWithPresence == groupWithoutPresence);
     }
 
     void rendersPresenceForDirectMessage()
     {
-        const auto withPresence = renderItem(SidebarItem::Channel, BackendChannel::directChannel,
-                                                QStringLiteral("online"));
-        const auto withoutPresence = renderItem(SidebarItem::Channel, BackendChannel::directChannel, QString());
+        const auto withPresence = renderItem(SidebarItem::Channel,
+                                             BackendChannel::directChannel,
+                                             QStringLiteral("online"));
+        const auto withoutPresence = renderItem(SidebarItem::Channel,
+                                                BackendChannel::directChannel,
+                                                QString());
         QVERIFY(withPresence != withoutPresence);
     }
 
     void rendersVirtualDestinationAsConversationRow()
     {
         const auto channel = renderItem(SidebarItem::Channel,
-                                        BackendChannel::directChannel, QString());
+                                        BackendChannel::directChannel,
+                                        QString());
         const auto destination = renderItem(SidebarItem::VirtualDestination,
-                                            BackendChannel::directChannel, QString());
+                                            BackendChannel::directChannel,
+                                            QString());
+        QCOMPARE(destination, channel);
+    }
+
+    void rendersVirtualDirectDestinationWithSamePresenceChrome()
+    {
+        const auto channel = renderItem(SidebarItem::Channel,
+                                        BackendChannel::directChannel,
+                                        QStringLiteral("online"));
+        const auto destination = renderItem(SidebarItem::VirtualDestination,
+                                            BackendChannel::directChannel,
+                                            QStringLiteral("online"));
         QCOMPARE(destination, channel);
     }
 };
