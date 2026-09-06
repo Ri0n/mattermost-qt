@@ -16,91 +16,10 @@ jobs:
         with:
           ref: chatgpt/post-disk-cache
           fetch-depth: 0
-      - name: Refine TTL and rematerialization test
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          residency = Path('sources/backend/PostRepositoryResidency.cpp')
-          text = residency.read_text()
-          old = '''    --(*it);
-              if (*it <= 0) {
-                  residentLeaseCounts.erase(it);
-              }
-              if (residentAccountedBytes > configuredHardBytes()) {
-          '''.replace('              ', '    ')
-          new = '''    --(*it);
-              if (*it <= 0) {
-                  residentLeaseCounts.erase(it);
-                  auto state = residentBodies.find(key);
-                  if (state != residentBodies.end()) {
-                      // Idle TTL starts when the last active consumer lets go,
-                      // not when a long-lived widget/edit session first acquired
-                      // its lease. Pressure eviction remains independent of TTL.
-                      state->touchedAt = QDateTime::currentMSecsSinceEpoch();
-                  }
-              }
-              if (residentAccountedBytes > configuredHardBytes()) {
-          '''.replace('              ', '    ')
-          if text.count(old) != 1:
-              raise SystemExit('release lease anchor mismatch')
-          residency.write_text(text.replace(old, new, 1))
-
-          test = Path('tests/LongListWidgetTest.cpp')
-          text = test.read_text()
-          marker = '''    void viewportLockScalesRelativeYAcrossResize()
-              {
-          '''.replace('              ', '    ')
-          if text.count(marker) != 1:
-              raise SystemExit('LongList test insertion marker mismatch')
-          addition = r'''    void bodyAvailabilityDropRerequestsSameLogicalBlock()
-    {
-        TestLongListWidget list;
-        list.resize(480, 320);
-        list.setDefaultItemHeight(60);
-        list.setRequestBlockSize(10);
-        list.setItemCount(100);
-        list.setRangeAvailable(0, 99);
-        list.show();
-        settleEvents();
-
-        list.scrollToIndex(55, Mattermost::LongListWidget::Alignment::Center);
-        settleEvents(12);
-        QVERIFY2(list.itemWidget(55) != nullptr,
-                 "The target must be materialized before simulating body eviction");
-
-        QSignalSpy requests(&list, &Mattermost::LongListWidget::rangeRequested);
-        list.setRangeAvailable(55, 55, false);
-        settleEvents(12);
-
-        QVERIFY(!list.isItemAvailable(55));
-        QCOMPARE(list.itemWidget(55), nullptr);
-
-        bool requestedIdentityBlock = false;
-        for (int i = 0; i < requests.count(); ++i) {
-            const QList<QVariant> request = requests.at(i);
-            if (request.at(0).toInt() == 50 && request.at(1).toInt() == 59) {
-                requestedIdentityBlock = true;
-                break;
-            }
-        }
-        QVERIFY2(requestedIdentityBlock,
-                 "Dropping only a resident body must re-request its existing 10-item logical block");
-
-        // Rematerialization restores body availability only. No item-count or
-        // structural mutation is needed for the same semantic source identity.
-        list.setRangeAvailable(55, 55, true);
-        settleEvents(12);
-        QVERIFY(list.isItemAvailable(55));
-        QVERIFY2(list.itemWidget(55) != nullptr,
-                 "Restoring the body must materialize the same logical item again");
-    }
-
-'''
-          test.write_text(text.replace(marker, addition + marker, 1))
-          PY
-      - name: Remove temporary workflow
-        run: rm .github/workflows/refine-resident-eviction.yml
+      - name: Apply refinements
+        run: python3 .github/scripts/refine-resident-eviction.py
+      - name: Remove temporary files
+        run: rm .github/scripts/refine-resident-eviction.py .github/workflows/refine-resident-eviction.yml
       - name: Commit result
         run: |
           git config user.name 'Sergei Ilinykh'
