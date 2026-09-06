@@ -451,6 +451,8 @@ The resident-memory limiter is **not fully enabled yet**. The target contract is
 - sources retain post IDs, not permanent raw pointers;
 - evicted IDs can be rematerialized from SQLite/HTTP.
 
+`PostResidencyLease` implements the raw-reference lifetime contract as a move-only RAII pin in `PostRepository`. Every materialized `PostWidget` owns one for its full lifetime. The outgoing composer owns an independent edit-session lease because `postToEdit` may outlive the materialized row while an edit request is pending or retryable. Actual eviction may only consider posts with zero explicit leases. A root also remains implicitly non-evictable while a resident reply still points to it through the legacy `BackendPost::rootPost` relationship.
+
 Before erasing resident `BackendPost` objects, raw-pointer lifetimes must be audited. In particular,
 `BackendPost::rootPost` cannot serve as a durable ownership relation; `root_id` must remain the stable
 identity reference.

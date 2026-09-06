@@ -23,11 +23,13 @@
 
 #include "HTTPConnector.h"
 #include "PostCacheService.h"
+#include "PostResidencyLease.h"
 
 namespace Mattermost {
 
 class Backend;
 class BackendChannel;
+class BackendPost;
 
 /**
  * Single active owner of post REST retrieval.
@@ -159,6 +161,12 @@ public:
     /** Whether post bodies from this channel may remain materialized in RAM. */
     bool shouldRetainChannelInMemory(const QString& channelId) const;
 
+    /** Pin a resident post body while a raw BackendPost reference is retained. */
+    PostResidencyLease leasePost(const BackendPost& post);
+
+    /** True while at least one explicit raw-reference lease protects the body. */
+    bool isPostLeased(const QString& channelId, const QString& postId) const;
+
     /** Whether full post payloads from this channel are worth persisting. */
     bool shouldCacheChannelOnDisk(const QString& channelId) const;
 
@@ -230,6 +238,9 @@ private:
     void noteResidentObservation(const QJsonObject& postObject, quint64 observation);
     void noteResidentPostObservation(const QString& postId, quint64 observation);
     void pruneResidentObservations();
+    void releasePostLease(const QString& channelId, const QString& postId);
+
+    friend class PostResidencyLease;
 
     Backend& backend;
     HTTPConnector httpConnector;
@@ -242,6 +253,7 @@ private:
     QHash<QString, QList<JsonCallback>> inFlightGets;
     QHash<QString, qint64> channelOpenedAtByAccount;
     QHash<QString, ResidentObservation> residentObservations;
+    QHash<QString, int> residentLeaseCounts;
     quint64 observationSequence = 0;
 };
 

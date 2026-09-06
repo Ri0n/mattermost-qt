@@ -28,6 +28,7 @@
 #include <QBoxLayout>
 
 #include "MessageTextEditWidget.h"
+#include "backend/PostResidencyLease.h"
 #include "fwd.h"
 
 class QDragEnterEvent;
@@ -76,6 +77,7 @@ public slots:
 		}
 		clear();
 		postToEdit = nullptr;
+		editResidencyLease.reset();
 		setEditingVisual(false);
 		emit postEditFinished();
 	}
@@ -107,6 +109,7 @@ private:
 	QPushButton*						addEmojiButton = nullptr;
 	QPushButton*						sendButton = nullptr;
 	const BackendPost*					postToEdit;
+	PostResidencyLease					editResidencyLease;
 	OutgoingAttachmentList*				attachmentList;
 	std::unique_ptr<OutgoingPostData> 	outgoingPostData;
 	bool								sendFailed = false;

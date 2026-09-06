@@ -44,6 +44,7 @@
 #include "backend/Backend.h"
 #include "backend/PostCreateService.h"
 #include "backend/PostProps.h"
+#include "backend/PostRepository.h"
 #include "backend/types/BackendPost.h"
 #include "chat-area/ChatLogWidget.h"
 #include "chat-area/QuotedReplyFormat.h"
@@ -108,6 +109,7 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 		}
 		clear();
 		postToEdit = nullptr;
+		editResidencyLease.reset();
 		setEditingVisual(false);
 		emit postEditFinished();
 	});
@@ -181,6 +183,7 @@ void OutgoingPostCreator::postEditInitiated(BackendPost& post)
 	// interoperability blockquote out of the editor; it is restored on send.
 	setProperty(PostProps::ReplyToPostId, QString());
 	postToEdit = &post;
+	editResidencyLease = PostRepository::instance(*backend).leasePost(post);
 	setText(QuotedReplyFormat::stripFallback(post.message));
 	setFocus();
 	moveCursor(QTextCursor::End);
@@ -543,6 +546,7 @@ void OutgoingPostCreator::finishSend(const QString& confirmedPostId)
 	}
 
 	outgoingPostData.reset();
+	editResidencyLease.reset();
 	sendFailed = false;
 	setProperty(PostProps::ReplyToPostId, QString());
 

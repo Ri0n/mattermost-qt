@@ -101,6 +101,7 @@ PostWidget::PostWidget(Backend& backend,
     , post(post)
     , threadButton(nullptr)
     , backend(backend)
+    , residencyLease(PostRepository::instance(backend).leasePost(post))
     , ui(new Ui::PostWidget)
     , messageContent(nullptr)
     , parentChatArea(chatArea)
