@@ -293,18 +293,29 @@ void ChannelPostSource::requestRange(int first,
         --lastMissing;
     }
 
+    // A cursor request can return at most ServerPageSize adjacent rows.
+    // Looking farther than that for an anchor is actively harmful: after a
+    // remote thumb seek it makes us walk from the newest materialized island
+    // toward the requested index one tiny request at a time. Search only the
+    // distance that one cursor request can actually bridge.
+    const int leftLimit = std::max(0, firstMissing - ServerPageSize);
     int leftAnchor = firstMissing - 1;
-    while (leftAnchor >= 0
+    while (leftAnchor >= leftLimit
            && !isAuthoritativePost(postIds.at(leftAnchor))) {
         --leftAnchor;
     }
+    if (leftAnchor < leftLimit) {
+        leftAnchor = -1;
+    }
 
+    const int rightLimit = std::min(static_cast<int>(postIds.size()) - 1,
+                                    lastMissing + ServerPageSize);
     int rightAnchor = lastMissing + 1;
-    while (rightAnchor < static_cast<int>(postIds.size())
+    while (rightAnchor <= rightLimit
            && !isAuthoritativePost(postIds.at(rightAnchor))) {
         ++rightAnchor;
     }
-    if (rightAnchor >= static_cast<int>(postIds.size())) {
+    if (rightAnchor > rightLimit) {
         rightAnchor = -1;
     }
 
@@ -410,14 +421,18 @@ void ChannelPostSource::requestRange(int first,
         return;
     }
 
-    // No identity is close enough to the requested block. An absolute
-    // page is only a seed for a provisional island; it must never become
-    // authoritative merely because total_msg_count_root supplied an
-    // approximate global coordinate.
+    // No authoritative identity is close enough to satisfy this request
+    // with one cursor page. This is a random/remote seek, not sequential
+    // scrolling. Use one wider absolute page as a provisional seed instead of
+    // walking a distant island ten posts at a time.
     const int seedIndex = (firstMissing + lastMissing) / 2;
-    const int page = pageForIndex(seedIndex);
+    const int page = (static_cast<int>(postIds.size()) - 1 - seedIndex) / SeekPageSize;
+    qCDebug(lcTimelineChannel).nospace()
+        << "RANGE_SEED requested=[" << requestedFirst << ',' << requestedLast
+        << "] missing=[" << firstMissing << ',' << lastMissing
+        << "] page=" << page << " perPage=" << SeekPageSize;
     PostTimelineService::instance(backend).loadChannelPage(
-        channel, page, ServerPageSize,
+        channel, page, SeekPageSize,
         [guard, page, finish](const PostTimelineService::Page& result) {
             if (!guard) {
                 return;
@@ -425,11 +440,11 @@ void ChannelPostSource::requestRange(int first,
 
             if (result.success && !result.postIds.isEmpty()) {
                 const bool reachedOldest = result.prevPostId.isEmpty()
-                    || static_cast<int>(result.postIds.size()) < ServerPageSize;
+                    || static_cast<int>(result.postIds.size()) < SeekPageSize;
                 const bool reachedNewest = page == 0;
 
                 if (reachedOldest && page > 0) {
-                    const int actualCount = page * ServerPageSize
+                    const int actualCount = page * SeekPageSize
                         + static_cast<int>(result.postIds.size());
                     const int phantomPrefix = static_cast<int>(guard->postIds.size()) - actualCount;
                     if (phantomPrefix > 0) {

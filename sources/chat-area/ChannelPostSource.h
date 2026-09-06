@@ -49,7 +49,11 @@ public:
     void requestBeforeFirst(RequestReason reason, quint64 generation) override;
 
 private:
+    // Cursor fetches are intentionally small because they extend already-known
+    // adjacency. A remote thumb seek needs a wider one-shot seed so it never
+    // walks thousands of messages from a distant authoritative island.
     static constexpr int ServerPageSize = 10;
+    static constexpr int SeekPageSize = 100;
 
     struct ProvisionalWindow {
         QString targetPostId;

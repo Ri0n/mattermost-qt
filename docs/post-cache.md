@@ -421,9 +421,14 @@ The channel source therefore uses this provenance order:
 
 Ordinary scrolling must extend a known window with identity cursors. It must
 not repeatedly overwrite authoritative identities from page-number arithmetic.
-Every successful range request ends in one of three states: new identities
-were placed, a real boundary removed stale logical slots, or the request made
-no progress and is finished without an immediate retry loop.
+A cursor is only selected when the known anchor lies within one cursor page of
+the missing block. A remote seek (including dragging directly to the oldest
+edge) uses one wider bounded absolute-page seed instead of walking from the
+nearest already-materialized island. The seed is provisional until overlap or a
+real channel boundary proves placement. Every successful range request ends in
+one of three states: new identities were placed, a real boundary removed stale
+logical slots, or the request made no progress and is finished without an
+immediate retry loop.
 
 WebSocket reconnect uses the same bounded-working-set rule. A successful
 Mattermost sequence resume requires no HTTP history replay. If reliable replay
