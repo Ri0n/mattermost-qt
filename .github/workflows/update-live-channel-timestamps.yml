@@ -1,0 +1,29 @@
+name: Update live channel timestamps
+
+on:
+  push:
+    paths:
+      - '.github/workflows/update-live-channel-timestamps.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/post-disk-cache
+          fetch-depth: 0
+      - name: Apply update
+        run: python3 .github/scripts/update-live-channel-timestamps.py
+      - name: Remove temporary helper
+        run: rm .github/scripts/update-live-channel-timestamps.py .github/workflows/update-live-channel-timestamps.yml
+      - name: Commit result
+        run: |
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add -A
+          git commit -m 'Advance live channel timeline timestamps'
+          git push origin HEAD:chatgpt/post-disk-cache
