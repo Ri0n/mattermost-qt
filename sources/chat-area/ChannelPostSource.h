@@ -56,8 +56,9 @@ private:
     // per_page=1; small/local boundary checks may materialize useful ten-post
     // blocks while refining the exact oldest edge.
     static constexpr int ServerPageSize = 10;
-    // Initial inward jump after an empty large-channel probe. This is a latency
-    // heuristic only; exponential/binary fallback preserves correctness.
+    // Large-channel top-edge search starts this far inside the estimated count.
+    // This is a latency heuristic only; outward binary search or inward
+    // exponential fallback preserves correctness.
     static constexpr int InitialBoundaryProbePercent = 3;
 
     struct ProvisionalWindow {
