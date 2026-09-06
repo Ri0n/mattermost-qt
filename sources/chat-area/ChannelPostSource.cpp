@@ -1224,8 +1224,6 @@ void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
     if (count <= 0) {
         return;
     }
-    const int last = first + count - 1;
-
     bool touchesProvisionalIdentity = false;
     const QStringList pageIds = chronologicalIds.mid(0, count);
     for (const QString& id : pageIds) {
