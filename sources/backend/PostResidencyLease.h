@@ -14,6 +14,10 @@ class PostRepository;
  * post ID after the body is evicted. The lease only says that a live raw
  * BackendPost reference/pointer exists and therefore the body must not move or
  * disappear until this object is released.
+ *
+ * PostRepository only issues a lease when the referenced object is the actual
+ * BackendChannel-owned resident body. Transient WebSocket objects and pinned
+ * dialog copies therefore cannot accidentally pin a same-ID channel object.
  */
 class PostResidencyLease
 {
