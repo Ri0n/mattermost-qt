@@ -3,7 +3,6 @@
 #include <functional>
 #include <vector>
 
-#include <QHash>
 #include <QSet>
 #include <QStringList>
 #include <QVector>
