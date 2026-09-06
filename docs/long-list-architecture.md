@@ -175,7 +175,10 @@ A geometry change *inside* the visible region cannot keep every row on both side
 visible item grows by 200 pixels, some content must make room for those pixels. The invariant is that
 `LongListWidget` preserves its chosen semantic anchor and introduces no additional artificial jump.
 
-Only direct user input or an explicit logical navigation operation changes viewport intent.
+Only direct user input or an explicit logical navigation operation changes viewport intent. Sticky
+bottom is exact user intent: only the actual scrollbar maximum captures a `Bottom` anchor. A thumb
+position even one pixel above the maximum is an ordinary item anchor and must not be snapped back to
+the end by a later materialization or geometry transaction.
 
 ## Persistent viewport lock semantics
 

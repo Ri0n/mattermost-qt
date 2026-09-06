@@ -1183,7 +1183,7 @@ LongListWidget::ViewAnchor LongListWidget::captureAnchor() const
     }
 
     const qint64 offset = contentOffset();
-    if (maximumContentOffset() - offset <= 2) {
+    if (verticalScrollBar()->value() == verticalScrollBar()->maximum()) {
         anchor.kind = ViewAnchor::Bottom;
         return anchor;
     }
