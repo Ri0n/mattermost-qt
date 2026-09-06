@@ -52,9 +52,9 @@ public:
 
 private:
     // Visible/prefetch channel ranges use Mattermost's ten-post absolute pages.
-    // Distant boundary discovery probes only candidate page starts with
-    // per_page=1; small/local boundary checks may materialize useful ten-post
-    // blocks while refining the exact oldest edge.
+    // Distant boundary discovery probes candidate page starts with per_page=1;
+    // once at most two candidate pages remain, normal ten-post requests double
+    // as both boundary evidence and useful viewport/prefetch materialization.
     static constexpr int ServerPageSize = 10;
     // Large-channel top-edge search starts this far inside the estimated count.
     // This is a latency heuristic only; outward binary search or inward
