@@ -423,12 +423,13 @@ pages are newest-aligned, so a ten-item logical block can cross a server-page bo
 case the source requests both intersecting pages and places each with `placePage()`. Remote thumb
 seek, normal scrolling and initial tail materialization therefore share exactly the same paging
 path instead of switching between page arithmetic and cursor walks. A successful empty absolute
-page is also authoritative boundary evidence: when `total_msg_count_root` overstates `/posts`
-history, the source starts distant boundary probing at a heuristic 3% of the estimated root count,
-probes candidate ten-post page starts with `per_page=1`, opportunistically materializes a useful full
-ten-post block when the search becomes local, removes the phantom logical prefix, and then keeps
-ten-post paging for visible/prefetched history. The 3% value is a latency heuristic, never a correctness
-assumption.
+page is also authoritative boundary evidence: when `total_msg_count_root` may overstate `/posts`
+history, a large top-edge request first validates the estimated oldest page with `per_page=1` instead
+of downloading guessed ten-post pages. An empty validation starts distant probing at a heuristic 3% of
+the estimated root count; candidate page starts use `per_page=1` until the search becomes local, where
+the page immediately before known emptiness is materialized with ten posts. The source then removes any
+phantom logical prefix and keeps ten-post paging for visible/prefetched history. The 3% value is a latency
+heuristic, never a correctness assumption.
 
 Every successful range request ends in
 one of three states: new identities were placed, a real boundary removed stale

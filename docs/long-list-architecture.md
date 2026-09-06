@@ -272,18 +272,19 @@ range. Boundary search stays in ten-post page coordinates but tests distant cand
 root only: candidate page P is probed as `page=P*10&per_page=1`, which asks whether the first offset
 of that ten-post page exists.
 
-The first exponential step is a heuristic 3% of the estimated root count, rounded to ten-post pages.
-This ratio affects latency only; correctness does not depend on it. If 3% is no larger than one page,
-the immediately preceding page is fetched with `per_page=10` instead, because a small channel is cheap
-to materialize and that request is likely to be the actual oldest block. If the 3% probe is still empty,
-the step grows exponentially until data brackets the boundary, then binary search refines it.
+For a large top-edge request the source does not first download guessed ten-post pages. It validates
+the estimated oldest page with `per_page=1`; if that page is empty, the first inward step is a heuristic
+3% of the estimated root count, rounded to ten-post pages. This ratio affects latency only; correctness
+does not depend on it. If the 3% distance is no larger than one page, the normal ten-post path is used
+instead because a small channel is cheap to materialize. If the 3% probe is still empty, the step grows
+exponentially until data brackets the boundary, then binary search refines it.
 
-Near the end of binary search, when only one unknown ten-post page remains between known data and
-known emptiness, the source first fetches the known non-empty page with `per_page=10`. A short result
-proves the exact oldest boundary immediately and is already useful viewport materialization; a full
-result remains useful prefetch and the one-post search continues. The phantom logical prefix is removed
-once the exact count is known and normal ten-post paging continues. No identity cursor is introduced by
-this reconciliation path.
+Near the end of binary search, when at most one unknown ten-post page remains, the source fetches the
+page immediately before the known empty boundary with `per_page=10`. A short result proves the exact
+oldest boundary immediately; a full result adjacent to the empty page proves an exact multiple of ten;
+and an empty result moves the boundary one page inward. In every case any returned posts are already
+useful viewport/prefetch materialization. The phantom logical prefix is removed once the exact count is
+known and normal ten-post paging continues. No identity cursor is introduced by this reconciliation path.
 
 This replaces the old controller-level `TimelineSeekState` state machine.
 

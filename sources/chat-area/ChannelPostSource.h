@@ -96,6 +96,7 @@ private:
     void rebuildIndex();
     void removeLogicalRange(int first, int count);
     void placePage(int page, const QStringList& chronologicalIds);
+    void probeEstimatedOldestBoundary(std::function<void()> completion);
     void resolveOldestBoundary(int emptyPage, std::function<void()> completion);
     void probeOldestBoundary();
     void loadOldestBoundaryPage(int page);
@@ -120,11 +121,11 @@ private:
 
     // Shared reconciliation state lets concurrent empty range requests wait on
     // one absolute-page search instead of starting competing boundary probes.
+    bool oldestBoundaryFastPathTried = false;
     bool oldestBoundaryProbeInFlight = false;
     int oldestBoundaryNonEmptyPage = -1;
     int oldestBoundaryEmptyPage = -1;
     int oldestBoundaryProbeStep = 1;
-    int oldestBoundaryFullPageChecked = -1;
     std::vector<std::function<void()>> oldestBoundaryWaiters;
 
     ProvisionalWindow provisionalWindow;

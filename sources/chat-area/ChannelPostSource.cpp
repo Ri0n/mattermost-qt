@@ -272,6 +272,24 @@ void ChannelPostSource::requestRange(int first,
         return;
     }
 
+    // A large channel is unlikely to have an exact oldest page when the server
+    // count still includes deleted roots. Avoid downloading one or two guessed
+    // ten-post pages just to discover that they are empty: validate the
+    // estimated oldest page with one root first, then jump inward by the 3%
+    // heuristic if that cheap probe is empty. Small channels keep the normal
+    // ten-post path because their likely oldest block is cheap and useful.
+    if (requestedFirst == 0 && !oldestBoundaryFastPathTried
+        && initialBoundaryProbePages() > 1) {
+        oldestBoundaryFastPathTried = true;
+        QPointer<ChannelPostSource> guard(this);
+        probeEstimatedOldestBoundary([guard, first, last] {
+            if (guard) {
+                emit guard->rangeRequestFinished(first, last);
+            }
+        });
+        return;
+    }
+
     int firstMissing = requestedFirst;
     while (firstMissing <= requestedLast && isAvailable(firstMissing)) {
         ++firstMissing;
@@ -337,6 +355,62 @@ void ChannelPostSource::requestRange(int first,
     }
 }
 
+void ChannelPostSource::probeEstimatedOldestBoundary(
+    std::function<void()> completion)
+{
+    if (completion) {
+        oldestBoundaryWaiters.push_back(std::move(completion));
+    }
+    if (oldestBoundaryProbeInFlight || postIds.isEmpty()) {
+        return;
+    }
+
+    oldestBoundaryProbeInFlight = true;
+    oldestBoundaryNonEmptyPage = -1;
+    oldestBoundaryEmptyPage = -1;
+    oldestBoundaryProbeStep = initialBoundaryProbePages();
+
+    const int page = pageForIndex(0);
+    const int offset = page * ServerPageSize;
+    qCDebug(lcTimelineChannel).nospace()
+        << "OLDEST_BOUNDARY_INITIAL page=" << page
+        << " offset=" << offset
+        << " step=" << oldestBoundaryProbeStep
+        << " perPage=1";
+
+    QPointer<ChannelPostSource> guard(this);
+    PostTimelineService::instance(backend).loadChannelPage(
+        channel, offset, 1,
+        [guard, page, offset](const PostTimelineService::Page& result) {
+            if (!guard || !guard->oldestBoundaryProbeInFlight) {
+                return;
+            }
+            if (!result.success) {
+                guard->finishOldestBoundaryProbe();
+                return;
+            }
+
+            const bool exists = !result.postIds.isEmpty();
+            qCDebug(lcTimelineChannel).nospace()
+                << "OLDEST_BOUNDARY_INITIAL_RESULT page=" << page
+                << " offset=" << offset
+                << " exists=" << exists;
+
+            if (exists) {
+                // The estimate reached real data, so turn the cheap validation
+                // into useful materialization. A short page proves the exact
+                // oldest boundary; a full page is still the best first block for
+                // the requested top viewport.
+                guard->oldestBoundaryNonEmptyPage = page;
+                guard->loadOldestBoundaryPage(page);
+                return;
+            }
+
+            guard->oldestBoundaryEmptyPage = page;
+            guard->probeOldestBoundary();
+        });
+}
+
 void ChannelPostSource::resolveOldestBoundary(int emptyPage,
                                               std::function<void()> completion)
 {
@@ -344,6 +418,7 @@ void ChannelPostSource::resolveOldestBoundary(int emptyPage,
         oldestBoundaryWaiters.push_back(std::move(completion));
     }
 
+    oldestBoundaryFastPathTried = true;
     emptyPage = std::max(0, emptyPage);
     if (oldestBoundaryProbeInFlight) {
         if (oldestBoundaryEmptyPage < 0 || emptyPage < oldestBoundaryEmptyPage) {
@@ -356,7 +431,6 @@ void ChannelPostSource::resolveOldestBoundary(int emptyPage,
     oldestBoundaryNonEmptyPage = -1;
     oldestBoundaryEmptyPage = emptyPage;
     oldestBoundaryProbeStep = initialBoundaryProbePages();
-    oldestBoundaryFullPageChecked = -1;
     probeOldestBoundary();
 }
 
@@ -372,37 +446,18 @@ void ChannelPostSource::probeOldestBoundary()
         return;
     }
 
-    // For a small channel the 3% heuristic is less than one server
-    // page. Fetch the immediately preceding block in full: it is likely
-    // the actual oldest page and, unlike a one-post probe, is useful to
-    // the viewport if that guess is right. Mark step 1 as consumed so
-    // an empty result falls back to exponential one-post probing.
-    if (oldestBoundaryNonEmptyPage < 0 && oldestBoundaryProbeStep == 1) {
-        oldestBoundaryProbeStep = 2;
-        loadOldestBoundaryPage(std::max(0, oldestBoundaryEmptyPage - 1));
-        return;
-    }
-
-    if (oldestBoundaryNonEmptyPage >= 0
-        && oldestBoundaryEmptyPage == oldestBoundaryNonEmptyPage + 1) {
-        if (oldestBoundaryFullPageChecked == oldestBoundaryNonEmptyPage) {
-            reconcileRootCount((oldestBoundaryNonEmptyPage + 1) * ServerPageSize);
-            finishOldestBoundaryProbe();
-        } else {
-            loadOldestBoundaryPage(oldestBoundaryNonEmptyPage);
+    // If the 3% heuristic is only one page, materializing the candidate block
+    // is cheaper than maintaining a separate probe phase. Likewise, once binary
+    // search leaves at most one unknown page, fetch the page immediately before
+    // the known empty boundary. It either proves the boundary or shrinks it by
+    // one page, and the payload is useful to the top viewport/prefetch window.
+    if ((oldestBoundaryNonEmptyPage < 0 && oldestBoundaryProbeStep == 1)
+        || (oldestBoundaryNonEmptyPage >= 0
+            && oldestBoundaryEmptyPage - oldestBoundaryNonEmptyPage <= 2)) {
+        if (oldestBoundaryNonEmptyPage < 0) {
+            oldestBoundaryProbeStep = 2;
         }
-        return;
-    }
-
-    // With one unknown ten-post page left between known data and known
-    // emptiness, first materialize the known non-empty page. A short
-    // result proves the boundary immediately and avoids the final
-    // one-post probe; a full result is useful prefetch and the binary
-    // search continues normally.
-    if (oldestBoundaryNonEmptyPage >= 0
-        && oldestBoundaryEmptyPage == oldestBoundaryNonEmptyPage + 2
-        && oldestBoundaryFullPageChecked != oldestBoundaryNonEmptyPage) {
-        loadOldestBoundaryPage(oldestBoundaryNonEmptyPage);
+        loadOldestBoundaryPage(std::max(0, oldestBoundaryEmptyPage - 1));
         return;
     }
 
@@ -416,9 +471,6 @@ void ChannelPostSource::probeOldestBoundary()
             + (oldestBoundaryEmptyPage - oldestBoundaryNonEmptyPage) / 2;
     }
 
-    // Search in normal ten-post page coordinates, but probe only the first root
-    // of each candidate page. With per_page=1, page=(P * 10) addresses exactly
-    // the offset at which normal page P would begin.
     const int offset = page * ServerPageSize;
     qCDebug(lcTimelineChannel).nospace()
         << "OLDEST_BOUNDARY_PROBE page=" << page
@@ -464,7 +516,6 @@ void ChannelPostSource::loadOldestBoundaryPage(int page)
     }
 
     page = std::max(0, page);
-    oldestBoundaryFullPageChecked = page;
     qCDebug(lcTimelineChannel).nospace()
         << "OLDEST_BOUNDARY_PAGE page=" << page
         << " perPage=" << ServerPageSize;
@@ -486,12 +537,15 @@ void ChannelPostSource::loadOldestBoundaryPage(int page)
                 << " returned=" << result.postIds.size();
 
             if (result.postIds.isEmpty()) {
-                guard->oldestBoundaryEmptyPage = std::min(
-                    guard->oldestBoundaryEmptyPage, page);
+                if (guard->oldestBoundaryEmptyPage < 0) {
+                    guard->oldestBoundaryEmptyPage = page;
+                } else {
+                    guard->oldestBoundaryEmptyPage = std::min(
+                        guard->oldestBoundaryEmptyPage, page);
+                }
                 if (guard->oldestBoundaryNonEmptyPage >= page) {
                     guard->oldestBoundaryNonEmptyPage = -1;
                 }
-                guard->oldestBoundaryFullPageChecked = -1;
                 guard->probeOldestBoundary();
                 return;
             }
@@ -512,6 +566,15 @@ void ChannelPostSource::loadOldestBoundaryPage(int page)
                 guard->finishOldestBoundaryProbe();
                 return;
             }
+
+            // A proactive top check can reach a full estimated oldest page
+            // without having an independently proven empty page after it. The
+            // block is still useful materialization; avoid inventing boundary
+            // evidence from the approximate count itself.
+            if (guard->oldestBoundaryEmptyPage < 0) {
+                guard->finishOldestBoundaryProbe();
+                return;
+            }
             guard->probeOldestBoundary();
         });
 }
@@ -524,7 +587,6 @@ void ChannelPostSource::finishOldestBoundaryProbe()
     oldestBoundaryNonEmptyPage = -1;
     oldestBoundaryEmptyPage = -1;
     oldestBoundaryProbeStep = 1;
-    oldestBoundaryFullPageChecked = -1;
 
     for (auto& waiter : waiters) {
         if (waiter) {
