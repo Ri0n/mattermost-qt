@@ -74,6 +74,10 @@ signals:
     void itemsRemoved(int first, int count);
 
     void rangeAvailable(int first, int last);
+
+    /** Resident body availability changed without changing logical identity. */
+    void bodyAvailabilityChanged(int first, int last, bool available);
+
     void itemsChanged(int first, int last);
 
     /** Every requestRange() call must eventually emit this exact requested range. */

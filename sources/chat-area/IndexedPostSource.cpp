@@ -10,6 +10,13 @@ IndexedPostSource::IndexedPostSource(BackendChannel& channelInstance, QObject* p
     : AbstractPostSource(parent)
     , channel(channelInstance)
 {
+    connect(&channel, &BackendChannel::onPostBodyAvailabilityChanged,
+            this, [this](const QString& postId, bool available) {
+        const int index = indexOfPost(postId);
+        if (index >= 0) {
+            emit bodyAvailabilityChanged(index, index, available);
+        }
+    });
 }
 
 bool IndexedPostSource::isAvailable(int index) const

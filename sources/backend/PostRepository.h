@@ -19,6 +19,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QStringList>
+#include <QTimer>
 #include <QVariant>
 
 #include "HTTPConnector.h"
@@ -238,6 +239,10 @@ private:
     void noteResidentObservation(const QJsonObject& postObject, quint64 observation);
     void noteResidentPostObservation(const QString& postId, quint64 observation);
     void pruneResidentObservations();
+    void initializeResidentMemory();
+    void noteResidentSnapshot(const QJsonObject& postObject, bool forceAdmission);
+    void scheduleResidentSweep();
+    void sweepResidentBodies();
     void releasePostLease(const QString& channelId, const QString& postId);
 
     friend class PostResidencyLease;
@@ -249,11 +254,19 @@ private:
         quint64 sequence = 0;
         qint64 touchedAt = 0;
     };
+    struct ResidentBodyState {
+        qint64 accountedBytes = 0;
+        qint64 touchedAt = 0;
+    };
 
     QHash<QString, QList<JsonCallback>> inFlightGets;
     QHash<QString, qint64> channelOpenedAtByAccount;
     QHash<QString, ResidentObservation> residentObservations;
+    QHash<QString, ResidentBodyState> residentBodies;
     QHash<QString, int> residentLeaseCounts;
+    qint64 residentAccountedBytes = 0;
+    QTimer residentSweepTimer;
+    bool residentSweepPending = false;
     quint64 observationSequence = 0;
 };
 

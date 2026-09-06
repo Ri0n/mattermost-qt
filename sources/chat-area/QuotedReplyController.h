@@ -2,6 +2,8 @@
 
 #include <QObject>
 
+#include "backend/PostResidencyLease.h"
+
 class QEvent;
 class QToolButton;
 class QWidget;
@@ -42,6 +44,7 @@ private:
     QuotedPostPreview* preview = nullptr;
     QToolButton* cancelButton = nullptr;
     OutgoingPostCreator* editor = nullptr;
+    PostResidencyLease replyResidencyLease;
     Mode mode = Mode::None;
 };
 

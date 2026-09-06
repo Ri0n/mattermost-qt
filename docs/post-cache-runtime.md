@@ -364,8 +364,8 @@ whether placement is exact or provisional. See `post-source-architecture.md`.
 
 ### Stable identity versus resident availability
 
-The planned resident cache deliberately keeps logical source IDs after their `BackendPost` body is
-evicted. Therefore two state changes must remain independent:
+The resident cache keeps logical source IDs after their `BackendPost` body is evicted. Therefore two
+state changes remain independent:
 
 ```text
 identity mapping changes
@@ -375,10 +375,11 @@ identity unchanged, resident body rematerialized
     -> availability/rematerialization notification only
 ```
 
-Current no-op suppression for an identical authoritative page is correct while every mapped ID is
-resident. Phase 3 must add an explicit rematerialization availability path rather than making an
-identical page pretend that its identity mapping changed. This preserves both request-loop protection
-and safe body eviction.
+An identical authoritative page can leave identity mapping unchanged while restoring missing bodies.
+`BackendChannel::onPostBodyAvailabilityChanged` -> `IndexedPostSource::bodyAvailabilityChanged` is the
+separate rematerialization path: `LongListWidget` clears/materializes body availability without
+pretending that the source identity mapping changed. This preserves both request-loop protection and
+safe body eviction.
 
 ## Channel paging authority
 
@@ -440,7 +441,7 @@ avoided because a multi-gigabyte cache should not require another database-sized
 
 ## Resident-memory target architecture
 
-The resident-memory limiter is **not fully enabled yet**. The target contract is:
+The resident-memory limiter is enabled with the following contract:
 
 - channel-open memory admission horizon: 1 hour;
 - 500 MiB hard accounted limit;
@@ -453,9 +454,18 @@ The resident-memory limiter is **not fully enabled yet**. The target contract is
 
 `PostResidencyLease` implements the raw-reference lifetime contract as a move-only RAII pin in `PostRepository`. Every materialized `PostWidget` owns one for its full lifetime. The outgoing composer owns an independent edit-session lease because `postToEdit` may outlive the materialized row while an edit request is pending or retryable. Actual eviction may only consider posts with zero explicit leases. A root also remains implicitly non-evictable while a resident reply still points to it through the legacy `BackendPost::rootPost` relationship.
 
-Before erasing resident `BackendPost` objects, raw-pointer lifetimes must be audited. In particular,
-`BackendPost::rootPost` cannot serve as a durable ownership relation; `root_id` must remain the stable
-identity reference.
+`PostResidencyLease` is the move-only RAII pin for retained raw-reference/semantic-body dependencies.
+Materialized `PostWidget`s, active edit/reply composer contexts and active thread roots hold leases.
+Pinned-dialog copies do not accidentally pin a same-ID resident body because lease acquisition verifies
+object ownership in `BackendChannel::postIdToPost`. The legacy `BackendPost::rootPost` relationship is
+still handled conservatively: a root is not evictable while any resident reply names that root. The
+durable relationship remains `root_id`, and removing the raw root pointer is still a later cleanup.
+
+The 30-second sweeper removes unleased bodies after the 5-minute idle TTL. It also enforces a 500 MiB
+accounted hard limit with a 400 MiB pressure target. Accounted bytes use a stable approximation derived
+from compact raw JSON (or a structural fallback for legacy residents); this is intentionally cache
+accounting, not process RSS. Crossing the hard limit schedules an immediate sweep, and leases/dependency
+pins are never violated even when that means temporarily remaining above the configured cap.
 
 Memory accounting is cache-accounted retained memory, not process RSS. Qt/container/allocator RSS is
 not portable enough to enforce a deterministic cache policy.

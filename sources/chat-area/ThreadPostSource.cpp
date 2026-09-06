@@ -116,6 +116,9 @@ ThreadPostSource::ThreadPostSource(Backend& backendInstance,
     seedCachedPosts();
 
     BackendPost* root = rootPost();
+    if (root) {
+        rootResidencyLease = PostTimelineService::instance(backend).leasePost(*root);
+    }
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_INIT source=" << static_cast<const void*>(this)
         << " root=" << shortId(rootId)
@@ -267,7 +270,7 @@ void ThreadPostSource::requestRange(int first,
     int firstMissing = -1;
     int lastMissing = -1;
     for (int index = requestedFirst; index <= requestedLast; ++index) {
-        if (isAuthoritativeIndex(index)) {
+        if (isCursorReadyIndex(index)) {
             continue;
         }
         if (firstMissing < 0) {
@@ -275,10 +278,14 @@ void ThreadPostSource::requestRange(int first,
         }
         lastMissing = index;
     }
+    if (firstMissing < 0) {
+        emit rangeRequestFinished(first, last);
+        return;
+    }
 
     // Once either side of a gap is known, that identity is a stronger anchor
     // than a timestamp estimate. Fill sequentially from the adjacent cursor.
-    if (firstMissing > 0 && isAuthoritativeIndex(firstMissing - 1)) {
+    if (firstMissing > 0 && isCursorReadyIndex(firstMissing - 1)) {
         const int anchorIndex = firstMissing - 1;
         const QString anchorId = postIds.at(anchorIndex);
         BackendPost* anchorPost = channel.postIdToPost.value(anchorId, nullptr);
@@ -313,7 +320,7 @@ void ThreadPostSource::requestRange(int first,
 
     if (lastMissing >= 1
         && lastMissing + 1 < static_cast<int>(postIds.size())
-        && isAuthoritativeIndex(lastMissing + 1)) {
+        && isCursorReadyIndex(lastMissing + 1)) {
         const int anchorIndex = lastMissing + 1;
         const QString anchorId = postIds.at(anchorIndex);
         BackendPost* anchorPost = channel.postIdToPost.value(anchorId, nullptr);
@@ -597,6 +604,14 @@ bool ThreadPostSource::isAuthoritativeIndex(int index) const
     }
     const QString& id = postIds.at(index);
     return !id.isEmpty() && !provisionalPostIds.contains(id);
+}
+
+bool ThreadPostSource::isCursorReadyIndex(int index) const
+{
+    // Identity authority survives body eviction, but a Mattermost compound
+    // cursor also needs the resident create_at value. Do not confuse those two
+    // states or a known-but-evicted ID becomes an unusable cursor anchor.
+    return isAuthoritativeIndex(index) && isAvailable(index);
 }
 
 void ThreadPostSource::pruneProvisionalPostIds()

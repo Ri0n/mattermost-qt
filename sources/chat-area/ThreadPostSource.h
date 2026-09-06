@@ -6,6 +6,7 @@
 #include <QString>
 
 #include "IndexedPostSource.h"
+#include "backend/PostResidencyLease.h"
 
 namespace Mattermost {
 
@@ -41,6 +42,7 @@ private:
     void hydrateCachedTail();
     void validateCachedTail();
     bool isAuthoritativeIndex(int index) const;
+    bool isCursorReadyIndex(int index) const;
     void pruneProvisionalPostIds();
     void placeExactWindow(int first, const QStringList& ids);
     void placeInitial(const QStringList& ids);
@@ -52,6 +54,7 @@ private:
 
     Backend& backend;
     QString rootId;
+    PostResidencyLease rootResidencyLease;
     QSet<QString> provisionalPostIds;
 };
 

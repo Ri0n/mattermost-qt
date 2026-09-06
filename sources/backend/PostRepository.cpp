@@ -134,6 +134,7 @@ PostRepository::PostRepository(Backend& sourceBackend)
             &backend, &Backend::onNetworkError);
     connect(&httpConnector, &HTTPConnector::onHttpError,
             &backend, &Backend::onHttpError);
+    initializeResidentMemory();
 }
 
 PostRepository::CacheAccount PostRepository::currentCacheAccount() const
@@ -186,6 +187,7 @@ quint64 PostRepository::cachePostObject(const QJsonObject& postObject)
     noteResidentObservation(postObject, sourceObservation);
 
     const QString channelId = postObject.value(QStringLiteral("channel_id")).toString();
+    noteResidentSnapshot(postObject, false);
     if (shouldCacheChannelOnDisk(channelId)) {
         QJsonObject posts;
         posts.insert(postId, postObject);
@@ -902,6 +904,13 @@ void PostRepository::ingest(BackendChannel& channel,
         return;
     }
 
+    QStringList newlyResident;
+    for (auto it = acceptedPosts.constBegin(); it != acceptedPosts.constEnd(); ++it) {
+        if (!channel.postIdToPost.contains(it.key())) {
+            newlyResident.push_back(it.key());
+        }
+    }
+
     // Mark before mutation. Other callbacks from the same coalesced physical
     // request carry the same sequence and remain admissible; older requests do
     // not. Reply snapshots fence their roots because mergePostContext may update
@@ -917,10 +926,18 @@ void PostRepository::ingest(BackendChannel& channel,
     }
 
     if (quiet) {
-        const QSignalBlocker blocker(&channel);
-        channel.mergePostContext(newestFirst, acceptedPosts);
+        {
+            const QSignalBlocker blocker(&channel);
+            channel.mergePostContext(newestFirst, acceptedPosts);
+        }
+        for (const QString& postId : newlyResident) {
+            channel.notifyPostBodyAvailable(postId);
+        }
     } else {
         channel.mergePostContext(newestFirst, acceptedPosts);
+    }
+    for (auto it = acceptedPosts.constBegin(); it != acceptedPosts.constEnd(); ++it) {
+        noteResidentSnapshot(it->toObject(), true);
     }
     pruneResidentObservations();
 }
@@ -952,16 +969,25 @@ void PostRepository::ingestCached(BackendChannel& channel,
         return;
     }
 
+    const QStringList newlyResident = acceptedPosts.keys();
     const QStringList chronological = allChronologicalOrder(acceptedPosts);
     QJsonArray newestFirst;
     for (int i = chronological.size() - 1; i >= 0; --i) {
         newestFirst.push_back(chronological.at(i));
     }
     if (quiet) {
-        const QSignalBlocker blocker(&channel);
-        channel.mergePostContext(newestFirst, acceptedPosts);
+        {
+            const QSignalBlocker blocker(&channel);
+            channel.mergePostContext(newestFirst, acceptedPosts);
+        }
+        for (const QString& postId : newlyResident) {
+            channel.notifyPostBodyAvailable(postId);
+        }
     } else {
         channel.mergePostContext(newestFirst, acceptedPosts);
+    }
+    for (auto it = acceptedPosts.constBegin(); it != acceptedPosts.constEnd(); ++it) {
+        noteResidentSnapshot(it->toObject(), true);
     }
 }
 
