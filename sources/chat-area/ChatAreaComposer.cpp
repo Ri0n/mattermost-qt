@@ -23,78 +23,20 @@
 
 #include <QEvent>
 #include <QFont>
-#include <QHideEvent>
-#include <QPainter>
-#include <QPalette>
 #include <QPushButton>
-#include <QShowEvent>
 #include <QTimer>
 
 #include "ChatLogWidget.h"
 #include "QuotedReplyController.h"
+#include "ui/ThemeIconWidgets.h"
 #include "ui_ChatArea.h"
 
 namespace Mattermost {
 namespace {
 
 constexpr int LoadingIndicatorDelayMs = 150;
-constexpr int LoadingIndicatorExtent = 18;
-constexpr int LoadingAnimationIntervalMs = 70;
 constexpr int ActionButtonExtent = 30;
 constexpr int ActionIconExtent = 24;
-
-class LoadingIndicator final : public QWidget
-{
-public:
-    explicit LoadingIndicator(QWidget* parent = nullptr)
-        : QWidget(parent)
-        , animationTimer(this)
-    {
-        setFixedSize(LoadingIndicatorExtent, LoadingIndicatorExtent);
-        setToolTip(tr("Loading messages"));
-        setAccessibleName(tr("Loading messages"));
-        setAttribute(Qt::WA_TransparentForMouseEvents, true);
-
-        animationTimer.setInterval(LoadingAnimationIntervalMs);
-        connect(&animationTimer, &QTimer::timeout, this, [this] {
-            phase = (phase + 1) % 12;
-            update();
-        });
-        hide();
-    }
-
-protected:
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-
-        QColor color = palette().color(QPalette::WindowText);
-        color.setAlpha(190);
-        QPen pen(color, 2.0, Qt::SolidLine, Qt::RoundCap);
-        painter.setPen(pen);
-        painter.setBrush(Qt::NoBrush);
-
-        const QRectF ring(2.5, 2.5, width() - 5.0, height() - 5.0);
-        painter.drawArc(ring, (-90 + phase * 30) * 16, 105 * 16);
-    }
-
-    void showEvent(QShowEvent* event) override
-    {
-        QWidget::showEvent(event);
-        animationTimer.start();
-    }
-
-    void hideEvent(QHideEvent* event) override
-    {
-        animationTimer.stop();
-        QWidget::hideEvent(event);
-    }
-
-private:
-    QTimer animationTimer;
-    int phase = 0;
-};
 
 } // namespace
 
@@ -123,9 +65,9 @@ void ChatArea::setupComposerUi()
     ui->sendButton->setFont(sendFont);
 
     // No textual status belongs to the left of the input: it changes the
-    // editor's horizontal geometry. Transient send state is rendered in the
-    // fixed attach-action slot, and persistent edit/reply state lives above the
-    // editor as a compact context preview.
+    // editor's horizontal geometry. Transient send and history-loading state
+    // share the fixed attach-action slot, and persistent edit/reply state lives
+    // above the editor as a compact context preview.
     ui->composerStatusLabel->hide();
 
     // The action buttons are owner-drawn by ThemeIconButton. Do not attach a
@@ -142,15 +84,12 @@ void ChatArea::setupComposerUi()
     // which can be entered without first using quoted replies.
     QuotedReplyController::instance(*this);
 
-    loadingIndicator = new LoadingIndicator(this);
-    ui->composerLayout->insertWidget(0, loadingIndicator, 0, Qt::AlignBottom);
-
     loadingDelayTimer = new QTimer(this);
     loadingDelayTimer->setSingleShot(true);
     loadingDelayTimer->setInterval(LoadingIndicatorDelayMs);
     connect(loadingDelayTimer, &QTimer::timeout, this, [this] {
-        if (pendingMessageLoads > 0 && loadingIndicator) {
-            loadingIndicator->show();
+        if (pendingMessageLoads > 0 && ui && ui->attachButton) {
+            ui->attachButton->setProperty(ComposerMessageLoadingProperty, true);
         }
     });
 
@@ -174,7 +113,9 @@ void ChatArea::focusComposer()
 void ChatArea::beginMessageLoading()
 {
     ++pendingMessageLoads;
-    if (pendingMessageLoads == 1 && loadingIndicator && !loadingIndicator->isVisible()) {
+    if (pendingMessageLoads == 1 && loadingDelayTimer
+        && ui && ui->attachButton
+        && !ui->attachButton->property(ComposerMessageLoadingProperty).toBool()) {
         loadingDelayTimer->start();
     }
 }
@@ -190,9 +131,11 @@ void ChatArea::endMessageLoading()
         return;
     }
 
-    loadingDelayTimer->stop();
-    if (loadingIndicator) {
-        loadingIndicator->hide();
+    if (loadingDelayTimer) {
+        loadingDelayTimer->stop();
+    }
+    if (ui && ui->attachButton) {
+        ui->attachButton->setProperty(ComposerMessageLoadingProperty, false);
     }
 }
 
@@ -210,9 +153,6 @@ void ChatArea::changeEvent(QEvent* event)
             ui->addEmojiButton->update();
             ui->attachButton->update();
             ui->sendButton->update();
-        }
-        if (loadingIndicator) {
-            loadingIndicator->update();
         }
     }
 }
