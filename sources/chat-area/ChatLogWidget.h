@@ -60,6 +60,8 @@ private:
     void reconnectSource();
     void rematerializeRange(int first, int last);
     bool restoreNavigationTarget();
+    bool finalizeNavigationLock();
+    void scheduleNavigationFinalize();
 
     Backend* backend = nullptr;
     ChatArea* chatArea = nullptr;
@@ -68,7 +70,12 @@ private:
     QVector<QMetaObject::Connection> sourceConnections;
 
     QString navigationPostId;
+    QString pendingHighlightPostId;
     int navigationLogicalIndex = -1;
+    Alignment navigationAlignment = Alignment::Center;
+    int navigationQuietPeriodMs = 2000;
+    bool navigationLockPending = false;
+    bool navigationRecenterPending = false;
 };
 
 } // namespace Mattermost
