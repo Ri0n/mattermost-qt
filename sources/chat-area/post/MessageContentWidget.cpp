@@ -11,7 +11,6 @@
 #include <QFontDatabase>
 #include <QFontMetrics>
 #include <QHBoxLayout>
-#include <QImageReader>
 #include <QPainter>
 #include <QPalette>
 #include <QPlainTextEdit>
@@ -25,7 +24,6 @@
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextDocumentFragment>
-#include <QTextFragment>
 #include <QTextOption>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -34,6 +32,7 @@
 #include "MessageFormatter.h"
 #include "backend/emoji/EmojiInfo.h"
 #include "backend/emoji/EmojiRegistryNotifier.h"
+#include "ui/EmojiPresentation.h"
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
 #include "qsourcehighliter.h"
@@ -41,9 +40,6 @@
 
 namespace Mattermost {
 namespace {
-
-constexpr qreal inlineEmojiScale = 1.3;
-constexpr qreal jumboEmojiScale = 4.0;
 
 const QSet<QString>& unicodeEmojiStrings()
 {
@@ -120,52 +116,17 @@ bool isEmojiOnlyMessage(const QString& message)
     return foundEmoji;
 }
 
-int emojiExtent(const QFont& baseFont, qreal scale)
-{
-    return std::max(1, qRound(QFontMetrics(baseFont).ascent() * scale));
-}
-
-bool isCustomEmojiImage(const QTextImageFormat& imageFormat)
-{
-    // MessageFormatter gives custom emoji explicit dimensions. User Markdown
-    // images do not carry dimensions because raw HTML is disabled, so this is
-    // also the marker that keeps ordinary message images out of emoji sizing.
-    return imageFormat.width() > 0.0 && imageFormat.height() > 0.0;
-}
-
-QSize customEmojiRenderSize(const QTextImageFormat& imageFormat,
-                            int extent,
-                            bool capAtNativeSize)
-{
-    const QSize target(extent, extent);
-    QImageReader reader(imageFormat.name());
-    // The custom-emoji cache historically stores every payload with a .gif
-    // suffix even when the server returned PNG/JPEG. Inspect the bytes so the
-    // native-size cap is based on the actual image format rather than the name.
-    reader.setDecideFormatFromContent(true);
-    const QSize nativeSize = reader.size();
-    if (!nativeSize.isValid() || nativeSize.isEmpty()) {
-        return target;
-    }
-
-    QSize bounds = target;
-    if (capAtNativeSize) {
-        bounds.setWidth(std::min(bounds.width(), nativeSize.width()));
-        bounds.setHeight(std::min(bounds.height(), nativeSize.height()));
-    }
-
-    const QSize scaled = nativeSize.scaled(bounds, Qt::KeepAspectRatio);
-    return scaled.isValid() && !scaled.isEmpty() ? scaled : target;
-}
-
-void resizeInlineEmojis(QTextDocument& document, bool jumbo)
+void applyEmojiPresentation(QTextDocument& document, bool jumbo)
 {
     const QString text = document.toPlainText();
     if (text.isEmpty()) {
         return;
     }
 
-    const qreal scale = jumbo ? jumboEmojiScale : inlineEmojiScale;
+    const EmojiPresentation::Mode mode = jumbo
+        ? EmojiPresentation::Mode::Jumbo
+        : EmojiPresentation::Mode::Inline;
+    const qreal scale = EmojiPresentation::fontScale(mode);
     const QSet<QString>& emojiStrings = unicodeEmojiStrings();
     QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, text);
     finder.toStart();
@@ -198,35 +159,7 @@ void resizeInlineEmojis(QTextDocument& document, bool jumbo)
         start = end;
     }
 
-    // Custom emoji are QTextImageFormat objects. Normalize them on every pass,
-    // not only in jumbo mode: their cached HTML dimensions are merely fallback
-    // metadata and must not determine the visual size of an inline message.
-    // AlignMiddle avoids the default image-baseline behavior that made adjacent
-    // text appear to sag below the emoji.
-    const int extent = emojiExtent(document.defaultFont(), scale);
-    for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
-        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
-            const QTextFragment fragment = it.fragment();
-            if (!fragment.isValid() || !fragment.charFormat().isImageFormat()) {
-                continue;
-            }
-
-            QTextImageFormat imageFormat = fragment.charFormat().toImageFormat();
-            if (!isCustomEmojiImage(imageFormat)) {
-                continue;
-            }
-
-            const QSize renderSize = customEmojiRenderSize(imageFormat, extent, jumbo);
-            imageFormat.setWidth(renderSize.width());
-            imageFormat.setHeight(renderSize.height());
-            imageFormat.setVerticalAlignment(QTextCharFormat::AlignMiddle);
-
-            QTextCursor cursor(&document);
-            cursor.setPosition(fragment.position());
-            cursor.setPosition(fragment.position() + fragment.length(), QTextCursor::KeepAnchor);
-            cursor.setCharFormat(imageFormat);
-        }
-    }
+    EmojiPresentation::apply(document, mode);
 }
 
 class WrappedRichText final : public QTextBrowser
@@ -259,7 +192,7 @@ public:
     {
         setHtml(html);
         document()->setDocumentMargin(0);
-        resizeInlineEmojis(*document(), jumboEmoji);
+        applyEmojiPresentation(*document(), jumboEmoji);
         applyWrapMode();
         scheduleHeightUpdate();
     }
