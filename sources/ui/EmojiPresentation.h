@@ -6,6 +6,7 @@
 #include <QImageReader>
 #include <QRegularExpression>
 #include <QTextBlock>
+#include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextFragment>
@@ -37,6 +38,22 @@ inline qreal fontScale(Mode mode)
         return 1.0;
     }
     return InlineScale;
+}
+
+inline QFont fontForMode(QFont font, Mode mode)
+{
+    if (mode == Mode::Reaction) {
+        font.setPixelSize(ReactionExtent);
+        return font;
+    }
+
+    const qreal scale = fontScale(mode);
+    if (font.pointSizeF() > 0.0) {
+        font.setPointSizeF(font.pointSizeF() * scale);
+    } else if (font.pixelSize() > 0) {
+        font.setPixelSize(std::max(1, qRound(font.pixelSize() * scale)));
+    }
+    return font;
 }
 
 inline int extent(const QFont& font, Mode mode)
@@ -159,7 +176,7 @@ inline QString normalizeHtml(const QString& html, const QFont& font, Mode mode)
                 if (insertion > 0 && tag.at(insertion - 1) == QLatin1Char('/')) {
                     --insertion;
                 }
-                tag.insert(insertion, QLatin1Char(' ') + width);
+                tag.insert(insertion, QStringLiteral(" ") + width);
             }
 
             if (heightExpression.match(tag).hasMatch()) {
@@ -169,7 +186,7 @@ inline QString normalizeHtml(const QString& html, const QFont& font, Mode mode)
                 if (insertion > 0 && tag.at(insertion - 1) == QLatin1Char('/')) {
                     --insertion;
                 }
-                tag.insert(insertion, QLatin1Char(' ') + height);
+                tag.insert(insertion, QStringLiteral(" ") + height);
             }
 
             const QRegularExpressionMatch styleMatch = styleExpression.match(tag);
