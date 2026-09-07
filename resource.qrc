@@ -5,6 +5,10 @@
         <file alias="bookmark">img/bookmark.svg</file>
         <file alias="jump">img/jump.svg</file>
         <file alias="trash">img/trash.svg</file>
+        <file alias="members">img/members.svg</file>
+        <file alias="pin">img/pin.svg</file>
+        <file alias="bell">img/bell.svg</file>
+        <file alias="bell-filled">img/bell-filled.svg</file>
         <file alias="emoji">img/emoji.svg</file>
         <file alias="paperclip">img/paperclip.svg</file>
         <file alias="message-balloon">img/message-balloon.svg</file>
