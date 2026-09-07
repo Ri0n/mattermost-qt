@@ -259,20 +259,44 @@ void OverlayScrollBarManager::registerArea(QAbstractScrollArea* area)
                 scheduleFade(*state);
             }
         });
-        connect(overlay, &QScrollBar::valueChanged, this, [source](int value) {
-            source->setValue(value);
-        });
-        connect(overlay, &QScrollBar::sliderPressed, this, [this, state] {
+
+        // Mirror the overlay's user interaction onto the hidden source scrollbar
+        // instead of copying only its value. LongListWidget intentionally uses
+        // sliderMoved/sliderReleased to distinguish a thumb seek from ordinary
+        // scrolling and to debounce materialization while the thumb is dragged.
+        // Keeping source.sliderDown in sync also preserves QAbstractSlider's
+        // tracking semantics on both Qt 5 and Qt 6.
+        connect(overlay, &QScrollBar::sliderPressed, this, [this, state, source] {
+            source->setSliderDown(true);
             if (state->fadeTimer) {
                 state->fadeTimer->stop();
             }
             reveal(*state);
         });
-        connect(overlay, &QScrollBar::sliderReleased, this, [this, state] {
+        connect(overlay, &QScrollBar::sliderMoved, this, [source](int position) {
+            source->setSliderPosition(position);
+        });
+        connect(overlay, &QScrollBar::sliderReleased, this, [this, state, source] {
+            source->setSliderDown(false);
             if (cursorOverOverlay(*state)) {
                 reveal(*state);
             } else {
                 scheduleFade(*state);
+            }
+        });
+
+        // Page-step, wheel and keyboard actions over the overlay do not put the
+        // thumb down, but they still need to reach the authoritative scrollbar
+        // as real slider actions so its observers receive actionTriggered and
+        // valueChanged in the usual order.
+        connect(overlay, &QScrollBar::actionTriggered, this,
+                [source, overlay](int) {
+            if (overlay->isSliderDown()) {
+                return;
+            }
+            source->setSliderPosition(overlay->sliderPosition());
+            if (!source->hasTracking()) {
+                source->triggerAction(QAbstractSlider::SliderMove);
             }
         });
     };
