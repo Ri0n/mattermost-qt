@@ -83,6 +83,7 @@ private:
     int navigationQuietPeriodMs = 2000;
     bool navigationLockPending = false;
     bool navigationRecenterPending = false;
+    bool _initialScrollBarPulsePending = true;
 };
 
 } // namespace Mattermost
