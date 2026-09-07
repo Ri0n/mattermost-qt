@@ -42,18 +42,17 @@ namespace {
 
 constexpr qreal HeaderInlineEmojiScale = 1.3;
 
-int inlineEmojiExtent(const QFont& baseFont)
+int inlineEmojiExtent(const QFont& font)
 {
-    QFont font(baseFont);
-    if (font.pointSizeF() > 0.0) {
-        font.setPointSizeF(font.pointSizeF() * HeaderInlineEmojiScale);
-    } else if (font.pixelSize() > 0) {
-        font.setPixelSize(qRound(font.pixelSize() * HeaderInlineEmojiScale));
-    }
-    return std::max(1, QFontMetrics(font).height());
+    // Image dimensions are pixels, so size the emoji from the visible font
+    // ascent rather than from the full line box. Scaling a point-size font and
+    // then taking QFontMetrics::height() also includes descent/leading and made
+    // small header text look as if it had roughly 2x-size emoji.
+    return std::max(1,
+                    qRound(QFontMetricsF(font).ascent() * HeaderInlineEmojiScale));
 }
 
-QString normalizeInlineEmojiSize(const QString& html, const QFont& font)
+QString normalizeInlineEmojiPresentation(const QString& html, const QFont& font)
 {
     static const QRegularExpression imageExpression(
         QStringLiteral(R"(<img\b[^>]*>)"),
@@ -63,6 +62,9 @@ QString normalizeInlineEmojiSize(const QString& html, const QFont& font)
         QRegularExpression::CaseInsensitiveOption);
     static const QRegularExpression heightExpression(
         QStringLiteral(R"(\bheight\s*=\s*["']?\d+(?:\.\d+)?["']?)"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression styleExpression(
+        QStringLiteral(R"(\bstyle\s*=\s*["']([^"']*)["'])"),
         QRegularExpression::CaseInsensitiveOption);
 
     const int extent = inlineEmojiExtent(font);
@@ -87,6 +89,33 @@ QString normalizeInlineEmojiSize(const QString& html, const QFont& font)
                         QStringLiteral("width=\"%1\"").arg(extent));
             tag.replace(heightExpression,
                         QStringLiteral("height=\"%1\"").arg(extent));
+
+            // QTextDocument otherwise aligns the bottom of an inline image to
+            // the text baseline. With an emoji slightly taller than the glyphs,
+            // that makes the surrounding text visibly sag below the icon.
+            const QRegularExpressionMatch styleMatch = styleExpression.match(tag);
+            if (styleMatch.hasMatch()) {
+                QString style = styleMatch.captured(1);
+                if (!style.contains(QStringLiteral("vertical-align"),
+                                    Qt::CaseInsensitive)) {
+                    if (!style.isEmpty() && !style.endsWith(QLatin1Char(';'))) {
+                        style += QLatin1Char(';');
+                    }
+                    style += QStringLiteral("vertical-align:middle;");
+                    tag.replace(styleMatch.capturedStart(1),
+                                styleMatch.capturedLength(1),
+                                style);
+                }
+            } else {
+                int insertion = tag.lastIndexOf(QLatin1Char('>'));
+                if (insertion > 0 && tag.at(insertion - 1) == QLatin1Char('/')) {
+                    --insertion;
+                }
+                if (insertion >= 0) {
+                    tag.insert(insertion,
+                               QStringLiteral(" style=\"vertical-align:middle;\""));
+                }
+            }
         }
         result += tag;
         previousEnd = end;
@@ -175,7 +204,7 @@ void ChannelHeaderTextLabel::setText(const QString& text)
     }
 
     show();
-    formattedText = normalizeInlineEmojiSize(
+    formattedText = normalizeInlineEmojiPresentation(
         MessageFormatter::formatMessageText(text), font());
     QLabel::setText(formattedText);
     updateCollapsedHeight();
