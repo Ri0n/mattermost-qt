@@ -15,6 +15,7 @@
 
 #include <QAbstractScrollArea>
 #include <QApplication>
+#include <QColor>
 #include <QCursor>
 #include <QEvent>
 #include <QPalette>
@@ -33,18 +34,27 @@ constexpr char InstalledProperty[] = "mattermostOverlayScrollBarsInstalled";
 constexpr char VerticalObjectName[] = "mattermostOverlayVerticalScrollBar";
 constexpr char HorizontalObjectName[] = "mattermostOverlayHorizontalScrollBar";
 
-QString overlayStyleSheet()
+QString cssRgba(const QColor& color)
+{
+    return QStringLiteral("rgba(%1, %2, %3, %4)")
+        .arg(color.red())
+        .arg(color.green())
+        .arg(color.blue())
+        .arg(color.alpha());
+}
+
+QString overlayStyleSheet(const QColor& normal, const QColor& hover)
 {
     return QStringLiteral(
         "QScrollBar:vertical {"
         " background: transparent; border: 0; width: 10px; margin: 0;"
         "}"
         "QScrollBar::handle:vertical {"
-        " background: palette(mid); border: 0; border-radius: 4px;"
+        " background: %1; border: 0; border-radius: 4px;"
         " min-height: 28px; margin: 1px 2px;"
         "}"
         "QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {"
-        " background: palette(highlight); margin: 1px;"
+        " background: %2; margin: 1px;"
         "}"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
         " height: 0; border: 0; background: transparent;"
@@ -56,18 +66,19 @@ QString overlayStyleSheet()
         " background: transparent; border: 0; height: 10px; margin: 0;"
         "}"
         "QScrollBar::handle:horizontal {"
-        " background: palette(mid); border: 0; border-radius: 4px;"
+        " background: %1; border: 0; border-radius: 4px;"
         " min-width: 28px; margin: 2px 1px;"
         "}"
         "QScrollBar::handle:horizontal:hover, QScrollBar::handle:horizontal:pressed {"
-        " background: palette(highlight); margin: 1px;"
+        " background: %2; margin: 1px;"
         "}"
         "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {"
         " width: 0; border: 0; background: transparent;"
         "}"
         "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {"
         " background: transparent;"
-        "}");
+        "}")
+        .arg(cssRgba(normal), cssRgba(hover));
 }
 
 QScrollBar* createOverlay(QAbstractScrollArea& area,
@@ -78,7 +89,6 @@ QScrollBar* createOverlay(QAbstractScrollArea& area,
     bar->setObjectName(QString::fromLatin1(objectName));
     bar->setFocusPolicy(Qt::NoFocus);
     bar->setMouseTracking(true);
-    bar->setStyleSheet(overlayStyleSheet());
     bar->hide();
     return bar;
 }
@@ -303,17 +313,17 @@ void OverlayScrollBarManager::updatePalette(State& state)
     const bool darkBackground = background.lightnessF() < 0.5;
     QColor normal = darkBackground ? QColor(Qt::white) : QColor(Qt::black);
     QColor hover = normal;
-    normal.setAlpha(darkBackground ? 105 : 85);
-    hover.setAlpha(darkBackground ? 160 : 145);
+    normal.setAlpha(darkBackground ? 125 : 95);
+    hover.setAlpha(darkBackground ? 175 : 150);
 
-    const auto updateBar = [normal, hover](QScrollBar* bar) {
-        if (!bar) {
-            return;
+    const QString styleSheet = overlayStyleSheet(normal, hover);
+    const auto updateBar = [&styleSheet](QScrollBar* bar) {
+        if (bar) {
+            // Use explicit RGBA values rather than palette(mid/highlight).
+            // QStyleSheetStyle/Breeze may cache palette roles independently of
+            // the widget palette, which made runtime palette updates ineffective.
+            bar->setStyleSheet(styleSheet);
         }
-        QPalette palette = bar->palette();
-        palette.setColor(QPalette::Mid, normal);
-        palette.setColor(QPalette::Highlight, hover);
-        bar->setPalette(palette);
     };
     updateBar(state.overlayVertical);
     updateBar(state.overlayHorizontal);
