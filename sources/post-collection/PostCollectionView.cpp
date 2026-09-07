@@ -384,7 +384,8 @@ void PostCollectionView::resetCollection()
 
 bool PostCollectionView::hasMoreResults() const
 {
-    return serverHasMore || bufferedOffset < bufferedPosts.size();
+    return serverHasMore
+        || bufferedOffset < static_cast<int>(bufferedPosts.size());
 }
 
 void PostCollectionView::appendPosts(const QVector<QJsonObject>& rawPosts)
@@ -412,18 +413,19 @@ void PostCollectionView::appendPosts(const QVector<QJsonObject>& rawPosts)
 
 bool PostCollectionView::appendBufferedPage()
 {
-    if (bufferedOffset < 0 || bufferedOffset >= bufferedPosts.size()) {
+    const int bufferedCount = static_cast<int>(bufferedPosts.size());
+    if (bufferedOffset < 0 || bufferedOffset >= bufferedCount) {
         return false;
     }
 
-    const int end = std::min(bufferedPosts.size(), bufferedOffset + PageSize);
+    const int end = std::min(bufferedCount, bufferedOffset + PageSize);
     QVector<QJsonObject> page;
     page.reserve(end - bufferedOffset);
     for (int index = bufferedOffset; index < end; ++index) {
         page.push_back(bufferedPosts.at(index));
     }
     bufferedOffset = end;
-    if (bufferedOffset >= bufferedPosts.size()) {
+    if (bufferedOffset >= bufferedCount) {
         bufferedPosts.clear();
         bufferedOffset = 0;
     }
@@ -438,7 +440,7 @@ void PostCollectionView::loadNextPage()
     if (loading) {
         return;
     }
-    if (bufferedOffset < bufferedPosts.size()) {
+    if (bufferedOffset < static_cast<int>(bufferedPosts.size())) {
         appendBufferedPage();
         return;
     }
