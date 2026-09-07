@@ -25,8 +25,6 @@
 
 #include <QDesktopServices>
 #include <QEvent>
-#include <QFontMetrics>
-#include <QRegularExpression>
 #include <QSizePolicy>
 #include <QTextBrowser>
 #include <QTextDocument>
@@ -35,97 +33,10 @@
 #include "backend/emoji/EmojiRegistryNotifier.h"
 #include "navigation/AppNavigationService.h"
 #include "post/MessageFormatter.h"
+#include "ui/EmojiPresentation.h"
 #include "ui/PresenceAvatarLabel.h"
 
 namespace Mattermost {
-namespace {
-
-constexpr qreal HeaderInlineEmojiScale = 1.3;
-
-int inlineEmojiExtent(const QFont& font)
-{
-    // Image dimensions are pixels, so size the emoji from the visible font
-    // ascent rather than from the full line box. Scaling a point-size font and
-    // then taking QFontMetrics::height() also includes descent/leading and made
-    // small header text look as if it had roughly 2x-size emoji.
-    return std::max(1,
-                    qRound(QFontMetricsF(font).ascent() * HeaderInlineEmojiScale));
-}
-
-QString normalizeInlineEmojiPresentation(const QString& html, const QFont& font)
-{
-    static const QRegularExpression imageExpression(
-        QStringLiteral(R"(<img\b[^>]*>)"),
-        QRegularExpression::CaseInsensitiveOption);
-    static const QRegularExpression widthExpression(
-        QStringLiteral(R"(\bwidth\s*=\s*["']?\d+(?:\.\d+)?["']?)"),
-        QRegularExpression::CaseInsensitiveOption);
-    static const QRegularExpression heightExpression(
-        QStringLiteral(R"(\bheight\s*=\s*["']?\d+(?:\.\d+)?["']?)"),
-        QRegularExpression::CaseInsensitiveOption);
-    static const QRegularExpression styleExpression(
-        QStringLiteral(R"(\bstyle\s*=\s*["']([^"']*)["'])"),
-        QRegularExpression::CaseInsensitiveOption);
-
-    const int extent = inlineEmojiExtent(font);
-    QString result;
-    result.reserve(html.size());
-
-    int previousEnd = 0;
-    QRegularExpressionMatchIterator matches = imageExpression.globalMatch(html);
-    while (matches.hasNext()) {
-        const QRegularExpressionMatch match = matches.next();
-        const int start = static_cast<int>(match.capturedStart());
-        const int end = static_cast<int>(match.capturedEnd());
-        result += html.mid(previousEnd, start - previousEnd);
-
-        QString tag = match.captured();
-        // MessageFormatter gives custom emoji explicit dimensions. Ordinary
-        // Markdown images keep their natural size and therefore have no such
-        // attributes; leave those untouched.
-        if (widthExpression.match(tag).hasMatch()
-            && heightExpression.match(tag).hasMatch()) {
-            tag.replace(widthExpression,
-                        QStringLiteral("width=\"%1\"").arg(extent));
-            tag.replace(heightExpression,
-                        QStringLiteral("height=\"%1\"").arg(extent));
-
-            // QTextDocument otherwise aligns the bottom of an inline image to
-            // the text baseline. With an emoji slightly taller than the glyphs,
-            // that makes the surrounding text visibly sag below the icon.
-            const QRegularExpressionMatch styleMatch = styleExpression.match(tag);
-            if (styleMatch.hasMatch()) {
-                QString style = styleMatch.captured(1);
-                if (!style.contains(QStringLiteral("vertical-align"),
-                                    Qt::CaseInsensitive)) {
-                    if (!style.isEmpty() && !style.endsWith(QLatin1Char(';'))) {
-                        style += QLatin1Char(';');
-                    }
-                    style += QStringLiteral("vertical-align:middle;");
-                    tag.replace(styleMatch.capturedStart(1),
-                                styleMatch.capturedLength(1),
-                                style);
-                }
-            } else {
-                int insertion = tag.lastIndexOf(QLatin1Char('>'));
-                if (insertion > 0 && tag.at(insertion - 1) == QLatin1Char('/')) {
-                    --insertion;
-                }
-                if (insertion >= 0) {
-                    tag.insert(insertion,
-                               QStringLiteral(" style=\"vertical-align:middle;\""));
-                }
-            }
-        }
-        result += tag;
-        previousEnd = end;
-    }
-
-    result += html.mid(previousEnd);
-    return result;
-}
-
-} // namespace
 
 ChannelHeaderTextLabel::ChannelHeaderTextLabel(QWidget* parent)
     : QLabel(parent)
@@ -204,8 +115,10 @@ void ChannelHeaderTextLabel::setText(const QString& text)
     }
 
     show();
-    formattedText = normalizeInlineEmojiPresentation(
-        MessageFormatter::formatMessageText(text), font());
+    formattedText = EmojiPresentation::normalizeHtml(
+        MessageFormatter::formatMessageText(text),
+        font(),
+        EmojiPresentation::Mode::Inline);
     QLabel::setText(formattedText);
     updateCollapsedHeight();
 
