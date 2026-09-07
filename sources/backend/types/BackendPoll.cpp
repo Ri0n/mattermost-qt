@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -58,18 +58,24 @@ BackendPoll::~BackendPoll () = default;
 void Mattermost::BackendPoll::fillMetadata (const QJsonObject& jsonObject)
 {
 	metadata.ownVoteOptions.clear();
-	metadata.hasAdminPermissions = jsonObject.value("admin_permission").toBool (false);
+
+	// Current Mattermost poll metadata uses can_manage_poll. Keep the older
+	// admin_permission key as a compatibility fallback for older servers/plugins.
+	metadata.hasAdminPermissions = jsonObject.contains("can_manage_poll")
+		? jsonObject.value("can_manage_poll").toBool(false)
+		: jsonObject.value("admin_permission").toBool(false);
 
 	for (const auto& val: jsonObject.value("voted_answers").toArray()) {
-		QString answerStr = val.toString();
-
-		int optionIdx = 0;
-		for (auto& option: options) {
-			if (option.name == answerStr) {
-				metadata.ownVoteOptions.push_back(optionIdx);
+		const QString answerStr = val.toString();
+		for (int optionIdx = 0; optionIdx < options.size(); ++optionIdx) {
+			if (options.at(optionIdx).name != answerStr) {
+				continue;
 			}
-
-			++optionIdx;
+			const uint32_t index = static_cast<uint32_t>(optionIdx);
+			if (!metadata.ownVoteOptions.contains(index)) {
+				metadata.ownVoteOptions.push_back(index);
+			}
+			break;
 		}
 	}
 
