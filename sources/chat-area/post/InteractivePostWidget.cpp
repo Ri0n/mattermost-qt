@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include <QEasingCurve>
 #include <QEvent>
 #include <QPainter>
 #include <QPalette>
