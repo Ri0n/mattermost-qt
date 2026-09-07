@@ -1,0 +1,32 @@
+name: Apply Saved and search collections
+
+on:
+  push:
+    branches:
+      - chatgpt/saved-search-collections
+    paths:
+      - .github/apply_saved_search.py
+      - .github/workflows/apply-saved-search.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/saved-search-collections
+          fetch-depth: 0
+      - name: Apply implementation
+        run: python3 .github/apply_saved_search.py
+      - name: Remove helper
+        run: rm .github/apply_saved_search.py .github/workflows/apply-saved-search.yml
+      - name: Commit
+        run: |
+          git config user.name "Sergei Ilinykh"
+          git config user.email "rion4ik@gmail.com"
+          git add -A
+          git commit -m "Add Saved and message search collections"
+          git push origin HEAD:chatgpt/saved-search-collections
