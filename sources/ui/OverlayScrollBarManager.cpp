@@ -7,6 +7,11 @@
  * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
+ *
+ * Mattermost-QT is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
  */
 
 #include "OverlayScrollBarManager.h"
@@ -31,8 +36,15 @@
 namespace Mattermost {
 namespace {
 
-constexpr int ScrollBarThickness = 7;
-constexpr int ScrollBarInset = 1;
+// Keep the painted thumb narrow, but make its actual mouse target considerably
+// more forgiving. The outside pixel remains visually empty while still
+// belonging to the scrollbar, so the pointer cannot slip through at the window
+// edge. The inner hit padding is roughly half of the visible thumb thickness.
+constexpr int VisibleThumbThickness = 5;
+constexpr int OuterHitPadding = 1;
+constexpr int InnerHitPadding = (VisibleThumbThickness + 1) / 2;
+constexpr int ScrollBarHitThickness = InnerHitPadding + VisibleThumbThickness + OuterHitPadding;
+constexpr int ScrollBarEndInset = 1;
 constexpr int FadeDelayMs = 900;
 constexpr int FadeDurationMs = 240;
 constexpr int RevealDurationMs = 90;
@@ -53,11 +65,11 @@ QString overlayStyleSheet(const QColor& handle)
 {
     return QStringLiteral(
         "QScrollBar:vertical {"
-        " background: transparent; border: 0; width: 7px; margin: 0;"
+        " background: transparent; border: 0; width: %2px; margin: 0;"
         "}"
         "QScrollBar::handle:vertical {"
         " background: %1; border: 0; border-radius: 2px;"
-        " min-height: 28px; margin: 1px 0 1px 2px;"
+        " min-height: 28px; margin: 1px %3px 1px %4px;"
         "}"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
         " height: 0; border: 0; background: transparent;"
@@ -66,11 +78,11 @@ QString overlayStyleSheet(const QColor& handle)
         " background: transparent;"
         "}"
         "QScrollBar:horizontal {"
-        " background: transparent; border: 0; height: 7px; margin: 0;"
+        " background: transparent; border: 0; height: %2px; margin: 0;"
         "}"
         "QScrollBar::handle:horizontal {"
         " background: %1; border: 0; border-radius: 2px;"
-        " min-width: 28px; margin: 2px 1px 0 1px;"
+        " min-width: 28px; margin: %4px 1px %3px 1px;"
         "}"
         "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {"
         " width: 0; border: 0; background: transparent;"
@@ -78,7 +90,10 @@ QString overlayStyleSheet(const QColor& handle)
         "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {"
         " background: transparent;"
         "}")
-        .arg(cssRgba(handle));
+        .arg(cssRgba(handle))
+        .arg(ScrollBarHitThickness)
+        .arg(OuterHitPadding)
+        .arg(InnerHitPadding);
 }
 
 QScrollBar* createOverlay(QAbstractScrollArea& area,
@@ -336,12 +351,12 @@ void OverlayScrollBarManager::layout(State& state)
     const bool horizontalScrollable = state.horizontalEnabled && scrollable(state.sourceHorizontal);
 
     if (state.overlayVertical) {
-        const int bottomCut = horizontalScrollable ? ScrollBarThickness + ScrollBarInset : 0;
-        const int height = std::max(0, viewportRect.height() - 2 * ScrollBarInset - bottomCut);
-        const int x = viewportRect.right() - ScrollBarThickness + 1 - ScrollBarInset;
+        const int bottomCut = horizontalScrollable ? ScrollBarHitThickness : 0;
+        const int height = std::max(0, viewportRect.height() - 2 * ScrollBarEndInset - bottomCut);
+        const int x = viewportRect.right() - ScrollBarHitThickness + 1;
         state.overlayVertical->setGeometry(x,
-                                           viewportRect.top() + ScrollBarInset,
-                                           ScrollBarThickness,
+                                           viewportRect.top() + ScrollBarEndInset,
+                                           ScrollBarHitThickness,
                                            height);
         state.overlayVertical->raise();
         if (!verticalScrollable) {
@@ -350,13 +365,13 @@ void OverlayScrollBarManager::layout(State& state)
     }
 
     if (state.overlayHorizontal) {
-        const int rightCut = verticalScrollable ? ScrollBarThickness + ScrollBarInset : 0;
-        const int width = std::max(0, viewportRect.width() - 2 * ScrollBarInset - rightCut);
-        const int y = viewportRect.bottom() - ScrollBarThickness + 1 - ScrollBarInset;
-        state.overlayHorizontal->setGeometry(viewportRect.left() + ScrollBarInset,
+        const int rightCut = verticalScrollable ? ScrollBarHitThickness : 0;
+        const int width = std::max(0, viewportRect.width() - 2 * ScrollBarEndInset - rightCut);
+        const int y = viewportRect.bottom() - ScrollBarHitThickness + 1;
+        state.overlayHorizontal->setGeometry(viewportRect.left() + ScrollBarEndInset,
                                              y,
                                              width,
-                                             ScrollBarThickness);
+                                             ScrollBarHitThickness);
         state.overlayHorizontal->raise();
         if (!horizontalScrollable) {
             state.overlayHorizontal->hide();
