@@ -9,6 +9,8 @@
 #include <QVector>
 #include <QWidget>
 
+#include "backend/HTTPConnector.h"
+
 class QComboBox;
 class QLabel;
 class QToolButton;
@@ -16,15 +18,17 @@ class QToolButton;
 namespace Mattermost {
 
 class Backend;
+class BackendChannel;
 class BackendPost;
 class InteractiveTextEdit;
 
 /**
- * Virtualized cross-conversation post collection used by Saved and Search.
+ * Virtualized post collection used by Saved, Search, and an in-channel Pinned view.
  *
- * Collection ordering and pagination are endpoint authority only. Entries keep
- * their original channel/thread identity and never become a fake BackendChannel
- * timeline; LongListWidget only virtualizes the resulting collection order.
+ * Saved/Search entries own endpoint snapshots and keep their original
+ * channel/thread identity without becoming a fake BackendChannel timeline.
+ * Pinned mode borrows the current channel's authoritative pinned-post objects;
+ * LongListWidget only virtualizes collection presentation in all modes.
  */
 class PostCollectionView final : public QWidget
 {
@@ -33,6 +37,7 @@ public:
     enum class Mode {
         Saved,
         Search,
+        Pinned,
     };
 
     explicit PostCollectionView(Backend& backend, Mode mode, QWidget* parent = nullptr);
@@ -40,6 +45,10 @@ public:
 
     void activateSaved();
     void activateSearch(const QString& preferredTeamId = QString());
+    void activatePinned(BackendChannel& channel);
+
+signals:
+    void postActivated(const QString& postId);
 
 private:
     class CollectionList;
@@ -58,6 +67,7 @@ private:
     int indexOfPost(const QString& postId) const;
     QString originLabel(const BackendPost& post) const;
     void removeSavedPost(const QString& postId);
+    void unpinPost(const QString& postId, QToolButton* button);
     void updateStatus();
 
     Backend& backend;
@@ -67,8 +77,11 @@ private:
     InteractiveTextEdit* searchEdit = nullptr;
     QComboBox* scopeCombo = nullptr;
     QToolButton* searchAction = nullptr;
+    BackendChannel* pinnedChannel = nullptr;
+    HTTPConnector actionConnector;
 
-    std::vector<std::unique_ptr<BackendPost>> posts;
+    std::vector<std::unique_ptr<BackendPost>> ownedPosts;
+    std::vector<BackendPost*> posts;
     QSet<QString> postIds;
 
     // A database-backed Mattermost search can ignore page/per_page and return
