@@ -139,6 +139,10 @@ QSize customEmojiRenderSize(const QTextImageFormat& imageFormat,
 {
     const QSize target(extent, extent);
     QImageReader reader(imageFormat.name());
+    // The custom-emoji cache historically stores every payload with a .gif
+    // suffix even when the server returned PNG/JPEG. Inspect the bytes so the
+    // native-size cap is based on the actual image format rather than the name.
+    reader.setDecideFormatFromContent(true);
     const QSize nativeSize = reader.size();
     if (!nativeSize.isValid() || nativeSize.isEmpty()) {
         return target;
