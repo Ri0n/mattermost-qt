@@ -286,14 +286,25 @@ void OverlayScrollBarManager::layout(State& state)
 
 void OverlayScrollBarManager::updatePalette(State& state)
 {
-    if (!state.area) {
+    if (!state.area || !state.area->viewport()) {
         return;
     }
 
-    QColor normal = state.area->palette().color(QPalette::Text);
+    QWidget* viewport = state.area->viewport();
+    const QPalette viewportPalette = viewport->palette();
+    QColor background = viewportPalette.color(viewport->backgroundRole());
+    if (!background.isValid()) {
+        background = viewportPalette.color(QPalette::Base);
+    }
+
+    // Scrollbars are deliberately neutral rather than using the application's
+    // accent/highlight color. Pick their polarity from the actual viewport
+    // background so a dark desktop theme gets a light handle and vice versa.
+    const bool darkBackground = background.lightnessF() < 0.5;
+    QColor normal = darkBackground ? QColor(Qt::white) : QColor(Qt::black);
     QColor hover = normal;
-    normal.setAlpha(90);
-    hover.setAlpha(165);
+    normal.setAlpha(darkBackground ? 105 : 85);
+    hover.setAlpha(darkBackground ? 160 : 145);
 
     const auto updateBar = [normal, hover](QScrollBar* bar) {
         if (!bar) {
