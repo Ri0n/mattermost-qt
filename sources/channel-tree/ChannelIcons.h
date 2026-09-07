@@ -8,7 +8,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  */
 
@@ -62,8 +62,8 @@ inline QIcon privateChannel()
     shackle.lineTo(16.0, 11.0);
     painter.drawPath(shackle);
 
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(color);
+    // Keep the lock visually as light as the public-channel '#': the outline
+    // communicates privacy without turning every private row into a dark badge.
     painter.drawRoundedRect(QRectF(6.0, 10.0, 12.0, 10.0), 2.0, 2.0);
     return QIcon(pixmap);
 }
