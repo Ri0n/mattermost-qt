@@ -49,6 +49,13 @@ public:
     void activateSearch(const QString& preferredTeamId = QString());
     void activatePinned(BackendChannel& channel);
 
+    // Feed the logged-in user's realtime flagged_post preference changes into
+    // an already open Saved collection. Other collection modes ignore them.
+    void syncFlaggedPost(const QString& postId, bool flagged)
+    {
+        handleFlaggedPostChanged(postId, flagged);
+    }
+
 signals:
     void postActivated(const QString& postId);
 
