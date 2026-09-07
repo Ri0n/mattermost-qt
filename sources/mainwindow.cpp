@@ -159,6 +159,7 @@ MainWindow::MainWindow(QWidget* parent, QSystemTrayIcon& trayIcon, Backend& _bac
 
 	recentChannels->initialize(backend);
 	attentionList->initialize(backend);
+	installRealtimeUiSync();
 
 	sidebar.clear();
 	userProfiles.clear();
@@ -273,7 +274,7 @@ void MainWindow::setupChannelTabs()
 	attentionList->setContextMenuPolicy(Qt::CustomContextMenu);
 
 	channelTabs->addTab(channelsPage, tr("Channels"));
-	channelTabs->addTab(recentChannels, tr("Recent"));
+	channelTabs->addTab(recentChannels, tr("Following"));
 	channelTabs->addTab(attentionList, tr("Attention"));
 
 	auto* leftSidebar = new QWidget(ui->centralwidget);
