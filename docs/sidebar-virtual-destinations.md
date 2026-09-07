@@ -1,7 +1,7 @@
 # Virtual sidebar destinations and post collections
 
 This note records the model for user-centric destinations that look like navigation entries but are
-not ordinary server sidebar rows, plus the common collection semantics needed by Saved and future
+not ordinary server sidebar rows, plus the common collection semantics needed by Saved and
 message search.
 
 ## Personal
