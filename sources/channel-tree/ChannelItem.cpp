@@ -79,8 +79,9 @@ void ChannelItem::setLabel (const QString& label)
     if (QTreeWidgetItem::icon(0).isNull() && channel) {
         if (channel->type == BackendChannel::groupChannel) {
             setIcon(ChannelIcons::groupConversation());
-        } else if (channel->type == BackendChannel::publicChannel
-                   || channel->type == BackendChannel::privateChannel) {
+        } else if (channel->type == BackendChannel::privateChannel) {
+            setIcon(ChannelIcons::privateChannel());
+        } else if (channel->type == BackendChannel::publicChannel) {
             setIcon(ChannelIcons::channel());
         }
     }
