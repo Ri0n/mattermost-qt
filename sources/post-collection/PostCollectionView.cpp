@@ -2,16 +2,20 @@
 
 #include <algorithm>
 
+#include <QCalendarWidget>
 #include <QComboBox>
+#include <QDate>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QPalette>
 #include <QPointer>
 #include <QPushButton>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWidgetAction>
 
 #include "backend/Backend.h"
 #include "backend/PostRepository.h"
@@ -22,6 +26,7 @@
 #include "backend/types/BackendUser.h"
 #include "chat-area/post/PostWidget.h"
 #include "navigation/AppNavigationService.h"
+#include "ui/IconUtils.h"
 #include "widgets/InteractiveTextEdit.h"
 #include "widgets/LongListWidget.h"
 
@@ -149,11 +154,33 @@ void PostCollectionView::buildUi()
                     [this, token] { insertSearchToken(token); });
             modifiers->addWidget(button);
         };
+        auto addDateModifier = [this, modifiers](const QString& label,
+                                                 const QString& token) {
+            auto* button = new QToolButton(this);
+            button->setText(label);
+            button->setAutoRaise(true);
+            button->setPopupMode(QToolButton::InstantPopup);
+
+            auto* menu = new QMenu(button);
+            auto* calendar = new QCalendarWidget(menu);
+            calendar->setGridVisible(true);
+            auto* action = new QWidgetAction(menu);
+            action->setDefaultWidget(calendar);
+            menu->addAction(action);
+            button->setMenu(menu);
+
+            connect(calendar, &QCalendarWidget::clicked, this,
+                    [this, token, menu](const QDate& date) {
+                insertSearchToken(token + date.toString(Qt::ISODate));
+                menu->close();
+            });
+            modifiers->addWidget(button);
+        };
         addModifier(QStringLiteral("from:"), QStringLiteral("from:"));
         addModifier(QStringLiteral("in:"), QStringLiteral("in:"));
-        addModifier(QStringLiteral("before:"), QStringLiteral("before:"));
-        addModifier(QStringLiteral("after:"), QStringLiteral("after:"));
-        addModifier(QStringLiteral("on:"), QStringLiteral("on:"));
+        addDateModifier(QStringLiteral("before:"), QStringLiteral("before:"));
+        addDateModifier(QStringLiteral("after:"), QStringLiteral("after:"));
+        addDateModifier(QStringLiteral("on:"), QStringLiteral("on:"));
         modifiers->addStretch();
         root->addLayout(modifiers);
 
@@ -409,6 +436,13 @@ void PostCollectionView::appendPosts(const QVector<QJsonObject>& rawPosts)
     for (int index = oldCount; index < newCount; ++index) {
         list->setRangeAvailable(index, index, true);
     }
+
+    // Search is a result collection, not a live chat timeline. The first result
+    // is the collection origin and should be shown at the top; later pages keep
+    // the user's current viewport while extending the list downward.
+    if (mode == Mode::Search && oldCount == 0) {
+        list->scrollToIndex(0, LongListWidget::Alignment::Top);
+    }
 }
 
 bool PostCollectionView::appendBufferedPage()
@@ -536,7 +570,10 @@ QWidget* PostCollectionView::createRow(int index, QWidget* parent)
 
     if (mode == Mode::Saved) {
         auto* remove = new QToolButton(row);
-        remove->setText(tr("Remove from saved"));
+        remove->setIcon(IconUtils::symbolicIcon(QStringLiteral(":/icons/trash")));
+        remove->setToolTip(tr("Remove from saved"));
+        remove->setAccessibleName(tr("Remove from saved"));
+        remove->setToolButtonStyle(Qt::ToolButtonIconOnly);
         remove->setAutoRaise(true);
         connect(remove, &QToolButton::clicked, this,
                 [this, postId] { removeSavedPost(postId); });
@@ -544,8 +581,10 @@ QWidget* PostCollectionView::createRow(int index, QWidget* parent)
     }
 
     auto* jump = new QToolButton(row);
-    jump->setText(tr("Jump"));
+    jump->setIcon(IconUtils::symbolicIcon(QStringLiteral(":/icons/jump")));
     jump->setToolTip(tr("Show this message in its conversation"));
+    jump->setAccessibleName(tr("Jump to message"));
+    jump->setToolButtonStyle(Qt::ToolButtonIconOnly);
     jump->setAutoRaise(true);
     connect(jump, &QToolButton::clicked, this, [this, postId] {
         AppNavigationService::instance(backend).openPost(postId);
