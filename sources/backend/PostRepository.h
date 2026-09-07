@@ -71,6 +71,10 @@ public:
     struct CollectionPage {
         QVector<QJsonObject> posts;
         bool hasMore = false;
+        // Some Mattermost search backends ignore page/per_page and return a
+        // complete bounded snapshot. The view can buffer that snapshot and
+        // reveal it in client-sized pages instead of repeating the same search.
+        bool completeResultSet = false;
         bool success = false;
     };
 
