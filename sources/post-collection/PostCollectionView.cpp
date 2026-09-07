@@ -304,7 +304,17 @@ void PostCollectionView::loadNextPage()
                 guard->list->setItemCount(static_cast<int>(guard->posts.size()));
             }
             guard->finishPendingRangeRequests();
-            guard->updateStatus();
+            if (guard->statusLabel) {
+                const int count = static_cast<int>(guard->posts.size());
+                if (count > 0) {
+                    guard->statusLabel->setText(
+                        guard->tr("%1 messages loaded — loading more failed").arg(count));
+                } else {
+                    guard->statusLabel->setText(guard->mode == Mode::Saved
+                        ? guard->tr("Could not load saved messages.")
+                        : guard->tr("Search failed."));
+                }
+            }
             return;
         }
 
