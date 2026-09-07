@@ -21,7 +21,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
+#include <QDesktopServices>
 #include <QEvent>
 #include <QTextBrowser>
 #include <QTextDocument>
@@ -36,9 +38,13 @@ ChannelHeaderTextLabel::ChannelHeaderTextLabel(QWidget* parent)
 {
     setTextFormat(Qt::RichText);
     setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::TextSelectableByMouse);
-    setOpenExternalLinks(true);
+    setOpenExternalLinks(false);
     setWordWrap(false);
     installEventFilter(this);
+
+    connect(this, &QLabel::linkActivated, this, [this](const QString& href) {
+        openLink(QUrl(href));
+    });
 
     hideTimer.setSingleShot(true);
     hideTimer.setInterval(120);
@@ -105,6 +111,11 @@ void ChannelHeaderTextLabel::setText(const QString& text)
     }
 }
 
+void ChannelHeaderTextLabel::setLinkHandler(LinkHandler handler)
+{
+    linkHandler = std::move(handler);
+}
+
 void ChannelHeaderTextLabel::updateCollapsedHeight()
 {
     const int height = std::max(1, fontMetrics().lineSpacing() + 6);
@@ -152,7 +163,7 @@ void ChannelHeaderTextLabel::ensurePopover()
     auto* browser = new QTextBrowser(host);
     browser->setObjectName(QStringLiteral("channelHeaderTextPopover"));
     browser->setReadOnly(true);
-    browser->setOpenExternalLinks(true);
+    browser->setOpenExternalLinks(false);
     browser->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::TextSelectableByMouse);
     browser->setFrameShape(QFrame::Box);
     browser->setFrameShadow(QFrame::Plain);
@@ -168,6 +179,8 @@ void ChannelHeaderTextLabel::ensurePopover()
     browser->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     browser->document()->setDocumentMargin(4);
     browser->setHtml(formattedText);
+    connect(browser, &QTextBrowser::anchorClicked, this,
+            [this](const QUrl& url) { openLink(url); });
     browser->hide();
     browser->installEventFilter(this);
     browser->viewport()->installEventFilter(this);
@@ -251,10 +264,23 @@ void ChannelHeaderTextLabel::hidePopover()
     }
 }
 
+void ChannelHeaderTextLabel::openLink(const QUrl& url)
+{
+    if (!url.isValid()) {
+        return;
+    }
+    if (linkHandler) {
+        linkHandler(url);
+        return;
+    }
+    QDesktopServices::openUrl(url);
+}
+
 bool ChannelHeaderTextLabel::eventFilter(QObject* watched, QEvent* event)
 {
     const bool isLabel = watched == this;
-    const bool isPopover = popover && (watched == popover.data() || watched == popover->viewport());
+    const bool isPopover = popover
+        && (watched == popover.data() || watched == popover->viewport());
 
     if (isLabel || isPopover) {
         switch (event->type()) {
