@@ -1,0 +1,72 @@
+name: Fix interactive search portability
+
+on:
+  push:
+    branches:
+      - chatgpt/saved-search-collections
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/saved-search-collections
+      - name: Apply portability fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('sources/post-collection/PostCollectionView.cpp')
+          text = path.read_text()
+          text = text.replace(
+              '    return serverHasMore || bufferedOffset < bufferedPosts.size();\n',
+              '    return serverHasMore\n'
+              '        || bufferedOffset < static_cast<int>(bufferedPosts.size());\n')
+          text = text.replace(
+              '    if (bufferedOffset < 0 || bufferedOffset >= bufferedPosts.size()) {\n',
+              '    const int bufferedCount = static_cast<int>(bufferedPosts.size());\n'
+              '    if (bufferedOffset < 0 || bufferedOffset >= bufferedCount) {\n')
+          text = text.replace(
+              '    const int end = std::min(bufferedPosts.size(), bufferedOffset + PageSize);\n',
+              '    const int end = std::min(bufferedCount, bufferedOffset + PageSize);\n')
+          text = text.replace(
+              '    if (bufferedOffset >= bufferedPosts.size()) {\n',
+              '    if (bufferedOffset >= bufferedCount) {\n')
+          text = text.replace(
+              '    if (bufferedOffset < bufferedPosts.size()) {\n',
+              '    if (bufferedOffset < static_cast<int>(bufferedPosts.size())) {\n')
+          path.write_text(text)
+
+          path = Path('sources/backend/PostRepository.cpp')
+          text = path.read_text()
+          pattern = re.compile(
+              r'(?m)^\s*const int returnedCount = order\.isEmpty\(\)\n'
+              r'\s*\? static_cast<int>\(result\.posts\.size\(\)\) : order\.size\(\);\n'
+              r'\s*result\.completeResultSet = perPage > 0 && returnedCount > perPage;\n'
+              r'\s*result\.hasMore = !result\.completeResultSet\n'
+              r'\s*&& perPage > 0 && returnedCount >= perPage;\n'
+              r'\s*result\.success = true;')
+          replacement = '''    const int returnedCount = order.isEmpty()
+              ? static_cast<int>(result.posts.size()) : order.size();
+          result.completeResultSet = perPage > 0 && returnedCount > perPage;
+          result.hasMore = !result.completeResultSet
+              && perPage > 0 && returnedCount >= perPage;
+          result.success = true;'''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'collection formatting block count: {count}')
+          path.write_text(text)
+          PY
+
+          rm .github/workflows/fix-interactive-search-portability.yml
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add -A
+          git commit -m 'Fix interactive search Qt portability'
+          git push origin HEAD:chatgpt/saved-search-collections
