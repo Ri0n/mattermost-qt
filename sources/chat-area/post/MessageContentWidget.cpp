@@ -274,6 +274,9 @@ std::optional<SourceLanguage> sourceLanguageForName(QString language)
     if (language == QLatin1String("ini")) {
         return SourceLanguage::CodeINI;
     }
+    if (language == QLatin1String("vex")) {
+        return SourceLanguage::CodeVex;
+    }
     if (language == QLatin1String("cmake")) {
         return SourceLanguage::CodeCMake;
     }
