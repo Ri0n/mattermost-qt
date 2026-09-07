@@ -258,11 +258,23 @@ void InteractiveTextEdit::keyPressEvent(QKeyEvent* event)
         switch (event->key()) {
         case Qt::Key_Enter:
         case Qt::Key_Return:
+            // Normally QCompleter's event filter owns Return while the popup is
+            // visible. Some platform plugins cannot establish the popup keyboard
+            // grab, so make the editor a deterministic fallback instead of
+            // accidentally submitting the unfinished text.
+            if (completer && completer->popup()) {
+                const QModelIndex current = completer->popup()->currentIndex();
+                if (current.isValid()) {
+                    acceptCompletion(current);
+                }
+            }
+            event->accept();
+            return;
         case Qt::Key_Escape:
         case Qt::Key_Tab:
         case Qt::Key_Backtab:
-            // QCompleter installs an event filter on this editor and owns these
-            // keys while its popup is visible. Do not turn Return into submit.
+            // QCompleter normally owns these keys too. If they reach the editor,
+            // keep them from being interpreted as composer input/submission.
             event->ignore();
             return;
         default:
