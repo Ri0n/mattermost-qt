@@ -8,14 +8,15 @@
 #include <QVector>
 #include <QWidget>
 
-namespace Mattermost {
-
-class Backend;
-class BackendPost;
 class QComboBox;
 class QLabel;
 class QLineEdit;
 class QToolButton;
+
+namespace Mattermost {
+
+class Backend;
+class BackendPost;
 
 /**
  * Virtualized cross-conversation post collection used by Saved and Search.
