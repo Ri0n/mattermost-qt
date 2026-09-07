@@ -32,6 +32,12 @@ class OverlayScrollBarManager final : public QObject
 public:
     static void install(QApplication& application);
 
+    /**
+     * Briefly reveal the overlay for an already-populated scroll area.
+     * Returns true when at least one enabled axis is actually scrollable.
+     */
+    static bool pulse(QAbstractScrollArea& area);
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
@@ -51,7 +57,7 @@ private:
     bool containsCursor(const State& state) const;
     bool cursorOverOverlay(const State& state) const;
 
-    QHash<QAbstractScrollArea*, State*> states;
+    QHash<QAbstractScrollArea*, State*> _states;
 };
 
 } // namespace Mattermost
