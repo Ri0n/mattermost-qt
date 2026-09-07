@@ -71,6 +71,14 @@ public:
 	void goToPost (const BackendPost& post);
 	void goToPost (const QString& postId);
 
+	/**
+	 * Explicit semantic navigation supersedes the weak queued "show newest"
+	 * position installed by channel activation. Call this synchronously as soon
+	 * as an external jump selects this ChatArea, before the queued navigation
+	 * callback itself runs.
+	 */
+	void preparePostNavigation () { ++viewportNavigationGeneration; }
+
 	bool ensurePostVisible (const QString& postId);
 	bool ensurePinnedPostVisible(const QString& postId,
 	                             const QStringList& contextPostIds,
