@@ -71,6 +71,14 @@ QPoint dropEventPosition(const QDropEvent* event)
 #endif
 }
 
+class VirtualDestinationItem final : public ChannelItem
+{
+public:
+    using ChannelItem::ChannelItem;
+
+    void showContextMenu(const QPoint&) override {}
+};
+
 } // namespace
 
 ChannelTree::ChannelTree (QWidget* parent)
@@ -309,7 +317,7 @@ ChannelItem* ChannelTree::createPersonalItem(Backend& backend, TeamItem& teamIte
 ChannelItem* ChannelTree::createSavedItem(Backend& backend, TeamItem& teamItem,
                                           QTreeWidgetItem& categoryItem)
 {
-    auto* item = new ChannelItem(backend, nullptr);
+    auto* item = new VirtualDestinationItem(backend, nullptr);
     categoryItem.addChild(item);
     item->setData(0, ItemKindRole, VirtualDestinationItemKind);
     item->setData(0, ItemIdRole, QStringLiteral("virtual:saved"));

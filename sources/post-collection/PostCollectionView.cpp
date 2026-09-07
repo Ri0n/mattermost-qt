@@ -300,6 +300,9 @@ void PostCollectionView::loadNextPage()
         guard->loading = false;
         if (!result.success) {
             guard->hasMore = false;
+            if (guard->list) {
+                guard->list->setItemCount(static_cast<int>(guard->posts.size()));
+            }
             guard->finishPendingRangeRequests();
             guard->updateStatus();
             return;
