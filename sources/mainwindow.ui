@@ -166,6 +166,9 @@
          <property name="popupMode">
           <enum>QToolButton::InstantPopup</enum>
          </property>
+         <property name="autoRaise">
+          <bool>true</bool>
+         </property>
         </widget>
        </item>
       </layout>
