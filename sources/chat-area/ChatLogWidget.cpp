@@ -8,6 +8,7 @@
 #include "ChatArea.h"
 #include "backend/Backend.h"
 #include "backend/types/BackendPost.h"
+#include "post/InteractivePostWidget.h"
 #include "post/PostWidget.h"
 
 namespace Mattermost {
@@ -91,6 +92,22 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
             << " source=" << sourceName(postSource)
             << " range=[" << first << ',' << last << ']'
             << " count=" << materializedCount();
+        scheduleNavigationFinalize();
+    });
+
+    // A direct user gesture wins even while semantic navigation is waiting for
+    // the target widget to materialize. Once the real viewport lock exists,
+    // LongListWidget releases it and the viewportLockReleased handler below
+    // clears the same semantic state.
+    connect(this, &LongListWidget::userViewportChanged, this, [this](bool) {
+        if (!navigationLockPending) {
+            return;
+        }
+        navigationPostId.clear();
+        pendingHighlightPostId.clear();
+        navigationLogicalIndex = -1;
+        navigationLockPending = false;
+        navigationRecenterPending = false;
     });
 
     // LongListWidget owns the lock lifetime and recognizes all real user scroll
@@ -102,7 +119,10 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
             << " postId=" << navigationPostId
             << " index=" << navigationLogicalIndex;
         navigationPostId.clear();
+        pendingHighlightPostId.clear();
         navigationLogicalIndex = -1;
+        navigationLockPending = false;
+        navigationRecenterPending = false;
     });
 }
 
@@ -191,10 +211,27 @@ bool ChatLogWidget::ensurePostVisible(const QString& postId, Alignment alignment
 
 void ChatLogWidget::highlightPost(const QString& postId)
 {
+    if (postId.isEmpty()) {
+        return;
+    }
+
     if (PostWidget* widget = findPost(postId)) {
         widget->setFocus(Qt::OtherFocusReason);
+        if (auto* interactive = dynamic_cast<InteractivePostWidget*>(widget)) {
+            interactive->animateNavigationHighlight();
+        }
         widget->update();
+        if (pendingHighlightPostId == postId) {
+            pendingHighlightPostId.clear();
+        }
+        return;
     }
+
+    // Semantic navigation can request the visual cue before LongListWidget has
+    // materialized the newly loaded target. Keep only the latest target and
+    // deliver the cue after the same post becomes a concrete widget.
+    pendingHighlightPostId = postId;
+    scheduleNavigationFinalize();
 }
 
 void ChatLogWidget::refreshPost(const QString& postId)
@@ -243,20 +280,87 @@ bool ChatLogWidget::lockNavigationToPost(const QString& postId,
         return false;
     }
 
+    // Drop the old physical lock before assigning the new semantic target;
+    // viewportLockReleased is allowed to clear only the previous navigation.
+    clearViewportLock();
     navigationPostId = postId;
     navigationLogicalIndex = index;
-    if (!lockViewportToItem(index, alignment, quietPeriodMs)) {
-        navigationPostId.clear();
-        navigationLogicalIndex = -1;
+    navigationAlignment = alignment;
+    navigationQuietPeriodMs = std::max(0, quietPeriodMs);
+    navigationLockPending = true;
+    navigationRecenterPending = false;
+
+    // First move the correct logical identity into the materialization window.
+    // At this point its height may still be the generic 96px estimate. The real
+    // Center/Top/Bottom lock is installed only after createItemWidget() has run
+    // and LongListWidget has measured the concrete post.
+    if (!itemWidget(index)) {
+        scrollToIndex(index, alignment);
+        scheduleNavigationFinalize();
+        return true;
+    }
+
+    return finalizeNavigationLock();
+}
+
+bool ChatLogWidget::finalizeNavigationLock()
+{
+    if (!postSource || navigationPostId.isEmpty()) {
         return false;
     }
+
+    const int index = postSource->indexOfPost(navigationPostId);
+    if (index < 0) {
+        return false;
+    }
+    navigationLogicalIndex = index;
+
+    if (!itemWidget(index)) {
+        if (navigationLockPending) {
+            scrollToIndex(index, navigationAlignment);
+        }
+        return false;
+    }
+
+    if (navigationLockPending || navigationRecenterPending || !hasViewportLock()) {
+        navigationLockPending = false;
+        navigationRecenterPending = false;
+        if (!lockViewportToItem(index, navigationAlignment, navigationQuietPeriodMs)) {
+            return false;
+        }
+    }
+
+    if (pendingHighlightPostId == navigationPostId) {
+        highlightPost(pendingHighlightPostId);
+    }
     return true;
+}
+
+void ChatLogWidget::scheduleNavigationFinalize()
+{
+    if ((!navigationLockPending && !navigationRecenterPending
+         && pendingHighlightPostId.isEmpty())
+        || (!postSource && pendingHighlightPostId.isEmpty())) {
+        return;
+    }
+
+    QTimer::singleShot(0, this, [this] {
+        if (navigationLockPending || navigationRecenterPending) {
+            finalizeNavigationLock();
+        }
+        if (!pendingHighlightPostId.isEmpty()) {
+            highlightPost(pendingHighlightPostId);
+        }
+    });
 }
 
 void ChatLogWidget::clearNavigationLock()
 {
     navigationPostId.clear();
+    pendingHighlightPostId.clear();
     navigationLogicalIndex = -1;
+    navigationLockPending = false;
+    navigationRecenterPending = false;
     clearViewportLock();
 }
 
@@ -306,7 +410,8 @@ QWidget* ChatLogWidget::createItemWidget(int index)
     }
 
     const QString postId = post->id;
-    auto* widget = new PostWidget(*backend, *post, viewport(), chatArea, lastRootPost);
+    auto* widget = new InteractivePostWidget(
+        *backend, *post, viewport(), chatArea, lastRootPost);
     qCDebug(lcTimelineTrace).nospace()
         << "CREATE_WIDGET list=" << static_cast<const void*>(this)
         << " source=" << sourceName(postSource)
@@ -334,6 +439,12 @@ QWidget* ChatLogWidget::createItemWidget(int index)
             << " minHint=" << widget->minimumSizeHint().height();
         if (currentIndex >= 0) {
             itemsChanged(currentIndex, currentIndex);
+            if (postId == navigationPostId && hasViewportLock()) {
+                // Geometry commit is queued by itemsChanged() first. Re-center
+                // one event-loop turn later using the new measured target height.
+                navigationRecenterPending = true;
+                scheduleNavigationFinalize();
+            }
         }
     });
     return widget;
@@ -491,7 +602,7 @@ void ChatLogWidget::rematerializeRange(int first, int last)
 
 bool ChatLogWidget::restoreNavigationTarget()
 {
-    if (!postSource || navigationPostId.isEmpty() || !hasViewportLock()) {
+    if (!postSource || navigationPostId.isEmpty()) {
         return false;
     }
 
@@ -499,6 +610,16 @@ bool ChatLogWidget::restoreNavigationTarget()
     if (index < 0) {
         return false;
     }
+
+    if (navigationLockPending || !hasViewportLock()) {
+        if (index != navigationLogicalIndex) {
+            navigationLogicalIndex = index;
+            scrollToIndex(index, navigationAlignment);
+        }
+        scheduleNavigationFinalize();
+        return true;
+    }
+
     if (index == navigationLogicalIndex) {
         return true;
     }
