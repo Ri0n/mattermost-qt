@@ -34,6 +34,7 @@ private:
     explicit CustomEmojiService(Backend& backend);
 
     void flushPendingNames();
+    void lookupNamesIndividually(const QSet<QString>& names);
     void ensureImage(const QString& id, const QString& name);
     static bool isValidCustomEmojiName(const QString& name);
 
@@ -43,6 +44,7 @@ private:
     QSet<QString> _inFlightNames;
     QSet<QString> _missingNames;
     bool _flushScheduled = false;
+    bool _batchLookupSupported = true;
 };
 
 } // namespace Mattermost
