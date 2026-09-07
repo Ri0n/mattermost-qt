@@ -1,5 +1,7 @@
 #include "PostRepository.h"
 
+#include "QByteArrayCreator.h"
+
 #include <algorithm>
 #include <limits>
 #include <memory>
@@ -123,7 +125,9 @@ PostRepository::CollectionPage collectionPageFromDocument(
         }
     }
 
-    result.hasMore = perPage > 0 && order.size() >= perPage;
+    const int returnedCount = order.isEmpty()
+        ? static_cast<int>(result.posts.size()) : order.size();
+    result.hasMore = perPage > 0 && returnedCount >= perPage;
     result.success = true;
     return result;
 }
@@ -368,7 +372,7 @@ void PostRepository::searchPosts(const QString& teamId,
     };
 
     NetworkRequest request(path);
-    httpConnector.post(request, body, HttpResponseCallback(
+    httpConnector.post(request, QByteArrayCreator(body), HttpResponseCallback(
         [safePerPage, callback = std::move(callback)](
             QVariant status, const QJsonDocument& doc) mutable {
             if (callback) {
