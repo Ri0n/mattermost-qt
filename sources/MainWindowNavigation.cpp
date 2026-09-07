@@ -11,7 +11,6 @@
 #include "chat-area/AbstractPostSource.h"
 #include "chat-area/ChatArea.h"
 #include "chat-area/ChatLogWidget.h"
-#include "ui_ChatArea.h"
 #include "ui_mainwindow.h"
 
 namespace Mattermost {
@@ -22,15 +21,17 @@ Q_LOGGING_CATEGORY(lcJumpTrace, "mattermost.navigation.jump", QtWarningMsg)
 
 void logJumpState(const char* phase, ChatArea* area, const QString& postId)
 {
-    if (!area || !area->getUi() || !area->getUi()->listWidget) {
+    ChatLogWidget* list = area
+        ? area->findChild<ChatLogWidget*>(QStringLiteral("listWidget"))
+        : nullptr;
+    if (!list) {
         qCWarning(lcJumpTrace).nospace()
             << "STATE phase=" << phase
             << " postId=" << postId
-            << " area=null";
+            << " list=null";
         return;
     }
 
-    ChatLogWidget* list = area->getUi()->listWidget;
     AbstractPostSource* source = list->source();
     const int index = source ? source->indexOfPost(postId) : -1;
     QWidget* widget = index >= 0 ? list->itemWidget(index) : nullptr;
