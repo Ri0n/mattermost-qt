@@ -12,13 +12,17 @@
 #include "OverlayScrollBarManager.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include <QAbstractScrollArea>
 #include <QApplication>
 #include <QColor>
 #include <QCursor>
+#include <QEasingCurve>
 #include <QEvent>
+#include <QGraphicsOpacityEffect>
 #include <QPalette>
+#include <QPropertyAnimation>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QTimer>
@@ -29,7 +33,9 @@ namespace {
 
 constexpr int ScrollBarThickness = 10;
 constexpr int ScrollBarInset = 2;
-constexpr int HideDelayMs = 650;
+constexpr int FadeDelayMs = 900;
+constexpr int FadeDurationMs = 240;
+constexpr int RevealDurationMs = 90;
 constexpr char InstalledProperty[] = "mattermostOverlayScrollBarsInstalled";
 constexpr char VerticalObjectName[] = "mattermostOverlayVerticalScrollBar";
 constexpr char HorizontalObjectName[] = "mattermostOverlayHorizontalScrollBar";
@@ -43,18 +49,15 @@ QString cssRgba(const QColor& color)
         .arg(color.alpha());
 }
 
-QString overlayStyleSheet(const QColor& normal, const QColor& hover)
+QString overlayStyleSheet(const QColor& handle)
 {
     return QStringLiteral(
         "QScrollBar:vertical {"
         " background: transparent; border: 0; width: 10px; margin: 0;"
         "}"
         "QScrollBar::handle:vertical {"
-        " background: %1; border: 0; border-radius: 4px;"
+        " background: %1; border: 0; border-radius: 3px;"
         " min-height: 28px; margin: 1px 2px;"
-        "}"
-        "QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {"
-        " background: %2; margin: 1px;"
         "}"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
         " height: 0; border: 0; background: transparent;"
@@ -66,11 +69,8 @@ QString overlayStyleSheet(const QColor& normal, const QColor& hover)
         " background: transparent; border: 0; height: 10px; margin: 0;"
         "}"
         "QScrollBar::handle:horizontal {"
-        " background: %1; border: 0; border-radius: 4px;"
+        " background: %1; border: 0; border-radius: 3px;"
         " min-width: 28px; margin: 2px 1px;"
-        "}"
-        "QScrollBar::handle:horizontal:hover, QScrollBar::handle:horizontal:pressed {"
-        " background: %2; margin: 1px;"
         "}"
         "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {"
         " width: 0; border: 0; background: transparent;"
@@ -78,7 +78,7 @@ QString overlayStyleSheet(const QColor& normal, const QColor& hover)
         "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {"
         " background: transparent;"
         "}")
-        .arg(cssRgba(normal), cssRgba(hover));
+        .arg(cssRgba(handle));
 }
 
 QScrollBar* createOverlay(QAbstractScrollArea& area,
@@ -114,6 +114,26 @@ void syncBar(QScrollBar* source, QScrollBar* overlay)
     overlay->setValue(source->value());
 }
 
+void animateOpacity(QGraphicsOpacityEffect* effect,
+                    QPropertyAnimation* animation,
+                    qreal target,
+                    int duration)
+{
+    if (!effect || !animation) {
+        return;
+    }
+    if (std::abs(effect->opacity() - target) < 0.01) {
+        effect->setOpacity(target);
+        return;
+    }
+
+    animation->stop();
+    animation->setDuration(duration);
+    animation->setStartValue(effect->opacity());
+    animation->setEndValue(target);
+    animation->start();
+}
+
 } // namespace
 
 struct OverlayScrollBarManager::State {
@@ -122,9 +142,14 @@ struct OverlayScrollBarManager::State {
     QScrollBar* sourceHorizontal = nullptr;
     QScrollBar* overlayVertical = nullptr;
     QScrollBar* overlayHorizontal = nullptr;
-    QTimer* hideTimer = nullptr;
+    QGraphicsOpacityEffect* verticalOpacity = nullptr;
+    QGraphicsOpacityEffect* horizontalOpacity = nullptr;
+    QPropertyAnimation* verticalAnimation = nullptr;
+    QPropertyAnimation* horizontalAnimation = nullptr;
+    QTimer* fadeTimer = nullptr;
     bool verticalEnabled = false;
     bool horizontalEnabled = false;
+    bool cursorInside = false;
 };
 
 void OverlayScrollBarManager::install(QApplication& application)
@@ -165,18 +190,34 @@ void OverlayScrollBarManager::registerArea(QAbstractScrollArea* area)
 
     states.insert(area, state);
 
+    const auto setupOverlay = [area](QScrollBar* bar,
+                                     QGraphicsOpacityEffect*& effect,
+                                     QPropertyAnimation*& animation) {
+        if (!bar) {
+            return;
+        }
+        effect = new QGraphicsOpacityEffect(bar);
+        effect->setOpacity(0.0);
+        bar->setGraphicsEffect(effect);
+
+        animation = new QPropertyAnimation(effect, QByteArrayLiteral("opacity"), bar);
+        animation->setEasingCurve(QEasingCurve::OutCubic);
+    };
+
     if (state->verticalEnabled) {
         state->overlayVertical = createOverlay(*area, Qt::Vertical, VerticalObjectName);
+        setupOverlay(state->overlayVertical, state->verticalOpacity, state->verticalAnimation);
         area->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     }
     if (state->horizontalEnabled) {
         state->overlayHorizontal = createOverlay(*area, Qt::Horizontal, HorizontalObjectName);
+        setupOverlay(state->overlayHorizontal, state->horizontalOpacity, state->horizontalAnimation);
         area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     }
 
-    state->hideTimer = new QTimer(area);
-    state->hideTimer->setSingleShot(true);
-    state->hideTimer->setInterval(HideDelayMs);
+    state->fadeTimer = new QTimer(area);
+    state->fadeTimer->setSingleShot(true);
+    state->fadeTimer->setInterval(FadeDelayMs);
 
     const auto connectSource = [this, state](QScrollBar* source, QScrollBar* overlay) {
         if (!source || !overlay) {
@@ -185,39 +226,53 @@ void OverlayScrollBarManager::registerArea(QAbstractScrollArea* area)
         connect(source, &QScrollBar::rangeChanged, this, [this, state](int, int) {
             sync(*state);
             layout(*state);
-            if (containsCursor(*state)) {
-                show(*state);
+            if (cursorOverOverlay(*state)) {
+                if (state->fadeTimer) {
+                    state->fadeTimer->stop();
+                }
+                reveal(*state);
             }
         });
         connect(source, &QScrollBar::valueChanged, this, [this, state](int) {
             sync(*state);
-            show(*state);
-            scheduleHide(*state);
+            reveal(*state);
+            if (cursorOverOverlay(*state)) {
+                if (state->fadeTimer) {
+                    state->fadeTimer->stop();
+                }
+            } else {
+                scheduleFade(*state);
+            }
         });
         connect(overlay, &QScrollBar::valueChanged, this, [source](int value) {
             source->setValue(value);
         });
         connect(overlay, &QScrollBar::sliderPressed, this, [this, state] {
-            if (state->hideTimer) {
-                state->hideTimer->stop();
+            if (state->fadeTimer) {
+                state->fadeTimer->stop();
             }
-            show(*state);
+            reveal(*state);
         });
         connect(overlay, &QScrollBar::sliderReleased, this, [this, state] {
-            scheduleHide(*state);
+            if (cursorOverOverlay(*state)) {
+                reveal(*state);
+            } else {
+                scheduleFade(*state);
+            }
         });
     };
 
     connectSource(state->sourceVertical, state->overlayVertical);
     connectSource(state->sourceHorizontal, state->overlayHorizontal);
 
-    connect(state->hideTimer, &QTimer::timeout, area, [this, state] {
+    connect(state->fadeTimer, &QTimer::timeout, area, [this, state] {
         const bool dragging = (state->overlayVertical && state->overlayVertical->isSliderDown())
             || (state->overlayHorizontal && state->overlayHorizontal->isSliderDown());
-        if (dragging || containsCursor(*state)) {
+        if (dragging || cursorOverOverlay(*state)) {
+            reveal(*state);
             return;
         }
-        hide(*state);
+        fade(*state);
     });
 
     connect(area, &QObject::destroyed, this, [this, area] {
@@ -227,6 +282,13 @@ void OverlayScrollBarManager::registerArea(QAbstractScrollArea* area)
     sync(*state);
     updatePalette(*state);
     layout(*state);
+    state->cursorInside = containsCursor(*state);
+    if (state->cursorInside) {
+        reveal(*state);
+        if (!cursorOverOverlay(*state)) {
+            scheduleFade(*state);
+        }
+    }
 }
 
 OverlayScrollBarManager::State* OverlayScrollBarManager::stateForWidget(QWidget* widget) const
@@ -247,11 +309,19 @@ void OverlayScrollBarManager::sync(State& state)
     syncBar(state.sourceVertical, state.overlayVertical);
     syncBar(state.sourceHorizontal, state.overlayHorizontal);
 
-    if (state.overlayVertical && !scrollable(state.sourceVertical)) {
-        state.overlayVertical->hide();
+    if (state.overlayVertical) {
+        if (state.verticalEnabled && scrollable(state.sourceVertical)) {
+            state.overlayVertical->show();
+        } else {
+            state.overlayVertical->hide();
+        }
     }
-    if (state.overlayHorizontal && !scrollable(state.sourceHorizontal)) {
-        state.overlayHorizontal->hide();
+    if (state.overlayHorizontal) {
+        if (state.horizontalEnabled && scrollable(state.sourceHorizontal)) {
+            state.overlayHorizontal->show();
+        } else {
+            state.overlayHorizontal->hide();
+        }
     }
 }
 
@@ -307,29 +377,23 @@ void OverlayScrollBarManager::updatePalette(State& state)
         background = viewportPalette.color(QPalette::Base);
     }
 
-    // Scrollbars are deliberately neutral rather than using the application's
-    // accent/highlight color. Pick their polarity from the actual viewport
-    // background so a dark desktop theme gets a light handle and vice versa.
+    // Keep the handle neutral and let opacity, rather than hue or geometry,
+    // communicate hover/idle state. This avoids accent-colored hover under
+    // Breeze and keeps the shape identical throughout the animation.
     const bool darkBackground = background.lightnessF() < 0.5;
-    QColor normal = darkBackground ? QColor(Qt::white) : QColor(Qt::black);
-    QColor hover = normal;
-    normal.setAlpha(darkBackground ? 125 : 95);
-    hover.setAlpha(darkBackground ? 175 : 150);
+    QColor handle = darkBackground ? QColor(Qt::white) : QColor(Qt::black);
+    handle.setAlpha(darkBackground ? 185 : 160);
 
-    const QString styleSheet = overlayStyleSheet(normal, hover);
-    const auto updateBar = [&styleSheet](QScrollBar* bar) {
-        if (bar) {
-            // Use explicit RGBA values rather than palette(mid/highlight).
-            // QStyleSheetStyle/Breeze may cache palette roles independently of
-            // the widget palette, which made runtime palette updates ineffective.
-            bar->setStyleSheet(styleSheet);
-        }
-    };
-    updateBar(state.overlayVertical);
-    updateBar(state.overlayHorizontal);
+    const QString styleSheet = overlayStyleSheet(handle);
+    if (state.overlayVertical) {
+        state.overlayVertical->setStyleSheet(styleSheet);
+    }
+    if (state.overlayHorizontal) {
+        state.overlayHorizontal->setStyleSheet(styleSheet);
+    }
 }
 
-void OverlayScrollBarManager::show(State& state)
+void OverlayScrollBarManager::reveal(State& state)
 {
     sync(state);
     layout(state);
@@ -337,27 +401,44 @@ void OverlayScrollBarManager::show(State& state)
     if (state.overlayVertical && state.verticalEnabled && scrollable(state.sourceVertical)) {
         state.overlayVertical->show();
         state.overlayVertical->raise();
+        animateOpacity(state.verticalOpacity,
+                       state.verticalAnimation,
+                       1.0,
+                       RevealDurationMs);
     }
     if (state.overlayHorizontal && state.horizontalEnabled && scrollable(state.sourceHorizontal)) {
         state.overlayHorizontal->show();
         state.overlayHorizontal->raise();
+        animateOpacity(state.horizontalOpacity,
+                       state.horizontalAnimation,
+                       1.0,
+                       RevealDurationMs);
     }
 }
 
-void OverlayScrollBarManager::hide(State& state)
+void OverlayScrollBarManager::fade(State& state)
 {
-    if (state.overlayVertical && !state.overlayVertical->isSliderDown()) {
-        state.overlayVertical->hide();
+    const bool dragging = (state.overlayVertical && state.overlayVertical->isSliderDown())
+        || (state.overlayHorizontal && state.overlayHorizontal->isSliderDown());
+    if (dragging || cursorOverOverlay(state)) {
+        reveal(state);
+        return;
     }
-    if (state.overlayHorizontal && !state.overlayHorizontal->isSliderDown()) {
-        state.overlayHorizontal->hide();
-    }
+
+    animateOpacity(state.verticalOpacity,
+                   state.verticalAnimation,
+                   0.0,
+                   FadeDurationMs);
+    animateOpacity(state.horizontalOpacity,
+                   state.horizontalAnimation,
+                   0.0,
+                   FadeDurationMs);
 }
 
-void OverlayScrollBarManager::scheduleHide(State& state)
+void OverlayScrollBarManager::scheduleFade(State& state)
 {
-    if (state.hideTimer) {
-        state.hideTimer->start();
+    if (state.fadeTimer) {
+        state.fadeTimer->start();
     }
 }
 
@@ -368,6 +449,19 @@ bool OverlayScrollBarManager::containsCursor(const State& state) const
     }
     const QPoint local = state.area->mapFromGlobal(QCursor::pos());
     return state.area->rect().contains(local);
+}
+
+bool OverlayScrollBarManager::cursorOverOverlay(const State& state) const
+{
+    if (!state.area || !state.area->isVisible()) {
+        return false;
+    }
+
+    const QPoint local = state.area->mapFromGlobal(QCursor::pos());
+    const auto contains = [local](const QScrollBar* bar) {
+        return bar && scrollable(bar) && bar->geometry().contains(local);
+    };
+    return contains(state.overlayVertical) || contains(state.overlayHorizontal);
 }
 
 bool OverlayScrollBarManager::eventFilter(QObject* watched, QEvent* event)
@@ -392,8 +486,16 @@ bool OverlayScrollBarManager::eventFilter(QObject* watched, QEvent* event)
                 QTimer::singleShot(0, area, [this, statePtr = it.value()] {
                     sync(*statePtr);
                     layout(*statePtr);
-                    if (containsCursor(*statePtr)) {
-                        show(*statePtr);
+                    statePtr->cursorInside = containsCursor(*statePtr);
+                    if (statePtr->cursorInside) {
+                        reveal(*statePtr);
+                        if (cursorOverOverlay(*statePtr)) {
+                            if (statePtr->fadeTimer) {
+                                statePtr->fadeTimer->stop();
+                            }
+                        } else {
+                            scheduleFade(*statePtr);
+                        }
                     }
                 });
                 break;
@@ -404,7 +506,22 @@ bool OverlayScrollBarManager::eventFilter(QObject* watched, QEvent* event)
                 layout(state);
                 break;
             case QEvent::Hide:
-                hide(state);
+                state.cursorInside = false;
+                if (state.fadeTimer) {
+                    state.fadeTimer->stop();
+                }
+                if (state.verticalAnimation) {
+                    state.verticalAnimation->stop();
+                }
+                if (state.horizontalAnimation) {
+                    state.horizontalAnimation->stop();
+                }
+                if (state.verticalOpacity) {
+                    state.verticalOpacity->setOpacity(0.0);
+                }
+                if (state.horizontalOpacity) {
+                    state.horizontalOpacity->setOpacity(0.0);
+                }
                 break;
             default:
                 break;
@@ -415,19 +532,65 @@ bool OverlayScrollBarManager::eventFilter(QObject* watched, QEvent* event)
     QWidget* widget = qobject_cast<QWidget*>(watched);
     State* state = widget ? stateForWidget(widget) : nullptr;
     if (state) {
+        const bool overlayWidget = widget == state->overlayVertical
+            || widget == state->overlayHorizontal;
+        const bool areaBoundary = widget == state->area
+            || (state->area && widget == state->area->viewport());
+
         switch (event->type()) {
         case QEvent::Enter:
-            if (state->hideTimer) {
-                state->hideTimer->stop();
+            if (overlayWidget) {
+                if (state->fadeTimer) {
+                    state->fadeTimer->stop();
+                }
+                reveal(*state);
+            } else if (areaBoundary && !state->cursorInside && containsCursor(*state)) {
+                state->cursorInside = true;
+                reveal(*state);
+                if (cursorOverOverlay(*state)) {
+                    if (state->fadeTimer) {
+                        state->fadeTimer->stop();
+                    }
+                } else {
+                    scheduleFade(*state);
+                }
             }
-            show(*state);
             break;
         case QEvent::Leave:
-            scheduleHide(*state);
+            if (overlayWidget && state->area) {
+                QTimer::singleShot(0, state->area, [this, state] {
+                    if (cursorOverOverlay(*state)) {
+                        if (state->fadeTimer) {
+                            state->fadeTimer->stop();
+                        }
+                        reveal(*state);
+                    } else if (containsCursor(*state)) {
+                        state->cursorInside = true;
+                        scheduleFade(*state);
+                    } else {
+                        state->cursorInside = false;
+                        fade(*state);
+                    }
+                });
+            } else if (areaBoundary && state->area) {
+                QTimer::singleShot(0, state->area, [this, state] {
+                    if (!containsCursor(*state)) {
+                        state->cursorInside = false;
+                        fade(*state);
+                    }
+                });
+            }
             break;
         case QEvent::Wheel:
-            show(*state);
-            scheduleHide(*state);
+            state->cursorInside = containsCursor(*state);
+            reveal(*state);
+            if (cursorOverOverlay(*state)) {
+                if (state->fadeTimer) {
+                    state->fadeTimer->stop();
+                }
+            } else {
+                scheduleFade(*state);
+            }
             break;
         default:
             break;
