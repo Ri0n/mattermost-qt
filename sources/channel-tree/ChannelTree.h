@@ -101,6 +101,10 @@ public:
 	// outside the visible DM/GM sidebar limit. Materialize its server-category
 	// row first, then activate it through the same path as an ordinary click.
 	void openStoredChannel(QString channelID);
+    // A realtime direct/group channel can reach Storage before the server-backed
+    // sidebar category is refreshed. Admit it into every loaded Direct Messages
+    // category without opening the conversation or issuing a category reload.
+    void admitStoredConversation(BackendChannel& channel);
 	void addChannelToItem (QString channelID, QTreeWidgetItem* item);
 	void removeChannelToItem (QString channelID, QTreeWidgetItem* item = nullptr);
 
@@ -138,7 +142,6 @@ private:
 	void markChannelViewed(QTreeWidgetItem* item);
 	void showContextMenu (const QPoint& pos);
 	void handleChannelLeave();
-    void handleConversationChannelAvailable(BackendChannel& channel);
 	void refreshTeamSidebar(Backend& backend, BackendTeam& team);
 	void renderTeamSidebar(Backend& backend, TeamItem& teamItem,
 	                       const SidebarTeamState& state);
