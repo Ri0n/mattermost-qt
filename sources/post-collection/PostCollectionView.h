@@ -21,8 +21,9 @@ class BackendPost;
 /**
  * Virtualized cross-conversation post collection used by Saved and Search.
  *
- * Collection ordering is endpoint authority only. Entries keep their original
- * channel/thread identity and never become a fake BackendChannel timeline.
+ * Collection ordering and pagination are endpoint authority only. Entries keep
+ * their original channel/thread identity and never become a fake BackendChannel
+ * timeline; LongListWidget only virtualizes the resulting collection order.
  */
 class PostCollectionView final : public QWidget
 {
