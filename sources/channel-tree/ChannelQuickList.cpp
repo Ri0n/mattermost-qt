@@ -187,10 +187,12 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
         }
     });
 
+    // Team/channel population is the first point at which the complete set of
+    // team ids required by the CRT endpoint is authoritative. Always seed the
+    // Following snapshot here, even if the tab is hidden; relying on a later
+    // showEvent made initial contents dependent on widget visibility timing.
     connect(backend, &Backend::onAllTeamChannelsPopulated, this, [this] {
-        if (isVisible()) {
-            scheduleThreadRefresh();
-        }
+        scheduleThreadRefresh();
     });
 
     auto& followService = ThreadFollowService::instance(*backend);
@@ -280,7 +282,7 @@ void ChannelQuickList::scheduleThreadRefresh()
 
 void ChannelQuickList::refreshThreads()
 {
-    if (!backend || !isVisible()) {
+    if (!backend) {
         return;
     }
     if (threadRefreshInFlight) {
