@@ -28,6 +28,8 @@
 #include <QTextBrowser>
 #include <QTextDocument>
 
+#include "ChatArea.h"
+#include "navigation/AppNavigationService.h"
 #include "post/MessageFormatter.h"
 #include "ui/PresenceAvatarLabel.h"
 
@@ -272,6 +274,16 @@ void ChannelHeaderTextLabel::openLink(const QUrl& url)
     if (linkHandler) {
         linkHandler(url);
         return;
+    }
+
+    // The header is specific to ChatArea, so use its semantic navigation as the
+    // default route. AppNavigationService keeps external URLs in the browser and
+    // handles local channel/DM/permalink URLs inside the application.
+    for (QWidget* host = parentWidget(); host; host = host->parentWidget()) {
+        if (auto* area = qobject_cast<ChatArea*>(host)) {
+            AppNavigationService::instance(area->getBackend()).openUrl(url);
+            return;
+        }
     }
     QDesktopServices::openUrl(url);
 }
