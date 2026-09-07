@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: chatgpt/saved-search-collections
-      - name: Apply fixes
+      - name: Apply fix
         shell: bash
         run: |
           python3 - <<'PY'
@@ -23,47 +23,22 @@ jobs:
 
           path = Path('sources/post-collection/PostCollectionView.cpp')
           text = path.read_text()
-
-          old = '''    explicit CollectionList(PostCollectionView& owner, QWidget* parent)
-              : LongListWidget(parent)
-              , owner(owner)
-          '''
-          new = '''    explicit CollectionList(PostCollectionView& collectionOwner, QWidget* parent)
-              : LongListWidget(parent)
-              , owner(collectionOwner)
-          '''
-          if old not in text:
-              raise SystemExit('CollectionList constructor anchor not found')
-          text = text.replace(old, new, 1)
-
-          old = '''            guard->finishPendingRangeRequests();
-              guard->updateStatus();
-              return;
-          }
-          '''
-          new = '''            guard->finishPendingRangeRequests();
-              if (guard->statusLabel) {
-                  const int count = static_cast<int>(guard->posts.size());
-                  if (count > 0) {
-                      guard->statusLabel->setText(
-                          guard->tr("%1 messages loaded — loading more failed").arg(count));
-                  } else {
-                      guard->statusLabel->setText(guard->mode == Mode::Saved
-                          ? guard->tr("Could not load saved messages.")
-                          : guard->tr("Search failed."));
-                  }
-              }
-              return;
-          }
-          '''
-          if old not in text:
-              raise SystemExit('collection failure-status anchor not found')
-          path.write_text(text.replace(old, new, 1))
+          replacements = [
+              ('explicit CollectionList(PostCollectionView& owner, QWidget* parent)',
+               'explicit CollectionList(PostCollectionView& collectionOwner, QWidget* parent)'),
+              (', owner(owner)', ', owner(collectionOwner)'),
+          ]
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'unexpected anchor count for {old!r}: {count}')
+              text = text.replace(old, new, 1)
+          path.write_text(text)
           PY
 
           rm .github/workflows/fix-collection-owner.yml
           git config user.name 'Sergei Ilinykh'
           git config user.email 'rion4ik@gmail.com'
           git add -A
-          git commit -m 'Fix collection lambda ownership and failure status'
+          git commit -m 'Fix collection lambda ownership'
           git push origin HEAD:chatgpt/saved-search-collections
