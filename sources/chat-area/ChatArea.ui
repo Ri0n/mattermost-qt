@@ -108,7 +108,6 @@
     <widget class="Mattermost::ChatLogWidget" name="listWidget">
      <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Expanding"><horstretch>0</horstretch><verstretch>1</verstretch></sizepolicy></property>
      <property name="focusPolicy"><enum>Qt::ClickFocus</enum></property>
-     <property name="frameShape"><enum>QFrame::NoFrame</enum></property>
     </widget>
    </item>
    <item>
