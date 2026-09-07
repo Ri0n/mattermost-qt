@@ -66,7 +66,7 @@ private slots:
             alice.displayText = QStringLiteral("Alice Example");
             alice.insertText = QStringLiteral("alice");
             alice.detailText = QStringLiteral("@alice");
-            alice.filterKeys = {QStringLiteral("Example")};
+            alice.filterKeys = QStringList {QStringLiteral("Example")};
             return QVector<InteractiveTextEdit::CompletionCandidate> {alice};
         };
         editor.setCompletionRules({std::move(rule)});
