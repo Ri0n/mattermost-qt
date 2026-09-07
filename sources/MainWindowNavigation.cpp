@@ -100,6 +100,11 @@ void MainWindow::openChannelPost(const QString& channelId,
     if (!area || &area->getChannel() != channel || postId.isEmpty()) {
         return;
     }
+
+    // openStoredChannel() may synchronously activate/init the ChatArea and queue
+    // its weak default "show newest" position. Invalidate that intent now,
+    // before this function queues the actual semantic navigation work.
+    area->preparePostNavigation();
     logJumpState("after-open-channel", area, postId);
 
     // A permalink can point directly at a thread reply. Replies deliberately do
@@ -119,6 +124,9 @@ void MainWindow::openChannelPost(const QString& channelId,
             area->threadsAreas.insert(threadArea);
         }
 
+        // The thread constructor/init path also queues its default newest
+        // position. The explicit reply jump has stronger intent.
+        threadArea->preparePostNavigation();
         threadArea->show();
         threadArea->raise();
         threadArea->activateWindow();
