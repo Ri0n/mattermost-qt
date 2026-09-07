@@ -21,8 +21,8 @@
 
 #include <QMouseEvent>
 
-#include "chat-area/post/ReactionChipStyle.h"
 #include "backend/types/BackendPost.h"
+#include "chat-area/post/ReactionChipStyle.h"
 #include "ui/EmojiPresentation.h"
 #include "ui_PostReaction.h"
 
@@ -35,9 +35,12 @@ PostReaction::PostReaction (const QString& emojiName, const QString& emojiValue,
 {
     ui->setupUi (this);
 
+    const QFont reactionFont = EmojiPresentation::fontForMode(
+        ui->emoji->font(), EmojiPresentation::Mode::Reaction);
+    ui->emoji->setFont(reactionFont);
     const QString emojiWidgetValue = EmojiPresentation::normalizeHtml(
         emojiValue,
-        ui->emoji->font(),
+        reactionFont,
         EmojiPresentation::Mode::Reaction);
     ui->emoji->setText (emojiWidgetValue);
     ui->count->setText (QString::number (reactionData.size()));
