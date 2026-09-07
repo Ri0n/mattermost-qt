@@ -20,41 +20,33 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           repo = Path('sources/backend/PostRepository.cpp')
           text = repo.read_text()
-          old = '''    const int returnedCount = order.isEmpty()
-              ? static_cast<int>(result.posts.size()) : order.size();
-          result.hasMore = perPage > 0 && returnedCount >= perPage;
-          result.success = true;
-          '''
-          new = '''    const int returnedCount = order.isEmpty()
+          pattern = re.compile(
+              r'(?m)^\s*const int returnedCount = order\.isEmpty\(\)\n'
+              r'\s*\? static_cast<int>\(result\.posts\.size\(\)\) : order\.size\(\);\n'
+              r'\s*result\.hasMore = perPage > 0 && returnedCount >= perPage;\n'
+              r'\s*result\.success = true;')
+          replacement = '''    const int returnedCount = order.isEmpty()
               ? static_cast<int>(result.posts.size()) : order.size();
           result.completeResultSet = perPage > 0 && returnedCount > perPage;
           result.hasMore = !result.completeResultSet
               && perPage > 0 && returnedCount >= perPage;
-          result.success = true;
-          '''
-          if text.count(old) != 1:
-              raise SystemExit(f'PostRepository collection anchor count: {text.count(old)}')
-          repo.write_text(text.replace(old, new, 1))
+          result.success = true;'''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'PostRepository collection regex count: {count}')
+          repo.write_text(text)
 
           cmake = Path('tests/CMakeLists.txt')
           text = cmake.read_text()
-          old = '''add_executable(message-text-edit-widget-test
-              MessageTextEditWidgetTest.cpp
-              "${CMAKE_SOURCE_DIR}/sources/chat-area/outgoing-post/MessageTextEditWidget.cpp"
-          )
-          '''
-          new = '''add_executable(message-text-edit-widget-test
-              MessageTextEditWidgetTest.cpp
-              "${CMAKE_SOURCE_DIR}/sources/chat-area/outgoing-post/MessageTextEditWidget.cpp"
-              "${CMAKE_SOURCE_DIR}/sources/widgets/InteractiveTextEdit.cpp"
-          )
-          '''
-          if text.count(old) != 1:
-              raise SystemExit(f'message text test target anchor count: {text.count(old)}')
-          cmake.write_text(text.replace(old, new, 1))
+          source = '    "${CMAKE_SOURCE_DIR}/sources/chat-area/outgoing-post/MessageTextEditWidget.cpp"\n'
+          addition = source + '    "${CMAKE_SOURCE_DIR}/sources/widgets/InteractiveTextEdit.cpp"\n'
+          if text.count(source) != 1:
+              raise SystemExit(f'message text source line count: {text.count(source)}')
+          cmake.write_text(text.replace(source, addition, 1))
           PY
 
           rm .github/workflows/finalize-interactive-search.yml
