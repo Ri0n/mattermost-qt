@@ -19,12 +19,11 @@
 
 #include "ChatArea.h"
 
-#include <QDockWidget>
 #include <QIcon>
 #include <QPalette>
 #include <QPointer>
-#include <QPushButton>
 #include <QResizeEvent>
+#include <QStackedWidget>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -32,7 +31,6 @@
 #include "AbstractPostSource.h"
 #include "ChannelPostSource.h"
 #include "ChatLogWidget.h"
-#include "PinnedPostsList.h"
 #include "ThreadPostSource.h"
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
@@ -43,7 +41,8 @@
 #include "channel-tree/ChannelItemWidget.h"
 #include "channel-tree-dialogs/ViewChannelMembersListDialog.h"
 #include "log.h"
-#include "post/PostWidget.h"
+#include "navigation/AppNavigationService.h"
+#include "post-collection/PostCollectionView.h"
 #include "ui/IconUtils.h"
 #include "ui_ChatArea.h"
 
@@ -51,8 +50,7 @@ namespace Mattermost {
 
 namespace {
 
-constexpr int HeaderActionIconExtent = 18;
-constexpr int HeaderIconButtonExtent = 28;
+constexpr int HeaderActionIconExtent = 16;
 
 } // namespace
 
@@ -67,7 +65,6 @@ ChatArea::ChatArea(Backend& backend,
     , backend(backend)
     , channel(channel)
     , treeItem(treeItem)
-    , pinnedPostsDockWidget(nullptr)
     , unreadMessagesCount(0)
     , isThread(false)
     , initialized(false)
@@ -76,6 +73,7 @@ ChatArea::ChatArea(Backend& backend,
     ui->setupUi(this);
     ui->listWidget->configure(backend, *this);
     setupHeaderUi();
+    setupPinnedPostsView();
     setupComposerUi();
 
     ui->outgoingPostCreator->init(backend, channel, *ui->listWidget,
@@ -137,7 +135,6 @@ ChatArea::ChatArea(Backend& backend,
     , backend(backend)
     , channel(channel)
     , treeItem(nullptr)
-    , pinnedPostsDockWidget(nullptr)
     , unreadMessagesCount(0)
     , isThread(true)
     , initialized(false)
@@ -173,8 +170,6 @@ ChatArea::ChatArea(Backend& backend,
         threadFollowButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
         threadFollowButton->setIconSize(QSize(HeaderActionIconExtent,
                                               HeaderActionIconExtent));
-        threadFollowButton->setFixedSize(HeaderIconButtonExtent,
-                                         HeaderIconButtonExtent);
         threadFollowButton->setCursor(Qt::PointingHandCursor);
         threadFollowButton->setEnabled(false);
         threadFollowButton->setProperty("following", false);
@@ -245,18 +240,65 @@ ChatArea::~ChatArea()
 
 void ChatArea::setupHeaderUi()
 {
-    ui->usersButton->setFlat(true);
-    ui->usersButton->setCursor(Qt::PointingHandCursor);
-    ui->usersButton->setIconSize(QSize(HeaderActionIconExtent,
-                                       HeaderActionIconExtent));
+    auto configureCountButton = [](QToolButton& button) {
+        button.setAutoRaise(true);
+        button.setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        button.setIconSize(QSize(HeaderActionIconExtent,
+                                 HeaderActionIconExtent));
+        button.setCursor(Qt::PointingHandCursor);
+    };
 
-    ui->pinnedPostsButton->setFlat(true);
-    ui->pinnedPostsButton->setCursor(Qt::PointingHandCursor);
-    ui->pinnedPostsButton->setIconSize(QSize(HeaderActionIconExtent,
-                                             HeaderActionIconExtent));
+    configureCountButton(*ui->usersButton);
+    configureCountButton(*ui->pinnedPostsButton);
+    ui->pinnedPostsButton->setCheckable(true);
 
-    ui->loadOldPosts->setFlat(true);
+    ui->loadOldPosts->setAutoRaise(true);
+    ui->propertieslLayout->setSpacing(2);
     refreshHeaderActionIcons();
+}
+
+void ChatArea::setupPinnedPostsView()
+{
+    if (isThread || contentStack || !ui || !ui->listWidget) {
+        return;
+    }
+
+    const int listIndex = ui->verticalLayout->indexOf(ui->listWidget);
+    if (listIndex < 0) {
+        return;
+    }
+
+    contentStack = new QStackedWidget(this);
+    ui->verticalLayout->removeWidget(ui->listWidget);
+    contentStack->addWidget(ui->listWidget);
+
+    pinnedPostsView = new PostCollectionView(
+        backend, PostCollectionView::Mode::Pinned, contentStack);
+    contentStack->addWidget(pinnedPostsView);
+    contentStack->setCurrentWidget(ui->listWidget);
+    ui->verticalLayout->insertWidget(listIndex, contentStack, 1);
+
+    connect(pinnedPostsView, &PostCollectionView::postActivated,
+            this, [this](const QString& postId) {
+        showPinnedPosts(false);
+        AppNavigationService::instance(backend).openPost(postId);
+    });
+    pinnedPostsView->activatePinned(channel);
+}
+
+void ChatArea::showPinnedPosts(bool show)
+{
+    if (!contentStack || !pinnedPostsView || !ui || !ui->listWidget) {
+        return;
+    }
+
+    if (show && channel.pinnedPosts.empty()) {
+        show = false;
+    }
+    ui->pinnedPostsButton->setChecked(show);
+    contentStack->setCurrentWidget(show
+        ? static_cast<QWidget*>(pinnedPostsView)
+        : static_cast<QWidget*>(ui->listWidget));
 }
 
 void ChatArea::refreshHeaderActionIcons()
@@ -387,39 +429,16 @@ void ChatArea::init()
             }
         }));
 
-        signalConnections.push_back(connect(ui->usersButton, &QPushButton::clicked,
+        signalConnections.push_back(connect(ui->usersButton, &QToolButton::clicked,
                                             this, [this] {
             auto* dialog = new ViewChannelMembersListDialog(backend, channel, this);
             dialog->show();
         }));
 
         signalConnections.push_back(connect(ui->pinnedPostsButton,
-                                            &QPushButton::clicked,
-                                            this, [this] {
-            if (pinnedPostsDockWidget) {
-                delete pinnedPostsDockWidget;
-                pinnedPostsDockWidget = nullptr;
-                return;
-            }
-
-            pinnedPostsDockWidget = new QDockWidget(this);
-            pinnedPostsDockWidget->setFloating(true);
-            pinnedPostsDockWidget->setFeatures(QDockWidget::DockWidgetMovable);
-            auto* pinnedPostsList = new PinnedPostsList(this);
-            pinnedPostsDockWidget->setWidget(pinnedPostsList);
-
-            for (BackendPost& post : channel.pinnedPosts) {
-                pinnedPostsList->addPost(
-                    new PostWidget(backend, post, pinnedPostsList, this, nullptr));
-            }
-
-            pinnedPostsDockWidget->setTitleBarWidget(new QWidget());
-            pinnedPostsDockWidget->move(
-                mapToGlobal(ui->pinnedPostsButton->pos()) + QPoint(0, 40));
-            pinnedPostsDockWidget->setFixedWidth(
-                geometry().size().width() - ui->pinnedPostsButton->pos().x() - 30);
-            pinnedPostsDockWidget->setFixedHeight(300);
-            ui->headerLayout->addWidget(pinnedPostsDockWidget);
+                                            &QToolButton::clicked,
+                                            this, [this](bool checked) {
+            showPinnedPosts(checked);
         }));
     }
 
@@ -504,7 +523,17 @@ BackendChannel& ChatArea::getChannel()
 
 void ChatArea::updatePinnedPostsButton()
 {
-    if (isThread || channel.pinnedPosts.empty()) {
+    if (isThread) {
+        ui->pinnedPostsButton->hide();
+        return;
+    }
+
+    if (pinnedPostsView) {
+        pinnedPostsView->activatePinned(channel);
+    }
+
+    if (channel.pinnedPosts.empty()) {
+        showPinnedPosts(false);
         ui->pinnedPostsButton->hide();
         return;
     }
@@ -548,10 +577,6 @@ void ChatArea::onActivate()
 
 void ChatArea::onDeactivate()
 {
-    if (pinnedPostsDockWidget) {
-        delete pinnedPostsDockWidget;
-        pinnedPostsDockWidget = nullptr;
-    }
     deinit();
 }
 
@@ -562,11 +587,8 @@ void ChatArea::onMainWindowActivate()
 
 void ChatArea::onMove(QPoint)
 {
-    if (!pinnedPostsDockWidget) {
-        return;
-    }
-    pinnedPostsDockWidget->move(
-        mapToGlobal(ui->pinnedPostsButton->pos()) + QPoint(0, 40));
+    // Pinned messages are embedded in the ChatArea; no floating child follows
+    // the main-window position anymore.
 }
 
 void ChatArea::moveOnListTop()
@@ -652,6 +674,11 @@ void ChatArea::goToPost(const QString& postId)
     if (postId.isEmpty() || !ui || !ui->listWidget) {
         return;
     }
+
+    // Any semantic post navigation returns the channel content surface from the
+    // optional pinned collection to the canonical timeline first. The hidden
+    // ChatLogWidget has stayed alive, so this does not disturb its viewport.
+    showPinnedPosts(false);
 
     // Opening/reactivating a channel schedules a weak "show newest" position on
     // the next event-loop turn. Explicit post navigation supersedes that intent,
