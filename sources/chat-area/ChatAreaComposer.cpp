@@ -153,6 +153,7 @@ void ChatArea::changeEvent(QEvent* event)
             ui->addEmojiButton->update();
             ui->attachButton->update();
             ui->sendButton->update();
+            refreshHeaderActionIcons();
         }
     }
 }
