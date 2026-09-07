@@ -10,6 +10,7 @@
 #include "backend/types/BackendPost.h"
 #include "post/InteractivePostWidget.h"
 #include "post/PostWidget.h"
+#include "ui/OverlayScrollBarManager.h"
 
 namespace Mattermost {
 
@@ -88,6 +89,10 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
             << " source=" << sourceName(postSource)
             << " range=[" << first << ',' << last << ']'
             << " count=" << materializedCount();
+        if (_initialScrollBarPulsePending && first >= 0 && last >= first
+            && OverlayScrollBarManager::pulse(*this)) {
+            _initialScrollBarPulsePending = false;
+        }
         scheduleNavigationFinalize();
     });
 
