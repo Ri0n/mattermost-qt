@@ -53,6 +53,17 @@ CustomEmojiService::CustomEmojiService(Backend& backend)
     connect(&EmojiRegistryNotifier::instance(),
             &EmojiRegistryNotifier::customEmojiRequested,
             this, &CustomEmojiService::ensureEmoji);
+
+    // HTTPConnector requests can be cancelled during reconnect. Make names
+    // eligible for another lookup instead of leaving a cancelled request stuck
+    // in the in-flight/missing sets forever. This also lets newly-created custom
+    // emoji become discoverable after a reconnect.
+    connect(&_backend, &Backend::onWebSocketConnect, this, [this] {
+        _pendingNames.clear();
+        _inFlightNames.clear();
+        _missingNames.clear();
+        _flushScheduled = false;
+    });
 }
 
 bool CustomEmojiService::isValidCustomEmojiName(const QString& name)
@@ -64,8 +75,9 @@ bool CustomEmojiService::isValidCustomEmojiName(const QString& name)
 
 void CustomEmojiService::ensureEmoji(const QString& name)
 {
+    // EmojiInfo emits customEmojiRequested only after its local lookup misses,
+    // so looking it up again here would recurse back into this slot.
     if (!isValidCustomEmojiName(name)
-        || EmojiInfo::findByName(name)
         || _pendingNames.contains(name)
         || _inFlightNames.contains(name)
         || _missingNames.contains(name)) {
@@ -107,12 +119,14 @@ void CustomEmojiService::flushPendingNames()
             const QJsonObject object = value.toObject();
             const QString id = object.value(QStringLiteral("id")).toString();
             const QString name = object.value(QStringLiteral("name")).toString();
-            if (id.isEmpty() || name.isEmpty()) {
+            if (id.isEmpty() || name.isEmpty() || !requested.contains(name)) {
                 continue;
             }
 
             found.insert(name);
-            _inFlightNames.remove(name);
+            // Keep the name in-flight until its cached or downloaded image has
+            // actually been registered in EmojiInfo. Otherwise another render
+            // pass can issue a duplicate metadata/image request in this gap.
             ensureImage(id, name);
         }
 
@@ -131,13 +145,17 @@ void CustomEmojiService::ensureImage(const QString& id, const QString& name)
     QDir cacheDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation));
     QDir emojiDir(cacheDir.filePath(QStringLiteral("custom-emoji")));
     if (!emojiDir.exists() && !emojiDir.mkpath(QStringLiteral("."))) {
+        _inFlightNames.remove(name);
         return;
     }
 
+    // Keep the existing cache layout. The .gif suffix is historical; Qt image
+    // readers identify PNG/JPEG/GIF data by content when QTextDocument loads it.
     const QString filePath = emojiDir.filePath(id + QStringLiteral(".gif"));
     const QFileInfo cached(filePath);
     if (cached.exists() && cached.isFile() && cached.size() > 0) {
         EmojiInfo::addCustomEmoji(name, filePath);
+        _inFlightNames.remove(name);
         return;
     }
 
@@ -146,21 +164,27 @@ void CustomEmojiService::ensureImage(const QString& id, const QString& name)
     request.setAttribute(QNetworkRequest::BackgroundRequestAttribute, true);
 
     _httpConnector.get(request, HttpResponseCallback(
-        [name, filePath](QVariant, QByteArray data) {
+        [this, name, filePath](QVariant, QByteArray data) {
             if (data.isEmpty()) {
+                _inFlightNames.remove(name);
                 return;
             }
 
             QFile file(filePath);
             if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                _inFlightNames.remove(name);
                 return;
             }
             if (file.write(data) != data.size()) {
-                file.remove();
+                file.close();
+                QFile::remove(filePath);
+                _inFlightNames.remove(name);
                 return;
             }
             file.close();
+
             EmojiInfo::addCustomEmoji(name, filePath);
+            _inFlightNames.remove(name);
         }));
 }
 
