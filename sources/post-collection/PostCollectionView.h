@@ -3,6 +3,7 @@
 #include <memory>
 #include <vector>
 
+#include <QJsonObject>
 #include <QSet>
 #include <QString>
 #include <QVector>
@@ -10,13 +11,13 @@
 
 class QComboBox;
 class QLabel;
-class QLineEdit;
 class QToolButton;
 
 namespace Mattermost {
 
 class Backend;
 class BackendPost;
+class InteractiveTextEdit;
 
 /**
  * Virtualized cross-conversation post collection used by Saved and Search.
@@ -45,11 +46,14 @@ private:
 
     void buildUi();
     void rebuildSearchScopes(const QString& preferredTeamId);
+    void configureSearchCompletions();
     void insertSearchToken(const QString& token);
     void startSearch();
     void resetCollection();
     void loadNextPage();
-    void finishPendingRangeRequests();
+    void appendPosts(const QVector<QJsonObject>& rawPosts);
+    bool appendBufferedPage();
+    bool hasMoreResults() const;
     QWidget* createRow(int index, QWidget* parent);
     int indexOfPost(const QString& postId) const;
     QString originLabel(const BackendPost& post) const;
@@ -60,22 +64,27 @@ private:
     Mode mode;
     CollectionList* list = nullptr;
     QLabel* statusLabel = nullptr;
-    QLineEdit* searchEdit = nullptr;
+    InteractiveTextEdit* searchEdit = nullptr;
     QComboBox* scopeCombo = nullptr;
     QToolButton* searchAction = nullptr;
 
     std::vector<std::unique_ptr<BackendPost>> posts;
     QSet<QString> postIds;
-    QVector<QPair<int, int>> pendingRangeRequests;
+
+    // A database-backed Mattermost search can ignore page/per_page and return
+    // a large bounded snapshot. Keep that snapshot off-screen and reveal only
+    // one normal collection page per explicit user scroll.
+    QVector<QJsonObject> bufferedPosts;
+    int bufferedOffset = 0;
 
     QString activeTerms;
     QString activeTeamId;
     quint64 generation = 0;
     int nextPage = 0;
     bool loading = false;
-    bool hasMore = false;
+    bool serverHasMore = false;
 
-    static constexpr int PageSize = 50;
+    static constexpr int PageSize = 10;
 };
 
 } // namespace Mattermost
