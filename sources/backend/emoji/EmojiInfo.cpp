@@ -24,10 +24,11 @@
 
 #include "EmojiInfo.h"
 
-#include <QApplication>
 #include <QDebug>
-#include <QFontMetrics>
+#include <QDir>
 #include <QMap>
+#include <QSet>
+#include <QUrl>
 
 #include "EmojiRegistryNotifier.h"
 
@@ -41,7 +42,7 @@ extern uint32_t nextEmojiSeq;
 
 namespace {
 
-constexpr qreal inlineEmojiScale = 1.3;
+QSet<QString> customEmojiPaths;
 
 bool isValidCustomEmojiName(const QString& name)
 {
@@ -71,15 +72,17 @@ void requestCustomEmoji(const QString& name)
     }
 }
 
-int inlineEmojiExtent()
+QString normalizedCustomEmojiPath(QString path)
 {
-    QFont font = QApplication::font();
-    if (font.pointSizeF() > 0.0) {
-        font.setPointSizeF(font.pointSizeF() * inlineEmojiScale);
-    } else if (font.pixelSize() > 0) {
-        font.setPixelSize(qRound(font.pixelSize() * inlineEmojiScale));
+    if (path.isEmpty()) {
+        return {};
     }
-    return qMax(1, QFontMetrics(font).height());
+
+    const QUrl url(path);
+    if (url.isLocalFile()) {
+        path = url.toLocalFile();
+    }
+    return QDir::cleanPath(QDir::fromNativeSeparators(path));
 }
 
 } // namespace
@@ -196,23 +199,34 @@ QVector<Emoji> EmojiInfo::getAllEmojis (uint32_t category, uint32_t skinTone)
 
 void EmojiInfo::addCustomEmoji (const QString& emojiName, const QString& emojiPath)
 {
+    const QString normalizedPath = normalizedCustomEmojiPath(emojiPath);
     const auto existing = emojiMap.constFind(emojiName);
     if (existing != emojiMap.cend()
         && getEmojiCategory(existing.value()) == EmojiCategory::custom) {
+        if (!normalizedPath.isEmpty()) {
+            customEmojiPaths.insert(normalizedPath);
+        }
         return;
     }
 
-    const int extent = inlineEmojiExtent();
 	emojiVecNoSkinVariadic[EmojiCategory::custom].push_back (
         Emoji {emojiName,
-               QStringLiteral(" <img src=\"%1\" width=%2 height=%2> ")
-                   .arg(emojiPath)
-                   .arg(extent)});
+               QStringLiteral(" <img src=\"%1\"> ")
+                   .arg(emojiPath.toHtmlEscaped())});
 	emojiMap[emojiName] = nextEmojiSeq;
 	++nextEmojiSeq;
 	++lastCategorySeq[EmojiCategory::custom];
+    if (!normalizedPath.isEmpty()) {
+        customEmojiPaths.insert(normalizedPath);
+    }
 
     emit EmojiRegistryNotifier::instance().customEmojiAdded(emojiName);
+}
+
+bool EmojiInfo::isCustomEmojiPath(const QString& emojiPath)
+{
+    const QString normalizedPath = normalizedCustomEmojiPath(emojiPath);
+    return !normalizedPath.isEmpty() && customEmojiPaths.contains(normalizedPath);
 }
 
 } /* namespace Mattermost */
