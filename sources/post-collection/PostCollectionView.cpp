@@ -20,6 +20,7 @@
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
 #include "backend/PostRepository.h"
+#include "backend/QByteArrayCreator.h"
 #include "backend/Storage.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
@@ -732,7 +733,7 @@ void PostCollectionView::unpinPost(const QString& postId, QToolButton* button)
     const QString channelId = pinnedChannel->id;
     QPointer<PostCollectionView> guard(this);
     NetworkRequest request(QStringLiteral("posts/") + postId + QStringLiteral("/unpin"));
-    actionConnector.post(request, QByteArray(), HttpResponseCallback(
+    actionConnector.post(request, QByteArrayCreator(QByteArray()), HttpResponseCallback(
         [guard, channelId](const QJsonDocument&) {
             if (!guard || !guard->pinnedChannel
                 || guard->pinnedChannel->id != channelId) {
