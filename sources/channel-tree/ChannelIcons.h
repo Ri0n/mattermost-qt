@@ -42,6 +42,32 @@ inline QIcon channel()
     return QIcon(pixmap);
 }
 
+inline QIcon privateChannel()
+{
+    QPixmap pixmap(24, 24);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const QColor color = QApplication::palette().color(QPalette::Text);
+    QPen pen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+
+    QPainterPath shackle;
+    shackle.moveTo(8.0, 11.0);
+    shackle.lineTo(8.0, 8.5);
+    shackle.cubicTo(8.0, 5.6, 10.0, 4.0, 12.0, 4.0);
+    shackle.cubicTo(14.0, 4.0, 16.0, 5.6, 16.0, 8.5);
+    shackle.lineTo(16.0, 11.0);
+    painter.drawPath(shackle);
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+    painter.drawRoundedRect(QRectF(6.0, 10.0, 12.0, 10.0), 2.0, 2.0);
+    return QIcon(pixmap);
+}
+
 inline QIcon groupConversation()
 {
     QIcon themed = QIcon::fromTheme(QStringLiteral("system-users"));
