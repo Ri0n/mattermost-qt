@@ -30,6 +30,20 @@ void ChannelTree::openStoredChannel(QString channelID)
         return;
     }
 
+    // A direct_added event can populate Storage before the server category
+    // snapshot catches up. Reconcile that conversation with every loaded
+    // Direct Messages category first; in the normal realtime path this also
+    // materializes the row immediately.
+    if (channel->type == BackendChannel::directChannel
+        || channel->type == BackendChannel::groupChannel) {
+        admitStoredConversation(*channel);
+        existing = channelToItemMap.constFind(channelID);
+        if (existing != channelToItemMap.cend() && !existing.value().isEmpty()) {
+            openChannel(std::move(channelID));
+            return;
+        }
+    }
+
     auto& sidebar = SidebarService::instance(*backendForSidebar);
 
     // Prefer the Direct Messages category when a channel occurs in more than
