@@ -35,15 +35,19 @@ ThemeIconButton::ThemeIconButton(QWidget* parent)
 {
     setCursor(Qt::PointingHandCursor);
 
-    busyAnimationTimer.setInterval(BusyAnimationIntervalMs);
-    connect(&busyAnimationTimer, &QTimer::timeout, this, [this] {
-        busyPhase = (busyPhase + 1) % BusyAnimationSteps;
+    _busyAnimationTimer.setInterval(BusyAnimationIntervalMs);
+    connect(&_busyAnimationTimer, &QTimer::timeout, this, [this] {
+        _busyPhase = (_busyPhase + 1) % BusyAnimationSteps;
         update();
     });
 }
 
 QString ThemeIconButton::symbolicResource() const
 {
+    const QString configuredResource = property(ThemeIconResourceProperty).toString();
+    if (!configuredResource.isEmpty()) {
+        return configuredResource;
+    }
     if (objectName() == QStringLiteral("addEmojiButton")) {
         return QStringLiteral(":/icons/emoji");
     }
@@ -55,6 +59,9 @@ QString ThemeIconButton::symbolicResource() const
 
 bool ThemeIconButton::isBusy() const
 {
+    if (property(ThemeIconBusyProperty).toBool()) {
+        return true;
+    }
     return objectName() == QStringLiteral("attachButton")
         && (!property(ComposerBusyTextProperty).toString().isEmpty()
             || property(ComposerMessageLoadingProperty).toBool());
@@ -63,14 +70,22 @@ bool ThemeIconButton::isBusy() const
 void ThemeIconButton::syncBusyAnimation()
 {
     if (isBusy()) {
-        if (!busyAnimationTimer.isActive()) {
-            busyAnimationTimer.start();
+        if (!_busyAnimationTimer.isActive()) {
+            _busyAnimationTimer.start();
         }
     } else {
-        busyAnimationTimer.stop();
-        busyPhase = 0;
+        _busyAnimationTimer.stop();
+        _busyPhase = 0;
     }
     update();
+}
+
+void ThemeIconButton::invalidateRenderedIcon()
+{
+    _renderedTint.clear();
+    _renderedResource.clear();
+    _renderedSize = {};
+    _renderedPixmap = {};
 }
 
 bool ThemeIconButton::event(QEvent* event)
@@ -79,13 +94,16 @@ bool ThemeIconButton::event(QEvent* event)
     const bool result = QPushButton::event(event);
 
     if (type == QEvent::DynamicPropertyChange) {
+        invalidateRenderedIcon();
         syncBusyAnimation();
-    } else if (type == QEvent::Enter
-               || type == QEvent::Leave
-               || type == QEvent::EnabledChange
-               || type == QEvent::PaletteChange
+    } else if (type == QEvent::PaletteChange
                || type == QEvent::ApplicationPaletteChange
                || type == QEvent::StyleChange) {
+        invalidateRenderedIcon();
+        update();
+    } else if (type == QEvent::Enter
+               || type == QEvent::Leave
+               || type == QEvent::EnabledChange) {
         update();
     }
     return result;
@@ -112,7 +130,7 @@ void ThemeIconButton::paintEvent(QPaintEvent* event)
                           (height() - indicatorExtent) / 2.0 + 2.5,
                           indicatorExtent - 5.0,
                           indicatorExtent - 5.0);
-        painter.drawArc(ring, (-90 + busyPhase * 30) * 16, 105 * 16);
+        painter.drawArc(ring, (-90 + _busyPhase * 30) * 16, 105 * 16);
         return;
     }
 
@@ -127,16 +145,19 @@ void ThemeIconButton::paintEvent(QPaintEvent* event)
     if (!resource.isEmpty()) {
         const QSize targetSize = iconSize().isValid() ? iconSize() : QSize(24, 24);
         const QString desiredTint = tintKey(color);
-        if (renderedTint != desiredTint || renderedSize != targetSize) {
-            renderedPixmap = IconUtils::tintedSymbolicIcon(resource, color).pixmap(targetSize);
-            renderedTint = desiredTint;
-            renderedSize = targetSize;
+        if (_renderedTint != desiredTint
+            || _renderedResource != resource
+            || _renderedSize != targetSize) {
+            _renderedPixmap = IconUtils::tintedSymbolicIcon(resource, color).pixmap(targetSize);
+            _renderedTint = desiredTint;
+            _renderedResource = resource;
+            _renderedSize = targetSize;
         }
 
-        if (!renderedPixmap.isNull()) {
-            const QPoint topLeft((width() - renderedPixmap.width()) / 2,
-                                 (height() - renderedPixmap.height()) / 2);
-            painter.drawPixmap(topLeft, renderedPixmap);
+        if (!_renderedPixmap.isNull()) {
+            const QPoint topLeft((width() - _renderedPixmap.width()) / 2,
+                                 (height() - _renderedPixmap.height()) / 2);
+            painter.drawPixmap(topLeft, _renderedPixmap);
         }
         return;
     }
