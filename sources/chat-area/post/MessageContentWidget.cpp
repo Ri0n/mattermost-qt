@@ -230,8 +230,8 @@ public:
 
         text = new WrappedRichText([this] {
             updateGeometry();
-            if (heightChanged) {
-                heightChanged();
+            if (this->heightChanged) {
+                this->heightChanged();
             }
         }, this);
         text->setContentHtml(html);
