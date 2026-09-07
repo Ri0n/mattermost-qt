@@ -162,9 +162,9 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
             return;
         }
 
-        // The server owns followed-thread unread state. Query only while the
-        // Following page is actually visible; Attention keeps its badge current
-        // independently while this tab is hidden.
+        // The server owns followed-thread membership/read state. Reconcile it
+        // only while Following is visible; the full snapshot can be large, and
+        // showEvent refreshes it before the user can interact with the list.
         if (isVisible() && (!post.root_id.isEmpty() || post.currentUserMentioned)) {
             scheduleThreadRefresh();
         } else if (isVisible()) {
@@ -293,7 +293,7 @@ void ChannelQuickList::refreshThreads()
     threadRefreshInFlight = true;
     threadRefreshRequested = false;
     QPointer<ChannelQuickList> guard(this);
-    ThreadFollowService::instance(*backend).queryUnreadThreads(
+    ThreadFollowService::instance(*backend).queryFollowingThreads(
         [guard](QVector<ThreadSummary> threads) {
             if (!guard) {
                 return;
@@ -347,16 +347,23 @@ void ChannelQuickList::openThread(const ThreadSummary& thread)
                 return;
             }
 
-            for (auto it = guard->serverThreads.begin(); it != guard->serverThreads.end();) {
-                if (it->id == threadId) {
-                    it = guard->serverThreads.erase(it);
-                } else {
-                    ++it;
+            bool wasUnread = false;
+            for (ThreadSummary& entry : guard->serverThreads) {
+                if (entry.id != threadId) {
+                    continue;
                 }
+                wasUnread = entry.unreadReplies > 0 || entry.unreadMentions > 0;
+                entry.unreadReplies = 0;
+                entry.unreadMentions = 0;
+                entry.lastViewedAt = qMax(entry.lastViewedAt, entry.lastReplyAt);
+                break;
             }
+
             guard->pendingSince.remove(threadKey(threadId));
             guard->refresh();
-            ThreadFollowService::instance(*guard->backend).markThreadRead(teamId, threadId);
+            if (wasUnread) {
+                ThreadFollowService::instance(*guard->backend).markThreadRead(teamId, threadId);
+            }
         });
 }
 
@@ -373,6 +380,7 @@ void ChannelQuickList::refresh()
         uint64_t observedTime = 0;
         uint64_t sortTime = 0;
         bool isThread = false;
+        bool unread = false;
         bool mentioned = false;
     };
 
@@ -381,6 +389,8 @@ void ChannelQuickList::refresh()
     QSet<QString> activeKeys;
     QSet<QString> realThreadIds;
 
+    // DM/GM conversations are represented only while unread. Muted direct
+    // conversations stay out of Following (bots are a common use of mute).
     for (auto it = backend->getStorage().channels.begin();
          it != backend->getStorage().channels.end(); ++it) {
         BackendChannel* channel = it.value();
@@ -396,17 +406,21 @@ void ChannelQuickList::refresh()
         candidate.key = channelKey(channel->id);
         candidate.channel = channel;
         candidate.observedTime = sidebar.channelActivityTime(*channel);
+        candidate.unread = true;
         candidate.mentioned = sidebar.hasUnreadMention(channel->id);
         candidates.push_back(std::move(candidate));
     }
 
+    // Unlike the old unread-only queue, Following mirrors Mattermost's default
+    // Followed threads view: every followed thread remains present. Unread
+    // threads are promoted above the read history and keep a stable position for
+    // the lifetime of that unread cycle.
     for (const ThreadSummary& thread : std::as_const(serverThreads)) {
-        if (thread.id.isEmpty() || thread.channelId.isEmpty()
-            || (thread.unreadReplies <= 0 && thread.unreadMentions <= 0)) {
+        if (thread.id.isEmpty() || thread.channelId.isEmpty()) {
             continue;
         }
         BackendChannel* channel = backend->getStorage().getChannelById(thread.channelId);
-        if (!channel || sidebar.isChannelMuted(*channel)) {
+        if (!channel) {
             continue;
         }
 
@@ -416,6 +430,7 @@ void ChannelQuickList::refresh()
         candidate.thread = thread;
         candidate.observedTime = thread.lastReplyAt;
         candidate.isThread = true;
+        candidate.unread = thread.unreadReplies > 0 || thread.unreadMentions > 0;
         candidate.mentioned = thread.unreadMentions > 0;
         candidates.push_back(std::move(candidate));
     }
@@ -425,7 +440,7 @@ void ChannelQuickList::refresh()
             continue;
         }
         BackendChannel* channel = backend->getStorage().getChannelById(it->channelId);
-        if (!channel || sidebar.isChannelMuted(*channel)) {
+        if (!channel) {
             continue;
         }
 
@@ -434,6 +449,7 @@ void ChannelQuickList::refresh()
         candidate.thread = it.value();
         candidate.observedTime = it->lastReplyAt;
         candidate.isThread = true;
+        candidate.unread = true;
         candidate.mentioned = true;
         candidates.push_back(std::move(candidate));
     }
@@ -441,6 +457,12 @@ void ChannelQuickList::refresh()
     const uint64_t fallbackNow = static_cast<uint64_t>(QDateTime::currentMSecsSinceEpoch());
     for (Candidate& candidate : candidates) {
         activeKeys.insert(candidate.key);
+        if (!candidate.unread) {
+            pendingSince.remove(candidate.key);
+            candidate.sortTime = candidate.observedTime;
+            continue;
+        }
+
         auto sortIt = pendingSince.find(candidate.key);
         if (sortIt == pendingSince.end()) {
             const uint64_t observed = candidate.observedTime != 0
@@ -459,6 +481,9 @@ void ChannelQuickList::refresh()
     }
 
     std::sort(candidates.begin(), candidates.end(), [](const Candidate& lhs, const Candidate& rhs) {
+        if (lhs.unread != rhs.unread) {
+            return lhs.unread;
+        }
         if (lhs.sortTime != rhs.sortTime) {
             return lhs.sortTime > rhs.sortTime;
         }
@@ -476,7 +501,7 @@ void ChannelQuickList::refresh()
     for (const Candidate& candidate : candidates) {
         auto* item = new QTreeWidgetItem(this);
         item->setData(0, FollowingKeyRole, candidate.key);
-        item->setData(0, SidebarItem::UnreadRole, true);
+        item->setData(0, SidebarItem::UnreadRole, candidate.unread);
         item->setData(0, SidebarItem::MentionedRole, candidate.mentioned);
 
         if (!candidate.isThread && candidate.channel) {
