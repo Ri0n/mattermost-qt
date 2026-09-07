@@ -36,6 +36,8 @@ private:
 
     QVBoxLayout* contentLayout;
     bool dimensionsChangePending = false;
+    QString _sourceMessage;
+    bool _jumboEmojiMessage = false;
 };
 
 } // namespace Mattermost
