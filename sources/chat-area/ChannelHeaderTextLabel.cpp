@@ -25,6 +25,8 @@
 
 #include <QDesktopServices>
 #include <QEvent>
+#include <QFontMetrics>
+#include <QRegularExpression>
 #include <QSizePolicy>
 #include <QTextBrowser>
 #include <QTextDocument>
@@ -36,6 +38,65 @@
 #include "ui/PresenceAvatarLabel.h"
 
 namespace Mattermost {
+namespace {
+
+constexpr qreal HeaderInlineEmojiScale = 1.3;
+
+int inlineEmojiExtent(const QFont& baseFont)
+{
+    QFont font(baseFont);
+    if (font.pointSizeF() > 0.0) {
+        font.setPointSizeF(font.pointSizeF() * HeaderInlineEmojiScale);
+    } else if (font.pixelSize() > 0) {
+        font.setPixelSize(qRound(font.pixelSize() * HeaderInlineEmojiScale));
+    }
+    return std::max(1, QFontMetrics(font).height());
+}
+
+QString normalizeInlineEmojiSize(const QString& html, const QFont& font)
+{
+    static const QRegularExpression imageExpression(
+        QStringLiteral(R"(<img\b[^>]*>)"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression widthExpression(
+        QStringLiteral(R"(\bwidth\s*=\s*["']?\d+(?:\.\d+)?["']?)"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression heightExpression(
+        QStringLiteral(R"(\bheight\s*=\s*["']?\d+(?:\.\d+)?["']?)"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    const int extent = inlineEmojiExtent(font);
+    QString result;
+    result.reserve(html.size());
+
+    int previousEnd = 0;
+    QRegularExpressionMatchIterator matches = imageExpression.globalMatch(html);
+    while (matches.hasNext()) {
+        const QRegularExpressionMatch match = matches.next();
+        const int start = static_cast<int>(match.capturedStart());
+        const int end = static_cast<int>(match.capturedEnd());
+        result += html.mid(previousEnd, start - previousEnd);
+
+        QString tag = match.captured();
+        // MessageFormatter gives custom emoji explicit dimensions. Ordinary
+        // Markdown images keep their natural size and therefore have no such
+        // attributes; leave those untouched.
+        if (widthExpression.match(tag).hasMatch()
+            && heightExpression.match(tag).hasMatch()) {
+            tag.replace(widthExpression,
+                        QStringLiteral("width=\"%1\"").arg(extent));
+            tag.replace(heightExpression,
+                        QStringLiteral("height=\"%1\"").arg(extent));
+        }
+        result += tag;
+        previousEnd = end;
+    }
+
+    result += html.mid(previousEnd);
+    return result;
+}
+
+} // namespace
 
 ChannelHeaderTextLabel::ChannelHeaderTextLabel(QWidget* parent)
     : QLabel(parent)
@@ -114,7 +175,8 @@ void ChannelHeaderTextLabel::setText(const QString& text)
     }
 
     show();
-    formattedText = MessageFormatter::formatMessageText(text);
+    formattedText = normalizeInlineEmojiSize(
+        MessageFormatter::formatMessageText(text), font());
     QLabel::setText(formattedText);
     updateCollapsedHeight();
 
@@ -347,6 +409,9 @@ bool ChannelHeaderTextLabel::eventFilter(QObject* watched, QEvent* event)
         case QEvent::FontChange:
             if (isLabel) {
                 updateCollapsedHeight();
+                if (!sourceText.isEmpty()) {
+                    setText(sourceText);
+                }
             }
             break;
         case QEvent::PaletteChange:
