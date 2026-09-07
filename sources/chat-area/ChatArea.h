@@ -44,6 +44,7 @@ class QEvent;
 class QResizeEvent;
 class QShowEvent;
 class QTimer;
+class QToolButton;
 
 namespace Mattermost {
 
@@ -106,6 +107,9 @@ private:
 	void dragMoveEvent (QDragMoveEvent* event) override;
 	void dropEvent (QDropEvent* event) override;
 
+	void setupHeaderUi();
+	void refreshHeaderActionIcons();
+	void updateUsersButton();
 	void setupComposerUi();
 	void focusComposer();
 	void beginMessageLoading();
@@ -127,6 +131,7 @@ private:
 	std::uint64_t viewportNavigationGeneration = 0;
 	AbstractPostSource* postSource = nullptr; // QObject child; owned by ChatArea
 	QTimer* loadingDelayTimer = nullptr;
+	QToolButton* threadFollowButton = nullptr;
 	int pendingMessageLoads = 0;
 
 public:
