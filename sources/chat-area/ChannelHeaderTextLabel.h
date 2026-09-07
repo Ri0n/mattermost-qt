@@ -50,6 +50,11 @@ public:
     void setText(const QString& text);
     void setLinkHandler(LinkHandler handler);
 
+    // Rich-text QLabel uses its unwrapped document width as a minimum hint.
+    // A topic must never dictate a thread-window or chat-pane width.
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
