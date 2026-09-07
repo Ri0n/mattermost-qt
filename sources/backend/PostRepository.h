@@ -21,6 +21,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <QVariant>
+#include <QVector>
 
 #include "HTTPConnector.h"
 #include "PostCacheService.h"
