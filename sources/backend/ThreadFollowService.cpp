@@ -8,7 +8,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  */
 
@@ -32,7 +32,12 @@
 namespace Mattermost {
 namespace {
 
-constexpr int ThreadsPerPage = 100;
+// Match the web client's normal Followed threads page size. The full followed
+// history can contain thousands of entries, so it must not be exhausted during
+// an ordinary refresh. Unread-only queries are small and are intentionally
+// exhausted so Attention gets an authoritative snapshot.
+constexpr int FollowingThreadsPerPage = 25;
+constexpr int UnreadThreadsPerPage = 100;
 
 Q_LOGGING_CATEGORY(lcFollowing, "mattermost.following")
 
@@ -261,10 +266,11 @@ void ThreadFollowService::queryTeamPage(
     }
 
     const QString teamId = teamIds->at(teamIndex);
+    const int perPage = unreadOnly ? UnreadThreadsPerPage : FollowingThreadsPerPage;
     QString path = QStringLiteral("users/") + _backend.getLoginUser().id
         + QStringLiteral("/teams/") + teamId
         + QStringLiteral("/threads?threadsOnly=true&extended=true&excludeDirect=true&per_page=")
-        + QString::number(ThreadsPerPage);
+        + QString::number(perPage);
     if (unreadOnly) {
         path += QStringLiteral("&unread=true");
     }
@@ -276,11 +282,12 @@ void ThreadFollowService::queryTeamPage(
     qCDebug(lcFollowing).nospace()
         << "request mode=" << (unreadOnly ? "unread" : "all")
         << " team=" << (teamIndex + 1) << '/' << teamIds->size()
-        << " page=" << (continuationPage ? "next" : "first");
+        << " page=" << (continuationPage ? "next" : "first")
+        << " perPage=" << perPage;
 
     NetworkRequest request(path);
     _httpConnector.get(request, HttpResponseCallback(
-        [this, teamIds, teamIndex, teamId, continuationPage, unreadOnly, collected,
+        [this, teamIds, teamIndex, teamId, continuationPage, unreadOnly, perPage, collected,
          callback = std::move(callback)](const QJsonDocument& doc,
                                           const QNetworkReply& reply) mutable {
             const int httpStatus = reply.attribute(
@@ -352,12 +359,21 @@ void ThreadFollowService::queryTeamPage(
                 << " missingChannelId=" << missingChannelId
                 << " collected=" << collected->size();
 
-            if (threads.size() == ThreadsPerPage && !lastThreadId.isEmpty()) {
-                queryTeamPage(teamIds, teamIndex, lastThreadId, unreadOnly, collected,
+            // Following mirrors Mattermost's normal list and therefore loads
+            // one page per team initially. Older followed history will be
+            // requested by the view on demand instead of being exhausted here.
+            if (!unreadOnly) {
+                queryTeamPage(teamIds, teamIndex + 1, QString(), false, collected,
                               std::move(callback));
                 return;
             }
-            queryTeamPage(teamIds, teamIndex + 1, QString(), unreadOnly, collected,
+
+            if (threads.size() == perPage && !lastThreadId.isEmpty()) {
+                queryTeamPage(teamIds, teamIndex, lastThreadId, true, collected,
+                              std::move(callback));
+                return;
+            }
+            queryTeamPage(teamIds, teamIndex + 1, QString(), true, collected,
                           std::move(callback));
         }));
 }
