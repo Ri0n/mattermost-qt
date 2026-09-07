@@ -34,7 +34,7 @@ public:
 
     /**
      * Briefly reveal the overlay for an already-populated scroll area.
-     * Returns true when at least one enabled axis is actually scrollable.
+     * Returns true when the area currently has scrollable content.
      */
     static bool pulse(QAbstractScrollArea& area);
 
@@ -57,7 +57,7 @@ private:
     bool containsCursor(const State& state) const;
     bool cursorOverOverlay(const State& state) const;
 
-    QHash<QAbstractScrollArea*, State*> _states;
+    QHash<QAbstractScrollArea*, State*> states;
 };
 
 } // namespace Mattermost
