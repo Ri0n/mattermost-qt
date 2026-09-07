@@ -1181,20 +1181,31 @@ void Backend::uploadFile (BackendChannel& channel, const QString& filePath, std:
 	}));
 }
 
-void Backend::createDirectChannel (const BackendUser& user)
+void Backend::createDirectChannel(const BackendUser& user,
+                                  std::function<void(BackendChannel&)> callback)
 {
-	QJsonArray json {getLoginUser().id, user.id};
+    QJsonArray json {getLoginUser().id, user.id};
 
-	NetworkRequest request ("channels/direct");
+    NetworkRequest request("channels/direct");
+    httpConnector.post(request, json, HttpResponseCallback(
+        [this, callback = std::move(callback)](const QJsonDocument& doc) mutable {
+            BackendChannel* channel = storage.addDirectChannel(doc.object());
+            if (!channel) {
+                return;
+            }
 
-	httpConnector.post (request, json, HttpResponseCallback ([this, &user](QVariant, QByteArray) {
-#if 0
-		QJsonDocument doc = QJsonDocument::fromJson(data);
+            LOG_DEBUG("	New Channel added: " << channel->id << " " << channel->display_name);
+            emit storage.directChannels.onNewChannel(*channel);
 
-		QString jsonString = doc.toJson(QJsonDocument::Indented);
-		std::cout << jsonString.toStdString() << std::endl;
-#endif
-	}));
+            // Keep the server-side DM preference in sync with the existing
+            // create-direct-channel behavior used by the official client.
+            updateUserPreferences(BackendUserPreferences {
+                "direct_channel_show", channel->name, "true"});
+
+            if (callback) {
+                callback(*channel);
+            }
+        }));
 }
 
 void Backend::addUserToChannel (const BackendChannel& channel, const QString& userID)

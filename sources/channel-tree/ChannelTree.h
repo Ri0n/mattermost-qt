@@ -60,6 +60,7 @@ public:
     static constexpr ItemKind TeamItemKind = SidebarItem::Team;
     static constexpr ItemKind CategoryItemKind = SidebarItem::Category;
     static constexpr ItemKind ChannelItemKind = SidebarItem::Channel;
+    static constexpr ItemKind VirtualDestinationItemKind = SidebarItem::VirtualDestination;
 
     static constexpr ItemRole ItemKindRole = SidebarItem::KindRole;
     static constexpr ItemRole ItemIdRole = SidebarItem::IdRole;
@@ -70,6 +71,8 @@ public:
     static constexpr ItemRole ItemUnreadRole = SidebarItem::UnreadRole;
     static constexpr ItemRole ItemLifetimeRole = SidebarItem::LifetimeRole;
     static constexpr ItemRole ItemChannelTypeRole = SidebarItem::ChannelTypeRole;
+    static constexpr ItemRole ItemChannelIdRole = SidebarItem::ChannelIdRole;
+    static constexpr ItemRole ItemDestinationRole = SidebarItem::DestinationRole;
 
 	ChannelTree (QWidget* parent = nullptr);
 	virtual ~ChannelTree ();
@@ -140,8 +143,13 @@ private:
 	                                    const QString& displayName, bool collapsed);
 	ChannelItem* createChannelItem(Backend& backend, TeamItem& teamItem,
 	                               QTreeWidgetItem& categoryItem, BackendChannel& channel);
+    ChannelItem* createPersonalItem(Backend& backend, TeamItem& teamItem,
+                                    QTreeWidgetItem& categoryItem);
+    QTreeWidgetItem* personalItemForTeam(const QString& teamId) const;
+    void refreshPersonalItems();
 	ChatArea* ensureChatArea(QTreeWidgetItem* item);
 	void activateChannelItem(QTreeWidgetItem* item);
+    void activateVirtualDestination(QTreeWidgetItem* item);
 	void setCategoryCollapsed(QTreeWidgetItem* item, bool collapsed);
 	void setChannelMutedVisual(const QString& channelId, bool muted);
 	void setChannelMentionedVisual(const QString& channelId, bool mentioned);
@@ -156,6 +164,7 @@ private:
 	QSet<QString>						connectedSidebarUsers;
 	Backend*							backendForSidebar;
 	bool							renderingSidebar;
+    bool                                personalUserConnected = false;
 };
 
 } /* namespace Mattermost */

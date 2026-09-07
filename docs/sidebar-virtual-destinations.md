@@ -1,46 +1,96 @@
-# Virtual sidebar destinations
+# Virtual sidebar destinations and post collections
 
-This note records the intended model for user-centric destinations that look like sidebar entries but
-are not ordinary server channel rows. It is a design contract only; the virtual sidebar items are not
-implemented as part of the post-cache/source refactor.
+This note records the model for user-centric destinations that look like navigation entries but are
+not ordinary server sidebar rows, plus the common collection semantics needed by Saved and future
+message search.
 
 ## Personal
 
-The user's self-contact/self-DM should be exposed as **Personal** (`Личное` in the Russian UI) inside
-the existing **Favorites** sidebar group.
+The user's self-contact/self-DM is exposed as **Personal** (`Личное`) as the first local row inside the
+existing **Favorites** sidebar category.
 
 `Personal` is a virtual navigation item, but its destination is a real canonical self-DM channel. It
-should resolve the logged-in user's direct channel with themselves and then open that normal channel
-through the existing channel/timeline path. The virtual item should not create a duplicate
-`BackendChannel` or a second post source for the same conversation.
+resolves the logged-in user's direct channel with themselves and opens the ordinary channel/timeline
+path. If that direct channel has never existed, activation creates it through Mattermost's normal
+`/channels/direct` path first; there is still no fake `BackendChannel`.
 
 Consequences:
 
-- one canonical self-DM identity and one resident/cache namespace;
-- unread/history/thread behavior remains ordinary channel behavior;
-- the sidebar item may have its own stable virtual item ID/icon/label while resolving to the real
-  channel only when activated;
-- it belongs in Favorites because it is a convenient user-facing shortcut, not a new server category.
+- `Personal` has a stable local destination identity independent of a server category row;
+- the real self-DM keeps the normal channel ID, post cache namespace, unread/history/thread behavior;
+- the virtual row is non-draggable and never participates in sidebar category mutation payloads;
+- a real self-DM row is suppressed inside Favorites so the same conversation is not shown twice there;
+- if the server later exposes the self-DM as an ordinary DM row elsewhere, activating it redirects to
+  `Personal` as the user-facing canonical shortcut;
+- the row can use the logged-in user's avatar while keeping the label `Personal`.
+
+`SidebarItem::VirtualDestination` and `SidebarItem::DestinationRole` keep this semantic distinction
+explicit instead of pretending the local row is an ordinary server channel row.
 
 ## Saved
 
-**Saved** (`Сохранённое`) is fundamentally different. Saved posts can originate from multiple
-channels and threads, so it must not pretend to be a `BackendChannel`.
+**Saved** (`Сохранённое`) is fundamentally different. Saved posts can originate from multiple channels
+and threads, so it must not pretend to be a `BackendChannel`.
 
-It should be modeled as a separate virtual destination with an aggregate source/navigation model:
+It should be modeled as a virtual destination backed by a cross-conversation post collection:
 
 ```text
-Saved virtual destination
-        |
-        +-- post A from channel X
-        +-- post B from thread Y/root R
-        +-- post C from channel Z
+Saved
+  +-- post A from channel X
+  +-- post B from thread Y / root R
+  +-- post C from channel Z
 ```
 
-Each saved entry keeps its original semantic context (channel ID, post ID, optional root/thread ID) so
-opening/navigating it can resolve the real conversation and use the normal semantic post-ID navigation
-path. The aggregate list itself must not invent channel page or thread cursor authority.
+Each collection entry keeps semantic origin, not a fabricated conversation coordinate:
 
-The exact sidebar placement/UI for Saved can be decided separately; the important architectural rule is
-that **Personal resolves to one real channel, while Saved is a cross-conversation aggregate and is not a
-fake channel**.
+```text
+postId
+channelId
+rootId      optional; non-empty means the origin is a thread
+```
+
+Opening an entry resolves the real channel/thread and then performs ordinary semantic post-ID
+navigation. The collection itself never invents channel page numbers or thread cursor adjacency.
+
+## Message search
+
+Future message search should reuse the same collection/navigation model as Saved. The difference is
+lifetime and producer, not row semantics:
+
+```text
+Saved collection                 Search result collection
+persistent user-selected set     ephemeral query result set
+        |                                  |
+        +----------- common entry ----------+
+                    postId
+                    channelId
+                    optional rootId
+                          |
+                          v
+              canonical conversation
+                          |
+                    navigate to post
+```
+
+This means search results should not be inserted into `BackendChannel::posts` as if they formed a
+contiguous history window. A search endpoint proves only that those posts matched a query and their
+result ordering; it does not prove adjacency in the source conversation.
+
+The eventual shared collection layer can therefore own:
+
+- ordered collection entries and collection-specific paging;
+- lazy body resolution through `PostRepository::loadPost()`;
+- origin labels/context preview;
+- activation into channel versus thread based on `rootId`;
+- semantic `goToPost(postId)` after the real conversation is open.
+
+`Saved` may be represented by a fixed virtual navigation destination. Search results are normally a
+transient destination created by a search action rather than a permanent sidebar row, but both should
+reuse the same post-collection view/source machinery.
+
+## Cache interaction
+
+The persistent post cache may make Saved/Search rows paint quickly because collection entries identify
+individual posts. It still receives no extra timeline authority from those collections. A cached body
+can satisfy first paint and normal HTTP validation can refresh it, while channel/thread sources remain
+the only owners of conversation placement.

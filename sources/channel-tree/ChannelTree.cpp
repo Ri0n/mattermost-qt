@@ -26,6 +26,7 @@
 
 #include <QDropEvent>
 #include <QHeaderView>
+#include <QPointer>
 #include <QStackedWidget>
 
 #include "backend/Backend.h"
@@ -188,6 +189,8 @@ void ChannelTree::renderTeamSidebar(Backend& backend, TeamItem& teamItem,
     clearTeamSidebar(teamItem);
 
     auto& sidebar = SidebarService::instance(backend);
+    BackendChannel* personalChannel = backend.getStorage().getDirectChannelByUserId(
+        backend.getLoginUser().id);
     for (const auto& categoryId : state.order) {
         const SidebarCategory* category = state.category(categoryId);
         if (!category) {
@@ -197,9 +200,19 @@ void ChannelTree::renderTeamSidebar(Backend& backend, TeamItem& teamItem,
         QTreeWidgetItem* categoryItem = createCategoryItem(
             teamItem, category->id, categoryDisplayName(*category), category->collapsed);
 
+        const bool favorites = category->type == QStringLiteral("favorites");
+        if (favorites) {
+            createPersonalItem(backend, teamItem, *categoryItem);
+        }
+
         const QStringList visibleIds = sidebar.visibleChannelIds(*category);
         for (const auto& channelId : visibleIds) {
             BackendChannel* channel = backend.getStorage().getChannelById(channelId);
+            if (favorites && personalChannel && channel == personalChannel) {
+                // Personal is the canonical user-facing row inside Favorites.
+                // Do not render the same self-DM twice in that category.
+                continue;
+            }
             if (!channel) {
                 LOG_DEBUG("Sidebar channel not found in storage: " << channelId);
                 continue;
@@ -251,6 +264,87 @@ QTreeWidgetItem* ChannelTree::createCategoryItem(TeamItem& teamItem, const QStri
     item->setSizeHint(0, QSize(0, 22));
     item->setExpanded(!collapsed);
     return item;
+}
+
+ChannelItem* ChannelTree::createPersonalItem(Backend& backend, TeamItem& teamItem,
+                                             QTreeWidgetItem& categoryItem)
+{
+    auto* item = new DirectChannelItem(backend, nullptr);
+    categoryItem.addChild(item);
+    item->setData(0, ItemKindRole, VirtualDestinationItemKind);
+    item->setData(0, ItemIdRole, QStringLiteral("virtual:personal"));
+    item->setData(0, ItemTeamIdRole, teamItem.teamId);
+    item->setData(0, ItemDestinationRole, SidebarItem::PersonalDestination);
+    item->setData(0, ItemChannelTypeRole, BackendChannel::directChannel);
+    item->setData(0, Qt::UserRole, QVariant::fromValue(static_cast<ChatArea*>(nullptr)));
+    item->setFlags(item->flags()
+                   & ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled | Qt::ItemIsEditable));
+    item->setLabel(tr("Personal"));
+
+    if (BackendChannel* channel = backend.getStorage().getDirectChannelByUserId(
+            backend.getLoginUser().id)) {
+        item->setData(0, ItemChannelIdRole, channel->id);
+    }
+
+    const BackendUser& self = backend.getLoginUser();
+    item->setStatus(self.status);
+    if (!self.avatar.isNull()) {
+        item->setIcon(QIcon(self.avatar));
+    }
+
+    if (!personalUserConnected) {
+        personalUserConnected = true;
+        if (self.avatar.isNull()) {
+            backend.retrieveUserAvatar(self.id);
+        }
+        connect(&self, &BackendUser::onAvatarChanged, this,
+                [this] { refreshPersonalItems(); });
+        connect(&self, &BackendUser::onStatusChanged, this,
+                [this] { refreshPersonalItems(); });
+    }
+    return item;
+}
+
+QTreeWidgetItem* ChannelTree::personalItemForTeam(const QString& teamId) const
+{
+    TeamItem* teamItem = teamToItemMap.value(teamId, nullptr);
+    if (!teamItem) {
+        return nullptr;
+    }
+
+    for (int categoryIndex = 0; categoryIndex < teamItem->childCount(); ++categoryIndex) {
+        QTreeWidgetItem* category = teamItem->child(categoryIndex);
+        for (int rowIndex = 0; category && rowIndex < category->childCount(); ++rowIndex) {
+            QTreeWidgetItem* row = category->child(rowIndex);
+            if (row
+                && row->data(0, ItemKindRole).toInt() == VirtualDestinationItemKind
+                && row->data(0, ItemDestinationRole).toInt() == SidebarItem::PersonalDestination) {
+                return row;
+            }
+        }
+    }
+    return nullptr;
+}
+
+void ChannelTree::refreshPersonalItems()
+{
+    if (!backendForSidebar) {
+        return;
+    }
+
+    const BackendUser& self = backendForSidebar->getLoginUser();
+    BackendChannel* channel = backendForSidebar->getStorage().getDirectChannelByUserId(self.id);
+
+    for (auto it = teamToItemMap.cbegin(); it != teamToItemMap.cend(); ++it) {
+        QTreeWidgetItem* row = personalItemForTeam(it.key());
+        if (!row) {
+            continue;
+        }
+        auto* personalItem = static_cast<ChannelItem*>(row);
+        personalItem->setStatus(self.status);
+        personalItem->setIcon(self.avatar.isNull() ? QIcon() : QIcon(self.avatar));
+        row->setData(0, ItemChannelIdRole, channel ? channel->id : QString());
+    }
 }
 
 ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem,
@@ -375,8 +469,12 @@ void ChannelTree::handleChannelLeave()
 
 ChatArea* ChannelTree::ensureChatArea(QTreeWidgetItem* item)
 {
-    if (!item || !backendForSidebar || !chatAreaStackedWidget
-        || item->data(0, ItemKindRole).toInt() != ChannelItemKind) {
+    if (!item || !backendForSidebar || !chatAreaStackedWidget) {
+        return nullptr;
+    }
+
+    const int kind = item->data(0, ItemKindRole).toInt();
+    if (kind != ChannelItemKind && kind != VirtualDestinationItemKind) {
         return nullptr;
     }
 
@@ -384,7 +482,17 @@ ChatArea* ChannelTree::ensureChatArea(QTreeWidgetItem* item)
         return existing;
     }
 
-    const QString channelId = item->data(0, ItemIdRole).toString();
+    QString channelId = kind == ChannelItemKind
+        ? item->data(0, ItemIdRole).toString()
+        : item->data(0, ItemChannelIdRole).toString();
+    if (channelId.isEmpty() && kind == VirtualDestinationItemKind
+        && item->data(0, ItemDestinationRole).toInt() == SidebarItem::PersonalDestination) {
+        if (BackendChannel* personal = backendForSidebar->getStorage().getDirectChannelByUserId(
+                backendForSidebar->getLoginUser().id)) {
+            channelId = personal->id;
+            item->setData(0, ItemChannelIdRole, channelId);
+        }
+    }
     BackendChannel* channel = backendForSidebar->getStorage().getChannelById(channelId);
     if (!channel) {
         LOG_DEBUG("Cannot create chat area: channel not found: " << channelId);
@@ -401,8 +509,29 @@ ChatArea* ChannelTree::ensureChatArea(QTreeWidgetItem* item)
 
 void ChannelTree::activateChannelItem(QTreeWidgetItem* item)
 {
-    if (!item || item->data(0, ItemKindRole).toInt() != ChannelItemKind) {
+    if (!item) {
         return;
+    }
+
+    const int kind = item->data(0, ItemKindRole).toInt();
+    if (kind == VirtualDestinationItemKind) {
+        activateVirtualDestination(item);
+        return;
+    }
+    if (kind != ChannelItemKind) {
+        return;
+    }
+
+    if (backendForSidebar) {
+        BackendChannel* personal = backendForSidebar->getStorage().getDirectChannelByUserId(
+            backendForSidebar->getLoginUser().id);
+        if (personal && item->data(0, ItemIdRole).toString() == personal->id) {
+            if (QTreeWidgetItem* alias = personalItemForTeam(
+                    item->data(0, ItemTeamIdRole).toString())) {
+                setCurrentItem(alias);
+                return;
+            }
+        }
     }
 
     ChatArea* newPage = ensureChatArea(item);
@@ -434,6 +563,60 @@ void ChannelTree::activateChannelItem(QTreeWidgetItem* item)
     qDebug() << "Item Activated: " << newPage->channel.display_name;
 }
 
+void ChannelTree::activateVirtualDestination(QTreeWidgetItem* item)
+{
+    if (!item || !backendForSidebar
+        || item->data(0, ItemKindRole).toInt() != VirtualDestinationItemKind
+        || item->data(0, ItemDestinationRole).toInt() != SidebarItem::PersonalDestination) {
+        return;
+    }
+
+    BackendChannel* channel = backendForSidebar->getStorage().getDirectChannelByUserId(
+        backendForSidebar->getLoginUser().id);
+    if (!channel) {
+        const QString teamId = item->data(0, ItemTeamIdRole).toString();
+        QPointer<ChannelTree> guard(this);
+        backendForSidebar->createDirectChannel(backendForSidebar->getLoginUser(),
+            [guard, teamId](BackendChannel& created) {
+                if (!guard) {
+                    return;
+                }
+                QTreeWidgetItem* currentPersonal = guard->personalItemForTeam(teamId);
+                if (!currentPersonal) {
+                    return;
+                }
+                currentPersonal->setData(0, ItemChannelIdRole, created.id);
+                guard->refreshPersonalItems();
+                // Do not steal focus if the user navigated elsewhere while the
+                // first-ever self-DM was being created.
+                if (guard->currentItem() == currentPersonal) {
+                    guard->activateVirtualDestination(currentPersonal);
+                }
+            });
+        return;
+    }
+
+    item->setData(0, ItemChannelIdRole, channel->id);
+    ChatArea* newPage = ensureChatArea(item);
+    if (!newPage) {
+        return;
+    }
+
+    if (newPage == getCurrentPage()) {
+        if (!newPage->isVisible()) {
+            chatAreaStackedWidget->setCurrentWidget(newPage);
+        }
+        newPage->onActivate();
+        return;
+    }
+
+    if (ChatArea* currentPage = getCurrentPage()) {
+        currentPage->onDeactivate();
+    }
+    chatAreaStackedWidget->setCurrentWidget(newPage);
+    newPage->onActivate();
+}
+
 void ChannelTree::addGroupChannelsList (Backend& backend)
 {
     Q_UNUSED(backend);
@@ -452,12 +635,42 @@ void ChannelTree::setChatAreaStackedWidget (QStackedWidget* stackedWidget)
 void ChannelTree::openChannel (QString channelID)
 {
 	auto it = channelToItemMap.find (channelID);
-	if (it == channelToItemMap.end() || it.value().isEmpty()) {
-		qDebug() << "openChannel " << channelID << ": channel not found";
-		return;
-	}
+    QTreeWidgetItem* item = nullptr;
 
-    QTreeWidgetItem* item = it.value().front();
+    if (it != channelToItemMap.end() && !it.value().isEmpty()) {
+        item = it.value().front();
+    } else if (backendForSidebar) {
+        BackendChannel* personal = backendForSidebar->getStorage().getDirectChannelByUserId(
+            backendForSidebar->getLoginUser().id);
+        if (personal && personal->id == channelID) {
+            // Programmatic navigation (permalinks, Saved/Search results, etc.)
+            // must resolve the self-DM even when its ordinary server row is
+            // absent or suppressed in Favorites. Prefer the currently selected
+            // team's Personal row, otherwise use the first available one.
+            QTreeWidgetItem* current = currentItem();
+            QTreeWidgetItem* teamItem = current;
+            while (teamItem && teamItem->parent()) {
+                teamItem = teamItem->parent();
+            }
+            if (teamItem && teamItem->data(0, ItemKindRole).toInt() == TeamItemKind) {
+                item = personalItemForTeam(teamItem->data(0, ItemTeamIdRole).toString());
+            }
+            if (!item) {
+                for (auto teamIt = teamToItemMap.cbegin(); teamIt != teamToItemMap.cend(); ++teamIt) {
+                    item = personalItemForTeam(teamIt.key());
+                    if (item) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (!item) {
+        qDebug() << "openChannel " << channelID << ": channel not found";
+        return;
+    }
+
     if (currentItem() == item) {
         activateChannelItem(item);
     } else {

@@ -169,7 +169,8 @@ public:
 	void uploadFile (BackendChannel& channel, const QString& filePath, std::function<void(QString)> responseHandler);
 
 	//create a direct channel with given user (/channels/direct)
-	void createDirectChannel (const BackendUser& user);
+	void createDirectChannel(const BackendUser& user,
+	                         std::function<void(BackendChannel&)> callback = {});
 
 	//add a user to a channel (/channels/{channel_id}/members)
 	void addUserToChannel (const BackendChannel& channel, const QString& userID);

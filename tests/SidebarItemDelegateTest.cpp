@@ -15,11 +15,11 @@ class SidebarItemDelegateTest : public QObject
     Q_OBJECT
 
 private:
-    static QImage renderChannel(int channelType, const QString& presence)
+    static QImage renderItem(SidebarItem::Kind kind, int channelType, const QString& presence)
     {
         QStandardItemModel model;
         auto* item = new QStandardItem(QStringLiteral("conversation"));
-        item->setData(SidebarItem::Channel, SidebarItem::KindRole);
+        item->setData(kind, SidebarItem::KindRole);
         item->setData(channelType, SidebarItem::ChannelTypeRole);
         item->setData(presence, SidebarItem::PresenceRole);
 
@@ -46,28 +46,62 @@ private:
 private slots:
     void ignoresPresenceForNonUserRows()
     {
-        const auto publicWithPresence = renderChannel(BackendChannel::publicChannel,
-                                                      QStringLiteral("online"));
-        const auto publicWithoutPresence = renderChannel(BackendChannel::publicChannel, QString());
+        const auto publicWithPresence = renderItem(SidebarItem::Channel,
+                                                   BackendChannel::publicChannel,
+                                                   QStringLiteral("online"));
+        const auto publicWithoutPresence = renderItem(SidebarItem::Channel,
+                                                      BackendChannel::publicChannel,
+                                                      QString());
         QVERIFY(publicWithPresence == publicWithoutPresence);
 
-        const auto privateWithPresence = renderChannel(BackendChannel::privateChannel,
-                                                       QStringLiteral("away"));
-        const auto privateWithoutPresence = renderChannel(BackendChannel::privateChannel, QString());
+        const auto privateWithPresence = renderItem(SidebarItem::Channel,
+                                                    BackendChannel::privateChannel,
+                                                    QStringLiteral("away"));
+        const auto privateWithoutPresence = renderItem(SidebarItem::Channel,
+                                                       BackendChannel::privateChannel,
+                                                       QString());
         QVERIFY(privateWithPresence == privateWithoutPresence);
 
-        const auto groupWithPresence = renderChannel(BackendChannel::groupChannel,
-                                                     QStringLiteral("dnd"));
-        const auto groupWithoutPresence = renderChannel(BackendChannel::groupChannel, QString());
+        const auto groupWithPresence = renderItem(SidebarItem::Channel,
+                                                  BackendChannel::groupChannel,
+                                                  QStringLiteral("dnd"));
+        const auto groupWithoutPresence = renderItem(SidebarItem::Channel,
+                                                     BackendChannel::groupChannel,
+                                                     QString());
         QVERIFY(groupWithPresence == groupWithoutPresence);
     }
 
     void rendersPresenceForDirectMessage()
     {
-        const auto withPresence = renderChannel(BackendChannel::directChannel,
-                                                QStringLiteral("online"));
-        const auto withoutPresence = renderChannel(BackendChannel::directChannel, QString());
+        const auto withPresence = renderItem(SidebarItem::Channel,
+                                             BackendChannel::directChannel,
+                                             QStringLiteral("online"));
+        const auto withoutPresence = renderItem(SidebarItem::Channel,
+                                                BackendChannel::directChannel,
+                                                QString());
         QVERIFY(withPresence != withoutPresence);
+    }
+
+    void rendersVirtualDestinationAsConversationRow()
+    {
+        const auto channel = renderItem(SidebarItem::Channel,
+                                        BackendChannel::directChannel,
+                                        QString());
+        const auto destination = renderItem(SidebarItem::VirtualDestination,
+                                            BackendChannel::directChannel,
+                                            QString());
+        QCOMPARE(destination, channel);
+    }
+
+    void rendersVirtualDirectDestinationWithSamePresenceChrome()
+    {
+        const auto channel = renderItem(SidebarItem::Channel,
+                                        BackendChannel::directChannel,
+                                        QStringLiteral("online"));
+        const auto destination = renderItem(SidebarItem::VirtualDestination,
+                                            BackendChannel::directChannel,
+                                            QStringLiteral("online"));
+        QCOMPARE(destination, channel);
     }
 };
 
