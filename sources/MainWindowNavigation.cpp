@@ -1,75 +1,15 @@
 #include "mainwindow.h"
 
-#include <QLoggingCategory>
 #include <QPointer>
-#include <QScrollBar>
 #include <QTimer>
 
 #include "backend/Backend.h"
 #include "backend/types/BackendChannel.h"
 #include "channel-tree/ChannelTree.h"
-#include "chat-area/AbstractPostSource.h"
 #include "chat-area/ChatArea.h"
-#include "chat-area/ChatLogWidget.h"
 #include "ui_mainwindow.h"
 
 namespace Mattermost {
-
-namespace {
-
-Q_LOGGING_CATEGORY(lcJumpTrace, "mattermost.navigation.jump", QtWarningMsg)
-
-void logJumpState(const char* phase, ChatArea* area, const QString& postId)
-{
-    ChatLogWidget* list = area
-        ? area->findChild<ChatLogWidget*>(QStringLiteral("listWidget"))
-        : nullptr;
-    if (!list) {
-        qCWarning(lcJumpTrace).nospace()
-            << "STATE phase=" << phase
-            << " postId=" << postId
-            << " list=null";
-        return;
-    }
-
-    AbstractPostSource* source = list->source();
-    const int index = source ? source->indexOfPost(postId) : -1;
-    QWidget* widget = index >= 0 ? list->itemWidget(index) : nullptr;
-    const LongListWidget::Range visible = list->visibleRange();
-    QScrollBar* bar = list->verticalScrollBar();
-
-    qCWarning(lcJumpTrace).nospace()
-        << "STATE phase=" << phase
-        << " postId=" << postId
-        << " index=" << index
-        << " itemCount=" << list->itemCount()
-        << " available=" << (source && index >= 0 ? source->isAvailable(index) : false)
-        << " widget=" << static_cast<const void*>(widget)
-        << " y=" << (widget ? widget->y() : -1)
-        << " h=" << (widget ? widget->height() : -1)
-        << " viewportH=" << list->viewport()->height()
-        << " visible=[" << visible.first << ',' << visible.last << ']'
-        << " scroll=" << bar->value() << '/' << bar->maximum()
-        << " atEnd=" << list->isAtEnd()
-        << " viewportLock=" << list->hasViewportLock();
-}
-
-void scheduleJumpState(QPointer<ChatArea> area,
-                       const QString& postId,
-                       int delayMs,
-                       const char* phase)
-{
-    if (!area) {
-        return;
-    }
-    QTimer::singleShot(delayMs, area, [area, postId, phase] {
-        if (area) {
-            logJumpState(phase, area, postId);
-        }
-    });
-}
-
-} // namespace
 
 void MainWindow::openChannelPost(const QString& channelId,
                                  const QString& postId,
@@ -78,14 +18,6 @@ void MainWindow::openChannelPost(const QString& channelId,
                                  bool reachedOldest,
                                  bool reachedNewest)
 {
-    qCWarning(lcJumpTrace).nospace()
-        << "REQUEST channelId=" << channelId
-        << " postId=" << postId
-        << " rootId=" << rootId
-        << " contextCount=" << contextPostIds.size()
-        << " reachedOldest=" << reachedOldest
-        << " reachedNewest=" << reachedNewest;
-
     if (channelId.isEmpty()) {
         return;
     }
@@ -105,7 +37,6 @@ void MainWindow::openChannelPost(const QString& channelId,
     // its weak default "show newest" position. Invalidate that intent now,
     // before this function queues the actual semantic navigation work.
     area->preparePostNavigation();
-    logJumpState("after-open-channel", area, postId);
 
     // A permalink can point directly at a thread reply. Replies deliberately do
     // not have rows in the main channel timeline, so route those links to the
@@ -142,17 +73,9 @@ void MainWindow::openChannelPost(const QString& channelId,
             if (!threadGuard) {
                 return;
             }
-            logJumpState("thread-before-lock", threadGuard, postId);
             threadGuard->lockNavigationToPost(postId, 0);
-            logJumpState("thread-after-lock", threadGuard, postId);
             threadGuard->ensurePostVisible(postId);
-            logJumpState("thread-after-ensure", threadGuard, postId);
             threadGuard->goToPost(postId);
-            logJumpState("thread-after-go", threadGuard, postId);
-            scheduleJumpState(threadGuard, postId, 0, "thread-t+0");
-            scheduleJumpState(threadGuard, postId, 50, "thread-t+50");
-            scheduleJumpState(threadGuard, postId, 250, "thread-t+250");
-            scheduleJumpState(threadGuard, postId, 1000, "thread-t+1000");
         });
         return;
     }
@@ -168,7 +91,6 @@ void MainWindow::openChannelPost(const QString& channelId,
                 return;
             }
 
-            logJumpState("before-context", areaGuard, postId);
             bool contextReady = false;
             if (!contextPostIds.isEmpty()) {
                 contextReady = areaGuard->ensurePinnedPostVisible(postId, contextPostIds,
@@ -176,24 +98,12 @@ void MainWindow::openChannelPost(const QString& channelId,
             } else {
                 contextReady = areaGuard->ensurePostVisible(postId);
             }
-            qCWarning(lcJumpTrace).nospace()
-                << "CONTEXT_RESULT postId=" << postId
-                << " ready=" << contextReady
-                << " contextCount=" << contextPostIds.size();
-            logJumpState("after-context", areaGuard, postId);
             if (!contextReady) {
                 return;
             }
 
             areaGuard->lockNavigationToPost(postId, 0);
-            logJumpState("after-lock", areaGuard, postId);
             areaGuard->goToPost(postId);
-            logJumpState("after-go", areaGuard, postId);
-
-            scheduleJumpState(areaGuard, postId, 0, "t+0");
-            scheduleJumpState(areaGuard, postId, 50, "t+50");
-            scheduleJumpState(areaGuard, postId, 250, "t+250");
-            scheduleJumpState(areaGuard, postId, 1000, "t+1000");
         });
 }
 
