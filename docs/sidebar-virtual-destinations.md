@@ -34,7 +34,9 @@ and threads, so it does not pretend to be a `BackendChannel`.
 
 It is implemented as the second fixed local row in Favorites and opens the shared virtualized
 `PostCollectionView`. The producer is the paged `/users/{user_id}/posts/flagged` endpoint. Ordinary
-message context menus can add `flagged_post` preferences and Saved rows can remove them again.
+message context menus can add `flagged_post` preferences and Saved rows can remove them again. The
+sidebar row is a concrete virtual-destination item with no channel context menu: it deliberately cannot
+inherit mute, profile, or category-mutation actions from an unrelated real channel.
 
 The destination is backed by a cross-conversation post collection:
 
@@ -95,6 +97,11 @@ The shared collection layer therefore owns:
 `Saved` may be represented by a fixed virtual navigation destination. Search results are normally a
 transient destination created by a search action rather than a permanent sidebar row, but both should
 reuse the same post-collection view/source machinery.
+
+Collection paging advertises a possible next page with one unavailable logical sentinel. A successful
+page replaces that sentinel with real entries and optionally a new sentinel. A failed page collapses the
+logical count back to the number of concrete entries before completing the range request; this prevents
+a phantom row while preserving `LongListWidget`'s no-tight-retry failure semantics.
 
 ## Cache interaction
 
