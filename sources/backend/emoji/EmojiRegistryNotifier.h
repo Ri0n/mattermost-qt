@@ -11,7 +11,7 @@
 
 namespace Mattermost {
 
-/** Emits when a custom emoji becomes available to MessageFormatter. */
+/** Coordinates lazy custom-emoji resolution with formatter rerendering. */
 class EmojiRegistryNotifier final : public QObject
 {
     Q_OBJECT
@@ -19,6 +19,10 @@ public:
     static EmojiRegistryNotifier& instance();
 
 signals:
+    /** Emitted by renderers when a syntactically valid :name: is not registered. */
+    void customEmojiRequested(const QString& name);
+
+    /** Emitted after a custom emoji image becomes available to MessageFormatter. */
     void customEmojiAdded(const QString& name);
 
 private:
