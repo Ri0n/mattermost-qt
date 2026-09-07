@@ -27,6 +27,7 @@
 #include "backend/Backend.h"
 #include "config/Config.h"
 #include "ui/OverlayScrollBarManager.h"
+#include "ui/SplitterHandleManager.h"
 
 namespace Mattermost {
 
@@ -54,6 +55,7 @@ inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 ,currentWindow (nullptr)
 {
     OverlayScrollBarManager::install(*this);
+    SplitterHandleManager::install(*this);
 
     Config::init ();
 	trayIcon->setToolTip(tr("Mattermost Qt"));
