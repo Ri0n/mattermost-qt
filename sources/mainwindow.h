@@ -58,6 +58,7 @@ public:
 	~MainWindow();
 public:
 	void initializationComplete ();
+    void installRealtimeUiSync();
 	void openChannelPost(const QString& channelId,
 	                     const QString& postId = QString(),
 	                     const QString& rootId = QString(),
@@ -72,7 +73,7 @@ public:
 	void unreadMessagesNotify (const BackendChannel& channel);
 	void setNotificationsCountVisualization (uint32_t notificationsCount);
 	void moveEvent (QMoveEvent* event) override;
-	void dragMoveEvent (QDragMoveEvent* event) override;
+	void dragMoveEvent(QDragMoveEvent* event) override;
 protected:
 	bool eventFilter(QObject* watched, QEvent* event) override;
 private:
