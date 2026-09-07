@@ -55,6 +55,34 @@ private slots:
 
         QCOMPARE(editor.height(), 300);
     }
+
+    void completesAtMentionWithoutReplacingSurroundingMessage()
+    {
+        MessageTextEditWidget editor;
+        InteractiveTextEdit::CompletionRule rule;
+        rule.prefix = QStringLiteral("@");
+        rule.provider = [] {
+            InteractiveTextEdit::CompletionCandidate alice;
+            alice.displayText = QStringLiteral("Alice Example");
+            alice.insertText = QStringLiteral("alice");
+            alice.detailText = QStringLiteral("@alice");
+            alice.filterKeys = {QStringLiteral("Example")};
+            return QVector<InteractiveTextEdit::CompletionCandidate> {alice};
+        };
+        editor.setCompletionRules({std::move(rule)});
+        editor.resize(360, 40);
+        editor.show();
+        editor.setFocus();
+        QCoreApplication::processEvents();
+
+        QTest::keyClicks(&editor, QStringLiteral("hello @exa"));
+        QCoreApplication::processEvents();
+        QVERIFY(editor.completionPopupVisible());
+
+        QTest::keyClick(&editor, Qt::Key_Return);
+        QCoreApplication::processEvents();
+        QCOMPARE(editor.toPlainText(), QStringLiteral("hello @alice "));
+    }
 };
 
 QTEST_MAIN(MessageTextEditWidgetTest)
