@@ -203,6 +203,7 @@ void ChannelTree::renderTeamSidebar(Backend& backend, TeamItem& teamItem,
         const bool favorites = category->type == QStringLiteral("favorites");
         if (favorites) {
             createPersonalItem(backend, teamItem, *categoryItem);
+            createSavedItem(backend, teamItem, *categoryItem);
         }
 
         const QStringList visibleIds = sidebar.visibleChannelIds(*category);
@@ -302,6 +303,23 @@ ChannelItem* ChannelTree::createPersonalItem(Backend& backend, TeamItem& teamIte
         connect(&self, &BackendUser::onStatusChanged, this,
                 [this] { refreshPersonalItems(); });
     }
+    return item;
+}
+
+ChannelItem* ChannelTree::createSavedItem(Backend& backend, TeamItem& teamItem,
+                                          QTreeWidgetItem& categoryItem)
+{
+    auto* item = new ChannelItem(backend, nullptr);
+    categoryItem.addChild(item);
+    item->setData(0, ItemKindRole, VirtualDestinationItemKind);
+    item->setData(0, ItemIdRole, QStringLiteral("virtual:saved"));
+    item->setData(0, ItemTeamIdRole, teamItem.teamId);
+    item->setData(0, ItemDestinationRole, SidebarItem::SavedDestination);
+    item->setData(0, Qt::UserRole, QVariant::fromValue(static_cast<ChatArea*>(nullptr)));
+    item->setFlags(item->flags()
+                   & ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled | Qt::ItemIsEditable));
+    item->setLabel(tr("Saved"));
+    item->setIcon(QIcon(QStringLiteral(":/icons/bookmark")));
     return item;
 }
 
@@ -566,8 +584,17 @@ void ChannelTree::activateChannelItem(QTreeWidgetItem* item)
 void ChannelTree::activateVirtualDestination(QTreeWidgetItem* item)
 {
     if (!item || !backendForSidebar
-        || item->data(0, ItemKindRole).toInt() != VirtualDestinationItemKind
-        || item->data(0, ItemDestinationRole).toInt() != SidebarItem::PersonalDestination) {
+        || item->data(0, ItemKindRole).toInt() != VirtualDestinationItemKind) {
+        return;
+    }
+
+    const int destination = item->data(0, ItemDestinationRole).toInt();
+    if (destination == SidebarItem::SavedDestination) {
+        emit virtualDestinationRequested(destination,
+                                         item->data(0, ItemTeamIdRole).toString());
+        return;
+    }
+    if (destination != SidebarItem::PersonalDestination) {
         return;
     }
 

@@ -88,6 +88,46 @@ QStringList sortedPostIds(const QJsonObject& postsObject,
     return result;
 }
 
+PostRepository::CollectionPage collectionPageFromDocument(
+    QVariant status, const QJsonDocument& doc, int perPage)
+{
+    PostRepository::CollectionPage result;
+    if (status.toInt() != QNetworkReply::NoError || !doc.isObject()) {
+        return result;
+    }
+
+    const QJsonObject root = doc.object();
+    const QJsonObject objects = root.value(QStringLiteral("posts")).toObject();
+    const QJsonArray order = root.value(QStringLiteral("order")).toArray();
+    QSet<QString> seen;
+
+    for (const QJsonValue& value : order) {
+        const QString id = value.toString();
+        const QJsonValue postValue = objects.value(id);
+        if (id.isEmpty() || seen.contains(id) || !postValue.isObject()) {
+            continue;
+        }
+        seen.insert(id);
+        result.posts.push_back(postValue.toObject());
+    }
+
+    // Older/custom servers may omit order for collection-like responses. Keep
+    // the payload usable, but never reinterpret this fallback as timeline order.
+    if (order.isEmpty()) {
+        for (auto it = objects.constBegin(); it != objects.constEnd(); ++it) {
+            if (!it->isObject() || seen.contains(it.key())) {
+                continue;
+            }
+            seen.insert(it.key());
+            result.posts.push_back(it->toObject());
+        }
+    }
+
+    result.hasMore = perPage > 0 && order.size() >= perPage;
+    result.success = true;
+    return result;
+}
+
 QStringList combineContext(const QStringList& before,
                            const QString& targetId,
                            const QStringList& after)
@@ -269,6 +309,70 @@ void PostRepository::coalescedGet(const QString& path, JsonCallback callback)
                 if (cb) {
                     cb(status, doc, requestContext);
                 }
+            }
+        }));
+}
+
+void PostRepository::loadFlaggedPosts(int page, int perPage, CollectionCallback callback)
+{
+    const int safePage = std::max(0, page);
+    const int safePerPage = std::max(1, perPage);
+    const QString userId = backend.getLoginUser().id;
+    if (userId.isEmpty()) {
+        if (callback) {
+            callback(CollectionPage {});
+        }
+        return;
+    }
+
+    const QString path = QStringLiteral("users/") + userId
+        + QStringLiteral("/posts/flagged?page=") + QString::number(safePage)
+        + QStringLiteral("&per_page=") + QString::number(safePerPage);
+    coalescedGet(path,
+        [safePerPage, callback = std::move(callback)](
+            QVariant status, const QJsonDocument& doc, const RequestContext&) mutable {
+            if (callback) {
+                callback(collectionPageFromDocument(status, doc, safePerPage));
+            }
+        });
+}
+
+void PostRepository::searchPosts(const QString& teamId,
+                                 const QString& terms,
+                                 int page,
+                                 int perPage,
+                                 CollectionCallback callback)
+{
+    const QString query = terms.trimmed();
+    if (query.isEmpty()) {
+        if (callback) {
+            CollectionPage empty;
+            empty.success = true;
+            callback(empty);
+        }
+        return;
+    }
+
+    const int safePage = std::max(0, page);
+    const int safePerPage = std::max(1, perPage);
+    const QString path = teamId.isEmpty()
+        ? QStringLiteral("posts/search")
+        : QStringLiteral("teams/") + teamId + QStringLiteral("/posts/search");
+
+    QJsonObject body {
+        {QStringLiteral("terms"), query},
+        {QStringLiteral("is_or_search"), false},
+        {QStringLiteral("time_zone_offset"), QDateTime::currentDateTime().offsetFromUtc()},
+        {QStringLiteral("page"), safePage},
+        {QStringLiteral("per_page"), safePerPage},
+    };
+
+    NetworkRequest request(path);
+    httpConnector.post(request, body, HttpResponseCallback(
+        [safePerPage, callback = std::move(callback)](
+            QVariant status, const QJsonDocument& doc) mutable {
+            if (callback) {
+                callback(collectionPageFromDocument(status, doc, safePerPage));
             }
         }));
 }

@@ -30,9 +30,13 @@ explicit instead of pretending the local row is an ordinary server channel row.
 ## Saved
 
 **Saved** (`Сохранённое`) is fundamentally different. Saved posts can originate from multiple channels
-and threads, so it must not pretend to be a `BackendChannel`.
+and threads, so it does not pretend to be a `BackendChannel`.
 
-It should be modeled as a virtual destination backed by a cross-conversation post collection:
+It is implemented as the second fixed local row in Favorites and opens the shared virtualized
+`PostCollectionView`. The producer is the paged `/users/{user_id}/posts/flagged` endpoint. Ordinary
+message context menus can add `flagged_post` preferences and Saved rows can remove them again.
+
+The destination is backed by a cross-conversation post collection:
 
 ```text
 Saved
@@ -54,8 +58,12 @@ navigation. The collection itself never invents channel page numbers or thread c
 
 ## Message search
 
-Future message search should reuse the same collection/navigation model as Saved. The difference is
-lifetime and producer, not row semantics:
+Message search reuses the same collection/navigation model as Saved. The difference is lifetime and
+producer, not row semantics. A magnifier beside the sidebar menu opens the transient Search page;
+queries are sent unchanged to Mattermost's search endpoint so server-side syntax remains authoritative.
+The UI exposes the standard modifiers `from:`, `in:`, `before:`, `after:` and `on:`, plus reminders for
+quoted phrases, exclusions, suffix wildcards and hashtags. Search can target the current/specific team
+or the server's all-team search endpoint when supported.
 
 ```text
 Saved collection                 Search result collection
@@ -76,7 +84,7 @@ This means search results should not be inserted into `BackendChannel::posts` as
 contiguous history window. A search endpoint proves only that those posts matched a query and their
 result ordering; it does not prove adjacency in the source conversation.
 
-The eventual shared collection layer can therefore own:
+The shared collection layer therefore owns:
 
 - ordered collection entries and collection-specific paging;
 - lazy body resolution through `PostRepository::loadPost()`;

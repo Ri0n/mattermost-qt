@@ -1,6 +1,8 @@
 <RCC>
     <qresource prefix="/icons">
         <file alias="burger">img/burger_icon.svg</file>
+        <file alias="search">img/search.svg</file>
+        <file alias="bookmark">img/bookmark.svg</file>
         <file alias="emoji">img/emoji.svg</file>
         <file alias="paperclip">img/paperclip.svg</file>
         <file alias="message-balloon">img/message-balloon.svg</file>

@@ -66,14 +66,32 @@ public:
         bool success = false;
     };
 
+    /** One page of a cross-conversation endpoint, preserving server order. */
+    struct CollectionPage {
+        QVector<QJsonObject> posts;
+        bool hasMore = false;
+        bool success = false;
+    };
+
     using PageCallback = std::function<void(const Page&)>;
     using ContextCallback = std::function<void(const Context&)>;
     using PostCallback = std::function<void(const PostResult&)>;
+    using CollectionCallback = std::function<void(const CollectionPage&)>;
 
     static PostRepository& instance(Backend& backend);
 
     /** Fetch one post by id and quietly merge it into its known channel cache. */
     void loadPost(const QString& postId, PostCallback callback);
+
+    /** Fetch the logged-in user's saved/flagged posts, preserving collection order. */
+    void loadFlaggedPosts(int page, int perPage, CollectionCallback callback);
+
+    /** Search message posts in one team, or all teams when teamId is empty. */
+    void searchPosts(const QString& teamId,
+                     const QString& terms,
+                     int page,
+                     int perPage,
+                     CollectionCallback callback);
 
     /** Fetch an absolute main-channel page. Replies are deliberately excluded. */
     void loadChannelPage(BackendChannel& channel,

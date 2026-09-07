@@ -135,6 +135,26 @@
         </layout>
        </item>
        <item>
+        <widget class="QToolButton" name="searchButton">
+         <property name="toolTip">
+          <string>Search messages</string>
+         </property>
+         <property name="accessibleName">
+          <string>Search messages</string>
+         </property>
+         <property name="text">
+          <string/>
+         </property>
+         <property name="icon">
+          <iconset resource="../resource.qrc">
+           <normaloff>:/icons/search</normaloff>:/icons/search</iconset>
+         </property>
+         <property name="autoRaise">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QToolButton" name="toolButton">
          <property name="text">
           <string>...</string>
@@ -260,6 +280,7 @@
  </customwidgets>
  <tabstops>
   <tabstop>channelList</tabstop>
+  <tabstop>searchButton</tabstop>
   <tabstop>toolButton</tabstop>
  </tabstops>
  <resources>

@@ -71,6 +71,7 @@ public:
 	void retrieveUserPreferences ();
 
 	void updateUserPreferences (const BackendUserPreferences& preferences);
+	void deleteUserPreferences (const BackendUserPreferences& preferences);
 
 	//get user's status (/users/status/ids)
 	void retrieveMultipleUsersStatus (const QVector<QString>& userIDs, std::function<void()> callback);

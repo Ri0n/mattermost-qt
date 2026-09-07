@@ -339,6 +339,21 @@ void Backend::updateUserPreferences (const BackendUserPreferences& preferences)
 	}));
 }
 
+void Backend::deleteUserPreferences (const BackendUserPreferences& preferences)
+{
+    NetworkRequest request("users/" + getLoginUser().id + "/preferences/delete");
+
+    QJsonArray jsonArr;
+    jsonArr.push_back(QJsonObject {
+        {"user_id", getLoginUser().id},
+        {"category", preferences.category},
+        {"name", preferences.name},
+        {"value", preferences.value},
+    });
+
+    httpConnector.post(request, jsonArr, HttpResponseCallback([](const QJsonDocument&) {}));
+}
+
 void Backend::retrieveMultipleUsersStatus (const QVector<QString> & userIDs, std::function<void()> callback)
 {
 	if (userIDs.isEmpty()) {
