@@ -116,11 +116,10 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
 {
     backend = &sourceBackend;
 
-    // Mattermost's channel recency represents viewed/opened channels, not every
-    // incoming post. Keep that behavior, but remember the user's latest thread
-    // interaction. When that Recent row is opened, the followed-thread
-    // last_viewed_at boundary is authoritative; the exact reply remains only a
-    // fallback for unfollowed/already-read threads.
+    // Ordinary channel recency remains viewed/opened-channel based. Thread
+    // interactions are remembered separately below, while unread direct/group
+    // conversations are admitted by refresh() using their live activity time so
+    // a newly received DM is immediately discoverable in Recent.
     connect(backend, &Backend::onNewPost, this,
             [this](BackendChannel& channel, const BackendPost& post) {
         if (!backend || post.user_id != backend->getLoginUser().id
@@ -170,7 +169,14 @@ void ChannelQuickList::refresh()
             continue;
         }
 
-        const uint64_t channelRecentTime = sidebar.channelRecentTime(*channel);
+        const bool unreadConversation =
+            (channel->type == BackendChannel::directChannel
+             || channel->type == BackendChannel::groupChannel)
+            && sidebar.isChannelUnread(*channel);
+        const uint64_t storedRecentTime = sidebar.channelRecentTime(*channel);
+        const uint64_t channelRecentTime = unreadConversation
+            ? std::max(storedRecentTime, sidebar.channelActivityTime(*channel))
+            : storedRecentTime;
         uint64_t sortTime = channelRecentTime;
         QString recentPostId;
         QString recentRootId;
