@@ -9,6 +9,7 @@
 #include <QAbstractTextDocumentLayout>
 #include <QEvent>
 #include <QFontDatabase>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QPainter>
 #include <QPalette>
@@ -23,6 +24,7 @@
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextDocumentFragment>
+#include <QTextFragment>
 #include <QTextOption>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -30,6 +32,7 @@
 
 #include "MessageFormatter.h"
 #include "backend/emoji/EmojiInfo.h"
+#include "backend/emoji/EmojiRegistryNotifier.h"
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
 #include "qsourcehighliter.h"
@@ -39,6 +42,7 @@ namespace Mattermost {
 namespace {
 
 constexpr qreal inlineEmojiScale = 1.3;
+constexpr qreal jumboEmojiScale = 2.0;
 
 const QSet<QString>& unicodeEmojiStrings()
 {
@@ -70,13 +74,70 @@ const QSet<QString>& unicodeEmojiStrings()
     return emojiStrings;
 }
 
-void enlargeInlineEmojis(QTextDocument& document)
+bool isEmojiOnlyMessage(const QString& message)
+{
+    if (message.trimmed().isEmpty()) {
+        return false;
+    }
+
+    const QSet<QString>& emojiStrings = unicodeEmojiStrings();
+    QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, message);
+    bool foundEmoji = false;
+    int position = 0;
+
+    while (position < message.size()) {
+        if (message.at(position).isSpace()) {
+            ++position;
+            continue;
+        }
+
+        if (message.at(position) == QLatin1Char(':')) {
+            const int end = message.indexOf(QLatin1Char(':'), position + 1);
+            if (end > position + 1) {
+                const QString name = message.mid(position + 1, end - position - 1);
+                if (EmojiInfo::findByName(name)) {
+                    foundEmoji = true;
+                    position = end + 1;
+                    continue;
+                }
+            }
+        }
+
+        finder.setPosition(position);
+        const int end = finder.toNextBoundary();
+        if (end <= position) {
+            return false;
+        }
+
+        if (!emojiStrings.contains(message.mid(position, end - position))) {
+            return false;
+        }
+        foundEmoji = true;
+        position = end;
+    }
+
+    return foundEmoji;
+}
+
+int emojiExtent(const QFont& baseFont, qreal scale)
+{
+    QFont font(baseFont);
+    if (font.pointSizeF() > 0.0) {
+        font.setPointSizeF(font.pointSizeF() * scale);
+    } else if (font.pixelSize() > 0) {
+        font.setPixelSize(qRound(font.pixelSize() * scale));
+    }
+    return std::max(1, QFontMetrics(font).height());
+}
+
+void resizeInlineEmojis(QTextDocument& document, bool jumbo)
 {
     const QString text = document.toPlainText();
     if (text.isEmpty()) {
         return;
     }
 
+    const qreal scale = jumbo ? jumboEmojiScale : inlineEmojiScale;
     const QSet<QString>& emojiStrings = unicodeEmojiStrings();
     QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, text);
     finder.toStart();
@@ -101,12 +162,38 @@ void enlargeInlineEmojis(QTextDocument& document)
             if (pointSize > 0.0) {
                 cursor.setPosition(end, QTextCursor::KeepAnchor);
                 QTextCharFormat emojiFormat;
-                emojiFormat.setFontPointSize(pointSize * inlineEmojiScale);
+                emojiFormat.setFontPointSize(pointSize * scale);
                 cursor.mergeCharFormat(emojiFormat);
             }
         }
 
         start = end;
+    }
+
+    if (!jumbo) {
+        return;
+    }
+
+    // An emoji-only message cannot contain a user Markdown image. Any image
+    // object left in this document is therefore a custom emoji inserted by the
+    // formatter. Resize the rendered object, not the cached source asset.
+    const int extent = emojiExtent(document.defaultFont(), jumboEmojiScale);
+    for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() || !fragment.charFormat().isImageFormat()) {
+                continue;
+            }
+
+            QTextImageFormat imageFormat = fragment.charFormat().toImageFormat();
+            imageFormat.setWidth(extent);
+            imageFormat.setHeight(extent);
+
+            QTextCursor cursor(&document);
+            cursor.setPosition(fragment.position());
+            cursor.setPosition(fragment.position() + fragment.length(), QTextCursor::KeepAnchor);
+            cursor.setCharFormat(imageFormat);
+        }
     }
 }
 
@@ -136,11 +223,11 @@ public:
         applyWrapMode();
     }
 
-    void setContentHtml(const QString& html)
+    void setContentHtml(const QString& html, bool jumboEmoji = false)
     {
         setHtml(html);
         document()->setDocumentMargin(0);
-        enlargeInlineEmojis(*document());
+        resizeInlineEmojis(*document(), jumboEmoji);
         applyWrapMode();
         scheduleHeightUpdate();
     }
@@ -608,10 +695,25 @@ MessageContentWidget::MessageContentWidget(QWidget* parent)
     contentLayout->setSpacing(2);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
     setMinimumWidth(0);
+
+    connect(&EmojiRegistryNotifier::instance(),
+            &EmojiRegistryNotifier::customEmojiAdded,
+            this,
+            [this](const QString& name) {
+        if (_sourceMessage.isEmpty()) {
+            return;
+        }
+        const QString token = QLatin1Char(':') + name + QLatin1Char(':');
+        if (_sourceMessage.contains(token)) {
+            setMessage(_sourceMessage);
+        }
+    });
 }
 
 void MessageContentWidget::setMessage(const QString& message)
 {
+    _sourceMessage = message;
+    _jumboEmojiMessage = isEmojiOnlyMessage(message);
     clearContent();
 
     if (message.isEmpty()) {
@@ -641,6 +743,8 @@ void MessageContentWidget::setMessage(const QString& message)
 
 void MessageContentWidget::clear()
 {
+    _sourceMessage.clear();
+    _jumboEmojiMessage = false;
     clearContent();
     setVisible(false);
     scheduleDimensionsChanged();
@@ -726,7 +830,7 @@ void MessageContentWidget::addRichText(const QString& html)
     }
 
     auto* richText = new WrappedRichText([this] { scheduleDimensionsChanged(); }, this);
-    richText->setContentHtml(html);
+    richText->setContentHtml(html, _jumboEmojiMessage);
     connect(richText,
             QOverload<const QUrl&>::of(&QTextBrowser::highlighted),
             this,
