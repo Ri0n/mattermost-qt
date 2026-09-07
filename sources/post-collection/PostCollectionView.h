@@ -11,6 +11,7 @@
 
 #include "backend/HTTPConnector.h"
 
+class QAbstractButton;
 class QComboBox;
 class QLabel;
 class QToolButton;
@@ -70,7 +71,7 @@ private:
     void removeSavedPost(const QString& postId);
     void removeSavedPostLocally(const QString& postId);
     void handleFlaggedPostChanged(const QString& postId, bool flagged);
-    void unpinPost(const QString& postId, QToolButton* button);
+    void unpinPost(const QString& postId, QAbstractButton* button);
     void updateStatus();
 
     Backend& backend;
