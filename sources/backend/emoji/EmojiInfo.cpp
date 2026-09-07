@@ -37,6 +37,38 @@ extern QVector<SkinVariadicEmoji> emojiVecSkinVariadic;
 extern QMap<QString, EmojiSeq> emojiMap;
 extern uint32_t nextEmojiSeq;
 
+namespace {
+
+bool isValidCustomEmojiName(const QString& name)
+{
+    if (name.isEmpty()) {
+        return false;
+    }
+
+    for (const QChar character : name) {
+        const ushort value = character.unicode();
+        const bool asciiLetter = (value >= 'A' && value <= 'Z')
+            || (value >= 'a' && value <= 'z');
+        const bool asciiDigit = value >= '0' && value <= '9';
+        if (!asciiLetter && !asciiDigit
+            && character != QLatin1Char('_')
+            && character != QLatin1Char('-')
+            && character != QLatin1Char('+')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void requestCustomEmoji(const QString& name)
+{
+    if (isValidCustomEmojiName(name)) {
+        emit EmojiRegistryNotifier::instance().customEmojiRequested(name);
+    }
+}
+
+} // namespace
+
 /**
  * Search for a skin tone string in the emoji name. Remove it, when performing lookup,
  * because emoji names are stored without the skin tone. All skin tone emojis are in an array and
@@ -68,6 +100,7 @@ EmojiID EmojiInfo::findByName (const QString& emojiName)
 			auto it = emojiMap.find (emojiNameReplaced);
 
 			if (it == emojiMap.end ()) {
+                requestCustomEmoji(emojiName);
 				return {0,0};
 			}
 
@@ -78,6 +111,7 @@ EmojiID EmojiInfo::findByName (const QString& emojiName)
 	auto it = emojiMap.find (emojiName);
 
 	if (it == emojiMap.end ()) {
+        requestCustomEmoji(emojiName);
 		return {0,0};
 	}
 
@@ -147,6 +181,12 @@ QVector<Emoji> EmojiInfo::getAllEmojis (uint32_t category, uint32_t skinTone)
 
 void EmojiInfo::addCustomEmoji (const QString& emojiName, const QString& emojiPath)
 {
+    const auto existing = emojiMap.constFind(emojiName);
+    if (existing != emojiMap.cend()
+        && getEmojiCategory(existing.value()) == EmojiCategory::custom) {
+        return;
+    }
+
 	emojiVecNoSkinVariadic[EmojiCategory::custom].push_back (Emoji {emojiName, " <img src=\"" + emojiPath + "\" width=32 height=32> "});
 	emojiMap[emojiName] = nextEmojiSeq;
 	++nextEmojiSeq;
