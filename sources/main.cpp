@@ -20,15 +20,13 @@
 #include <memory>
 #include <QApplication>
 #include <QMenu>
-#include <QStyle>
-#include <QStyleFactory>
 #include <QSystemTrayIcon>
 
 #include "login/LoginDialog.h"
 #include "mainwindow.h"
 #include "backend/Backend.h"
 #include "config/Config.h"
-#include "ui/TransientScrollBarStyle.h"
+#include "ui/OverlayScrollBarManager.h"
 
 namespace Mattermost {
 
@@ -55,11 +53,7 @@ inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 ,trayIconMenu (std::make_unique<QMenu> (nullptr))
 ,currentWindow (nullptr)
 {
-    // Keep the platform's current style as the drawing backend, but opt all
-    // QAbstractScrollArea descendants into Qt's transient scrollbar machinery.
-    // QProxyStyle owns this separately-created base style.
-    QStyle* baseStyle = QStyleFactory::create(style()->objectName());
-    setStyle(new TransientScrollBarStyle(baseStyle));
+    OverlayScrollBarManager::install(*this);
 
     Config::init ();
 	trayIcon->setToolTip(tr("Mattermost Qt"));
