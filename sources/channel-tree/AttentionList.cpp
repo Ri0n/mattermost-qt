@@ -29,23 +29,16 @@
 #include <QFont>
 #include <QHeaderView>
 #include <QIcon>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QPointer>
 #include <QSet>
 #include <QSignalBlocker>
 
 #include "backend/Backend.h"
-#include "backend/NetworkRequest.h"
-#include "backend/QByteArrayCreator.h"
 #include "backend/SidebarService.h"
 #include "backend/Storage.h"
-#include "backend/ThreadFollowService.h"
 #include "backend/UserProfileService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
-#include "backend/types/BackendTeam.h"
 #include "backend/types/BackendUser.h"
 #include "channel-tree/ChannelIcons.h"
 #include "navigation/AppNavigationService.h"
@@ -54,9 +47,18 @@ namespace Mattermost {
 
 namespace {
 
-constexpr int ThreadsPerPage = 100;
 constexpr int ThreadRefreshDelayMs = 300;
 constexpr int ThreadSnippetLength = 120;
+
+QString channelKey(const QString& channelId)
+{
+    return QStringLiteral("c:") + channelId;
+}
+
+QString threadKey(const QString& threadId)
+{
+    return QStringLiteral("t:") + threadId;
+}
 
 QString compactMessage(QString message)
 {
@@ -101,11 +103,30 @@ AttentionList::AttentionList(QWidget* parent)
         const auto type = static_cast<EntryType>(current->data(0, EntryTypeRole).toInt());
         const QString channelId = current->data(0, ChannelIdRole).toString();
         if (type == ChannelEntry) {
-            if (!channelId.isEmpty()) {
-                // ChannelTree/ChatArea owns read acknowledgement. It waits until
-                // the selected conversation's newest content is actually visible.
-                emit channelSelected(channelId);
+            if (channelId.isEmpty() || !backend) {
+                return;
             }
+
+            BackendChannel* channel = backend->getStorage().getChannelById(channelId);
+            if (!channel) {
+                emit channelSelected(channelId);
+                return;
+            }
+
+            // Direct/group messages are implicitly followed. Like Following,
+            // Attention opens the first unread post rather than the newest edge.
+            QPointer<AttentionList> guard(this);
+            backend->retrieveChannelUnreadPost(*channel,
+                [guard, channelId](const QString& postId) {
+                    if (!guard || !guard->backend) {
+                        return;
+                    }
+                    if (!postId.isEmpty()) {
+                        AppNavigationService::instance(*guard->backend).openPost(postId);
+                    } else {
+                        emit guard->channelSelected(channelId);
+                    }
+                });
             return;
         }
 
@@ -176,19 +197,13 @@ void AttentionList::initialize(Backend& sourceBackend)
 {
     backend = &sourceBackend;
 
-    connect(&httpConnector, &HTTPConnector::onNetworkError,
-            backend, &Backend::onNetworkError);
-    connect(&httpConnector, &HTTPConnector::onHttpError,
-            backend, &Backend::onHttpError);
-
     connect(backend, &Backend::onNewPost, this,
             [this](BackendChannel& channel, const BackendPost& post) {
         notePost(channel, post);
         refresh();
 
         // Followed-thread unread state is server-owned. Refresh it even while
-        // this tab is hidden so the Attention badge/icon changes immediately
-        // instead of only after the user opens the tab.
+        // this tab is hidden so the Attention badge/icon changes immediately.
         if (!post.root_id.isEmpty()) {
             scheduleThreadRefresh();
         }
@@ -205,13 +220,25 @@ void AttentionList::initialize(Backend& sourceBackend)
     auto& followService = ThreadFollowService::instance(*backend);
     connect(&followService, &ThreadFollowService::followingChanged, this,
             [this](const QString&, const QString& threadId, bool following) {
-        if (!following && retainedThreadId == threadId) {
-            retainedChannelId.clear();
-            retainedThreadId.clear();
-            hasRetainedThread = false;
-            const QSignalBlocker blocker(this);
-            setCurrentItem(nullptr);
-            clearSelection();
+        if (!following) {
+            syntheticMentions.remove(threadId);
+            pendingSince.remove(threadKey(threadId));
+            for (auto it = serverThreads.begin(); it != serverThreads.end();) {
+                if (it->id == threadId) {
+                    it = serverThreads.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            if (retainedThreadId == threadId) {
+                retainedChannelId.clear();
+                retainedThreadId.clear();
+                hasRetainedThread = false;
+                const QSignalBlocker blocker(this);
+                setCurrentItem(nullptr);
+                clearSelection();
+            }
+            refresh();
         }
         scheduleThreadRefresh();
     });
@@ -260,6 +287,7 @@ void AttentionList::clearSyntheticMentions(const QString& channelId)
 {
     for (auto it = syntheticMentions.begin(); it != syntheticMentions.end();) {
         if (it->channelId == channelId) {
+            pendingSince.remove(threadKey(it.key()));
             it = syntheticMentions.erase(it);
         } else {
             ++it;
@@ -302,6 +330,8 @@ void AttentionList::refresh()
         EntryType type = ChannelEntry;
         BackendChannel* channel = nullptr;
         ThreadEntry thread;
+        QString key;
+        uint64_t observedTime = 0;
         uint64_t sortTime = 0;
         bool attention = true;
     };
@@ -317,6 +347,19 @@ void AttentionList::refresh()
     QVector<DisplayEntry> entries;
     QSet<QString> displayedChannelIds;
     QSet<QString> displayedThreadIds;
+    QSet<QString> presentKeys;
+
+    auto stabilize = [this, &presentKeys](DisplayEntry& display) {
+        presentKeys.insert(display.key);
+        auto it = pendingSince.find(display.key);
+        if (it == pendingSince.end()) {
+            const uint64_t value = display.observedTime != 0
+                ? display.observedTime
+                : static_cast<uint64_t>(QDateTime::currentMSecsSinceEpoch());
+            it = pendingSince.insert(display.key, value);
+        }
+        display.sortTime = it.value();
+    };
 
     // Direct/group conversations are attention items as conversations, not as
     // thread rows. Muted conversations never require attention.
@@ -334,7 +377,9 @@ void AttentionList::refresh()
         DisplayEntry display;
         display.type = ChannelEntry;
         display.channel = channel;
-        display.sortTime = sidebar.channelActivityTime(*channel);
+        display.key = channelKey(channel->id);
+        display.observedTime = sidebar.channelActivityTime(*channel);
+        stabilize(display);
         entries.push_back(std::move(display));
         displayedChannelIds.insert(channel->id);
     }
@@ -355,7 +400,9 @@ void AttentionList::refresh()
         DisplayEntry display;
         display.type = ThreadEntryType;
         display.thread = thread;
-        display.sortTime = thread.lastReplyAt;
+        display.key = threadKey(thread.id);
+        display.observedTime = thread.lastReplyAt;
+        stabilize(display);
         entries.push_back(std::move(display));
     }
 
@@ -375,7 +422,9 @@ void AttentionList::refresh()
         DisplayEntry display;
         display.type = ThreadEntryType;
         display.thread = it.value();
-        display.sortTime = it->lastReplyAt;
+        display.key = threadKey(it.key());
+        display.observedTime = it->lastReplyAt;
+        stabilize(display);
         entries.push_back(std::move(display));
     }
 
@@ -401,8 +450,10 @@ void AttentionList::refresh()
                     DisplayEntry display;
                     display.type = ChannelEntry;
                     display.channel = channel;
-                    display.sortTime = sidebar.channelActivityTime(*channel);
+                    display.key = channelKey(channel->id);
+                    display.observedTime = sidebar.channelActivityTime(*channel);
                     display.attention = false;
+                    stabilize(display);
                     entries.push_back(std::move(display));
                 }
             }
@@ -412,10 +463,20 @@ void AttentionList::refresh()
                 DisplayEntry display;
                 display.type = ThreadEntryType;
                 display.thread = retainedThread;
-                display.sortTime = retainedThread.lastReplyAt;
+                display.key = threadKey(retainedThread.id);
+                display.observedTime = retainedThread.lastReplyAt;
                 display.attention = false;
+                stabilize(display);
                 entries.push_back(std::move(display));
             }
+        }
+    }
+
+    for (auto it = pendingSince.begin(); it != pendingSince.end();) {
+        if (!presentKeys.contains(it.key())) {
+            it = pendingSince.erase(it);
+        } else {
+            ++it;
         }
     }
 
@@ -479,7 +540,10 @@ void AttentionList::refresh()
 
         const ThreadEntry& thread = display.thread;
         item->setText(0, threadLabel(thread));
-        item->setIcon(0, ChannelIcons::channel());
+        BackendChannel* threadChannel = backend->getStorage().getChannelById(thread.channelId);
+        item->setIcon(0, threadChannel && threadChannel->type == BackendChannel::privateChannel
+                             ? ChannelIcons::privateChannel()
+                             : ChannelIcons::channel());
         item->setData(0, EntryTypeRole, static_cast<int>(ThreadEntryType));
         item->setData(0, ChannelIdRole, thread.channelId);
         item->setData(0, ThreadIdRole, thread.id);
@@ -524,109 +588,22 @@ void AttentionList::refreshThreads()
         return;
     }
 
-    QStringList teamIds;
-    for (const auto& pair : backend->getStorage().teams) {
-        if (!pair.first.isEmpty()) {
-            teamIds.push_back(pair.first);
-        }
-    }
-
-    if (teamIds.isEmpty() || backend->getLoginUser().id.isEmpty()) {
-        return;
-    }
-
     threadRefreshInFlight = true;
     threadRefreshRequested = false;
-    const quint64 generation = ++threadRefreshGeneration;
-    auto ids = std::make_shared<QStringList>(std::move(teamIds));
-    auto collected = std::make_shared<QVector<ThreadEntry>>();
-    fetchTeamPage(ids, 0, QString(), collected, generation);
-}
-
-void AttentionList::fetchTeamPage(const std::shared_ptr<QStringList>& teamIds,
-                                  int teamIndex,
-                                  const QString& before,
-                                  const std::shared_ptr<QVector<ThreadEntry>>& collected,
-                                  quint64 generation)
-{
-    if (!backend || generation != threadRefreshGeneration) {
-        return;
-    }
-    if (teamIndex >= teamIds->size()) {
-        finishThreadRefresh(collected, generation);
-        return;
-    }
-
-    const QString teamId = teamIds->at(teamIndex);
-    QString path = QStringLiteral("users/") + backend->getLoginUser().id
-        + QStringLiteral("/teams/") + teamId
-        + QStringLiteral("/threads?unread=true&excludeDirect=true&per_page=")
-        + QString::number(ThreadsPerPage);
-    if (!before.isEmpty()) {
-        path += QStringLiteral("&before=") + before;
-    }
-
-    NetworkRequest request(path);
-    httpConnector.get(request, HttpResponseCallback(
-        [this, teamIds, teamIndex, teamId, collected, generation](const QJsonDocument& doc) {
-            if (!backend || generation != threadRefreshGeneration) {
+    QPointer<AttentionList> guard(this);
+    ThreadFollowService::instance(*backend).queryUnreadThreads(
+        [guard](QVector<ThreadEntry> threads) {
+            if (!guard) {
                 return;
             }
-
-            const QJsonArray threads = doc.object().value(QStringLiteral("threads")).toArray();
-            QString lastThreadId;
-            for (const QJsonValue& value : threads) {
-                const QJsonObject object = value.toObject();
-                const QJsonObject post = object.value(QStringLiteral("post")).toObject();
-
-                ThreadEntry entry;
-                entry.id = object.value(QStringLiteral("id")).toString();
-                entry.channelId = post.value(QStringLiteral("channel_id")).toString();
-                entry.teamId = teamId;
-                entry.authorId = post.value(QStringLiteral("user_id")).toString();
-                entry.message = post.value(QStringLiteral("message")).toString();
-                entry.lastViewedAt = object.value(QStringLiteral("last_viewed_at"))
-                    .toVariant().toULongLong();
-                entry.lastReplyAt = object.value(QStringLiteral("last_reply_at"))
-                    .toVariant().toULongLong();
-                if (entry.lastReplyAt == 0) {
-                    entry.lastReplyAt = post.value(QStringLiteral("create_at"))
-                        .toVariant().toULongLong();
-                }
-                entry.unreadReplies = object.value(QStringLiteral("unread_replies")).toInt();
-                entry.unreadMentions = object.value(QStringLiteral("unread_mentions")).toInt();
-                entry.urgent = object.value(QStringLiteral("is_urgent")).toBool();
-
-                if (!entry.id.isEmpty()) {
-                    lastThreadId = entry.id;
-                    collected->push_back(std::move(entry));
-                }
+            guard->serverThreads = std::move(threads);
+            guard->threadRefreshInFlight = false;
+            guard->refresh();
+            if (guard->threadRefreshRequested) {
+                guard->threadRefreshRequested = false;
+                guard->scheduleThreadRefresh();
             }
-
-            if (threads.size() == ThreadsPerPage && !lastThreadId.isEmpty()) {
-                fetchTeamPage(teamIds, teamIndex, lastThreadId, collected, generation);
-                return;
-            }
-            fetchTeamPage(teamIds, teamIndex + 1, QString(), collected, generation);
-        }));
-}
-
-void AttentionList::finishThreadRefresh(
-    const std::shared_ptr<QVector<ThreadEntry>>& collected,
-    quint64 generation)
-{
-    if (generation != threadRefreshGeneration) {
-        return;
-    }
-
-    serverThreads = *collected;
-    threadRefreshInFlight = false;
-    refresh();
-
-    if (threadRefreshRequested) {
-        threadRefreshRequested = false;
-        QTimer::singleShot(0, this, &AttentionList::refreshThreads);
-    }
+        });
 }
 
 void AttentionList::openThread(const QString& channelId,
@@ -648,6 +625,7 @@ void AttentionList::openThread(const QString& channelId,
     // is used instead of opening an empty thread window.
     if (syntheticMentions.contains(threadId)) {
         syntheticMentions.remove(threadId);
+        pendingSince.remove(threadKey(threadId));
         refresh();
         AppNavigationService::instance(*backend).openPost(threadId);
         return;
@@ -668,8 +646,7 @@ void AttentionList::openThread(const QString& channelId,
     // The unread ThreadResponse already gave us the exact server read boundary.
     // Fetch only a compact window beginning there, navigate to the first reply
     // after last_viewed_at, and acknowledge the thread only after that semantic
-    // navigation has actually been dispatched. This replaces the old eager
-    // per_page=100 thread download.
+    // navigation has actually been dispatched.
     QPointer<AttentionList> guard(this);
     AppNavigationService::instance(*backend).openThreadAtLastViewed(
         channelId, threadId, lastViewedAt, QString(),
@@ -695,15 +672,7 @@ void AttentionList::markThreadRead(const QString& teamId, const QString& threadI
         }
     }
     refresh();
-
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    NetworkRequest request(
-        QStringLiteral("users/") + backend->getLoginUser().id
-        + QStringLiteral("/teams/") + teamId
-        + QStringLiteral("/threads/") + threadId
-        + QStringLiteral("/read/") + QString::number(now));
-    httpConnector.put(request, QByteArrayCreator(QJsonObject {}),
-                      HttpResponseCallback([](const QJsonDocument&) {}));
+    ThreadFollowService::instance(*backend).markThreadRead(teamId, threadId);
 }
 
 } // namespace Mattermost
