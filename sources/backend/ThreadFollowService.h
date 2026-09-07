@@ -43,7 +43,7 @@ public:
         int unreadMentions = 0;
     };
 
-    /** Compact unread followed-thread row returned by Mattermost's CRT API. */
+    /** Compact followed-thread row returned by Mattermost's CRT API. */
     struct ThreadSummary {
         QString id;
         QString channelId;
@@ -67,6 +67,7 @@ public:
                      ThreadStateCallback callback);
     void queryFollowing(const QString& teamId, const QString& threadId,
                         std::function<void(bool)> callback);
+    void queryFollowingThreads(ThreadListCallback callback);
     void queryUnreadThreads(ThreadListCallback callback);
     void setFollowing(const QString& teamId, const QString& threadId, bool following,
                       std::function<void(bool)> callback = {});
@@ -79,14 +80,16 @@ signals:
 private:
     explicit ThreadFollowService(Backend& backend);
     QString threadPath(const QString& teamId, const QString& threadId) const;
-    void queryUnreadTeamPage(const std::shared_ptr<QStringList>& teamIds,
-                             int teamIndex,
-                             const QString& before,
-                             const std::shared_ptr<QVector<ThreadSummary>>& collected,
-                             ThreadListCallback callback);
+    void queryThreads(bool unreadOnly, ThreadListCallback callback);
+    void queryTeamPage(const std::shared_ptr<QStringList>& teamIds,
+                       int teamIndex,
+                       const QString& before,
+                       bool unreadOnly,
+                       const std::shared_ptr<QVector<ThreadSummary>>& collected,
+                       ThreadListCallback callback);
 
-    Backend& backend;
-    HTTPConnector httpConnector;
+    Backend& _backend;
+    HTTPConnector _httpConnector;
 };
 
 } // namespace Mattermost
