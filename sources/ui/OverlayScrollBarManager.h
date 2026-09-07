@@ -45,10 +45,11 @@ private:
     void sync(State& state);
     void layout(State& state);
     void updatePalette(State& state);
-    void show(State& state);
-    void hide(State& state);
-    void scheduleHide(State& state);
+    void reveal(State& state);
+    void fade(State& state);
+    void scheduleFade(State& state);
     bool containsCursor(const State& state) const;
+    bool cursorOverOverlay(const State& state) const;
 
     QHash<QAbstractScrollArea*, State*> states;
 };
