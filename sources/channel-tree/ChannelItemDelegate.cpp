@@ -1,6 +1,7 @@
 #include "ChannelItemDelegate.h"
 
 #include <QApplication>
+#include <QHash>
 #include <QMetaObject>
 #include <QPainter>
 #include <QPainterPath>
@@ -11,6 +12,7 @@
 #include "SidebarItem.h"
 #include "backend/types/BackendChannel.h"
 #include "ui/AvatarUtils.h"
+#include "ui/IconUtils.h"
 
 namespace Mattermost {
 
@@ -32,6 +34,27 @@ bool isConversationRow(const QModelIndex& index)
 {
     const int kind = index.data(SidebarItem::KindRole).toInt();
     return kind == SidebarItem::Channel || kind == SidebarItem::VirtualDestination;
+}
+
+bool isSavedDestination(const QModelIndex& index)
+{
+    return index.data(SidebarItem::DestinationRole).toInt()
+        == SidebarItem::SavedDestination;
+}
+
+QIcon savedDestinationIcon(const QColor& color)
+{
+    static QHash<QRgb, QIcon> cache;
+    const QRgb key = color.rgba();
+    auto it = cache.constFind(key);
+    if (it != cache.cend()) {
+        return *it;
+    }
+
+    QIcon icon = IconUtils::tintedSymbolicIcon(
+        QStringLiteral(":/icons/bookmark"), color);
+    cache.insert(key, icon);
+    return icon;
 }
 
 } // namespace
@@ -65,6 +88,14 @@ void ChannelItemDelegate::paint(QPainter* painter,
     const QString text = base.text;
     QIcon icon = base.icon;
     const int type = channelType(index);
+    const bool selected = option.state.testFlag(QStyle::State_Selected);
+
+    if (isSavedDestination(index)) {
+        const QColor iconColor = selected
+            ? option.palette.color(QPalette::HighlightedText)
+            : option.palette.color(QPalette::Text);
+        icon = savedDestinationIcon(iconColor);
+    }
 
     if (type == BackendChannel::groupChannel) {
         const QString channelId = index.data(SidebarItem::IdRole).toString();
@@ -129,7 +160,6 @@ void ChannelItemDelegate::paint(QPainter* painter,
                                    iconRect.bottom() - StatusSize + 3,
                                    StatusSize,
                                    StatusSize);
-            const bool selected = option.state.testFlag(QStyle::State_Selected);
             const QColor badgeBackground = selected
                 ? option.palette.color(QPalette::Highlight)
                 : option.palette.color(QPalette::Base);
@@ -149,14 +179,14 @@ void ChannelItemDelegate::paint(QPainter* painter,
         textRight = muteRect.left() - ItemSpacing;
     }
 
-    QRect textRect(textLeft, contentRect.top(), qMax(0, textRight - textLeft + 1), contentRect.height());
+    QRect textRect(textLeft, contentRect.top(),
+                   qMax(0, textRight - textLeft + 1), contentRect.height());
     QFont font = option.font;
     const bool unread = index.data(SidebarItem::UnreadRole).toBool();
     const bool mentioned = index.data(SidebarItem::MentionedRole).toBool();
     font.setBold(unread || mentioned);
     painter->setFont(font);
 
-    const bool selected = option.state.testFlag(QStyle::State_Selected);
     const bool muted = index.data(SidebarItem::MutedRole).toBool();
     const QColor textColor = selected
         ? option.palette.color(QPalette::HighlightedText)
