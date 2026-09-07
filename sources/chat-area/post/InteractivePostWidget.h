@@ -2,7 +2,6 @@
 
 #include "PostWidget.h"
 
-class QEvent;
 class QPaintEvent;
 class QVariantAnimation;
 
@@ -11,10 +10,9 @@ namespace Mattermost {
 /**
  * PostWidget presentation used by virtualized chat logs.
  *
- * QListWidget used to provide a soft hovered row background and the old
- * navigation path briefly highlighted the destination item. LongListWidget
- * materializes raw widgets instead, so both presentation states live here and
- * remain independent from list implementation details.
+ * LongListWidget owns generic row interaction feedback such as hover highlighting.
+ * This subclass keeps only the Mattermost-specific visual cue used when explicit
+ * navigation lands on a post.
  */
 class InteractivePostWidget final : public PostWidget
 {
@@ -28,13 +26,11 @@ public:
     void animateNavigationHighlight();
 
 protected:
-    bool event(QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
 
 private:
     QVariantAnimation* navigationAnimation = nullptr;
     int navigationAlpha = 0;
-    bool hovered = false;
 };
 
 } // namespace Mattermost

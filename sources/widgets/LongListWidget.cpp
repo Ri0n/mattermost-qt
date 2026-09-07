@@ -7,6 +7,8 @@
 
 #include <QEvent>
 #include <QLayout>
+#include <QPainter>
+#include <QPalette>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QSignalBlocker>
@@ -17,6 +19,7 @@ namespace Mattermost {
 namespace {
 
 constexpr int MinimumPrefetchItems = 5;
+constexpr int HoverHighlightAlpha = 24;
 
 bool sameRange(const LongListWidget::Range& lhs, const LongListWidget::Range& rhs)
 {
@@ -493,6 +496,18 @@ void LongListWidget::setSeekDebounceMs(int milliseconds)
     seekTimer.setInterval(seekDebounceInterval);
 }
 
+void LongListWidget::setHoverHighlightEnabled(bool enabled)
+{
+    if (hoverHighlightEnabled == enabled) {
+        return;
+    }
+    hoverHighlightEnabled = enabled;
+    if (!hoverHighlightEnabled) {
+        hoveredWidget.clear();
+    }
+    viewport()->update();
+}
+
 void LongListWidget::setRangeAvailable(int first, int last, bool isAvailable)
 {
     if (logicalCount <= 0) {
@@ -750,13 +765,36 @@ int LongListWidget::estimatedItemHeight(int) const
 bool LongListWidget::eventFilter(QObject* watched, QEvent* event)
 {
     const auto it = widgetIndexes.constFind(watched);
-    if (it != widgetIndexes.cend()
-        && (event->type() == QEvent::LayoutRequest || event->type() == QEvent::Resize)) {
-        if (!synchronizing && !committingGeometry) {
+    if (it != widgetIndexes.cend()) {
+        if (event->type() == QEvent::Enter && hoverHighlightEnabled) {
+            hoveredWidget = qobject_cast<QWidget*>(watched);
+            viewport()->update();
+        } else if ((event->type() == QEvent::Leave || event->type() == QEvent::Hide)
+                   && hoveredWidget.data() == watched) {
+            hoveredWidget.clear();
+            viewport()->update();
+        }
+
+        if ((event->type() == QEvent::LayoutRequest || event->type() == QEvent::Resize)
+            && !synchronizing && !committingGeometry) {
             scheduleGeometryCommit(it.value());
         }
     }
     return QAbstractScrollArea::eventFilter(watched, event);
+}
+
+void LongListWidget::paintEvent(QPaintEvent* event)
+{
+    QAbstractScrollArea::paintEvent(event);
+
+    if (!hoverHighlightEnabled || !hoveredWidget || !hoveredWidget->isVisible()) {
+        return;
+    }
+
+    QColor background = palette().color(QPalette::Highlight);
+    background.setAlpha(HoverHighlightAlpha);
+    QPainter painter(viewport());
+    painter.fillRect(hoveredWidget->geometry(), background);
 }
 
 void LongListWidget::resizeEvent(QResizeEvent* event)

@@ -243,9 +243,11 @@ void ChatArea::setupPostSource()
 
 void ChatArea::scheduleNewestPosition()
 {
+    const std::uint64_t generation = viewportNavigationGeneration;
     QPointer<ChatArea> guard(this);
-    QTimer::singleShot(0, this, [guard] {
+    QTimer::singleShot(0, this, [guard, generation] {
         if (!guard || !guard->ui || !guard->ui->listWidget
+            || generation != guard->viewportNavigationGeneration
             || !guard->pendingPostId.isEmpty()) {
             return;
         }
@@ -579,6 +581,12 @@ void ChatArea::goToPost(const QString& postId)
     if (postId.isEmpty() || !ui || !ui->listWidget) {
         return;
     }
+
+    // Opening/reactivating a channel schedules a weak "show newest" position on
+    // the next event-loop turn. Explicit post navigation supersedes that intent,
+    // even when the destination materializes immediately and pendingPostId is
+    // cleared before the queued callback gets a chance to run.
+    ++viewportNavigationGeneration;
 
     if (!ui->listWidget->ensurePostVisible(postId,
                                            LongListWidget::Alignment::Center)) {

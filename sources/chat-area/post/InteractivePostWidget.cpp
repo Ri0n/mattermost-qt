@@ -1,9 +1,6 @@
 #include "InteractivePostWidget.h"
 
-#include <algorithm>
-
 #include <QEasingCurve>
-#include <QEvent>
 #include <QPainter>
 #include <QPalette>
 #include <QVariantAnimation>
@@ -12,7 +9,6 @@ namespace Mattermost {
 
 namespace {
 
-constexpr int HoverAlpha = 24;
 constexpr int NavigationDurationMs = 3000;
 
 } // namespace
@@ -24,7 +20,6 @@ InteractivePostWidget::InteractivePostWidget(Backend& backend,
                                              BackendPost* lastRootPost)
     : PostWidget(backend, post, parent, chatArea, lastRootPost)
 {
-    setMouseTracking(true);
 }
 
 void InteractivePostWidget::animateNavigationHighlight()
@@ -58,31 +53,16 @@ void InteractivePostWidget::animateNavigationHighlight()
     navigationAnimation->start();
 }
 
-bool InteractivePostWidget::event(QEvent* event)
-{
-    if (event) {
-        if (event->type() == QEvent::Enter && !hovered) {
-            hovered = true;
-            update();
-        } else if (event->type() == QEvent::Leave && hovered) {
-            hovered = false;
-            update();
-        }
-    }
-    return PostWidget::event(event);
-}
-
 void InteractivePostWidget::paintEvent(QPaintEvent* event)
 {
     PostWidget::paintEvent(event);
 
-    const int alpha = std::max(navigationAlpha, hovered ? HoverAlpha : 0);
-    if (alpha <= 0) {
+    if (navigationAlpha <= 0) {
         return;
     }
 
     QColor background = palette().color(QPalette::Highlight);
-    background.setAlpha(alpha);
+    background.setAlpha(navigationAlpha);
     QPainter painter(this);
     painter.fillRect(rect(), background);
 }

@@ -28,9 +28,12 @@
 #include <QAbstractScrollArea>
 #include <QBitArray>
 #include <QHash>
+#include <QPointer>
 #include <QSet>
 #include <QTimer>
 #include <QVector>
+
+class QPaintEvent;
 
 namespace Mattermost {
 
@@ -48,6 +51,9 @@ namespace Mattermost {
 class LongListWidget : public QAbstractScrollArea
 {
     Q_OBJECT
+    Q_PROPERTY(bool hoverHighlightEnabled
+               READ isHoverHighlightEnabled
+               WRITE setHoverHighlightEnabled)
 public:
     enum class RequestReason {
         Initial,
@@ -103,6 +109,10 @@ public:
 
     int seekDebounceMs() const { return seekDebounceInterval; }
     void setSeekDebounceMs(int milliseconds);
+
+    /** Generic row hover feedback is enabled by default and can be disabled by subclasses/users. */
+    bool isHoverHighlightEnabled() const { return hoverHighlightEnabled; }
+    void setHoverHighlightEnabled(bool enabled);
 
     void setRangeAvailable(int first, int last, bool available = true);
     bool isItemAvailable(int index) const;
@@ -191,6 +201,7 @@ protected:
     virtual int estimatedItemHeight(int index) const;
 
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
 
@@ -295,6 +306,7 @@ private:
     QHash<int, QWidget*> materialized;
     QHash<QObject*, int> widgetIndexes;
     QSet<int> dirtyGeometry;
+    QPointer<QWidget> hoveredWidget;
 
     QTimer syncTimer;
     QTimer geometryTimer;
@@ -306,6 +318,7 @@ private:
     bool committingGeometry = false;
     bool internalScrollChange = false;
     bool wheelInProgress = false;
+    bool hoverHighlightEnabled = true;
 
     quint64 seekGeneration = 0;
     int seekTarget = -1;

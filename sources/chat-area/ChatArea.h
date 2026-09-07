@@ -116,6 +116,7 @@ private:
 	ChatArea* parentArea;
 	QString parentPostId;
 	QString pendingPostId;
+	std::uint64_t viewportNavigationGeneration = 0;
 	AbstractPostSource* postSource = nullptr; // QObject child; owned by ChatArea
 	QTimer* loadingDelayTimer = nullptr;
 	int pendingMessageLoads = 0;
