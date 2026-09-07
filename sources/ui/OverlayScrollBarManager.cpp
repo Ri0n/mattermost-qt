@@ -31,8 +31,8 @@
 namespace Mattermost {
 namespace {
 
-constexpr int ScrollBarThickness = 10;
-constexpr int ScrollBarInset = 2;
+constexpr int ScrollBarThickness = 7;
+constexpr int ScrollBarInset = 1;
 constexpr int FadeDelayMs = 900;
 constexpr int FadeDurationMs = 240;
 constexpr int RevealDurationMs = 90;
@@ -53,11 +53,11 @@ QString overlayStyleSheet(const QColor& handle)
 {
     return QStringLiteral(
         "QScrollBar:vertical {"
-        " background: transparent; border: 0; width: 10px; margin: 0;"
+        " background: transparent; border: 0; width: 7px; margin: 0;"
         "}"
         "QScrollBar::handle:vertical {"
-        " background: %1; border: 0; border-radius: 3px;"
-        " min-height: 28px; margin: 1px 2px;"
+        " background: %1; border: 0; border-radius: 2px;"
+        " min-height: 28px; margin: 1px 0 1px 2px;"
         "}"
         "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
         " height: 0; border: 0; background: transparent;"
@@ -66,11 +66,11 @@ QString overlayStyleSheet(const QColor& handle)
         " background: transparent;"
         "}"
         "QScrollBar:horizontal {"
-        " background: transparent; border: 0; height: 10px; margin: 0;"
+        " background: transparent; border: 0; height: 7px; margin: 0;"
         "}"
         "QScrollBar::handle:horizontal {"
-        " background: %1; border: 0; border-radius: 3px;"
-        " min-width: 28px; margin: 2px 1px;"
+        " background: %1; border: 0; border-radius: 2px;"
+        " min-width: 28px; margin: 2px 1px 0 1px;"
         "}"
         "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {"
         " width: 0; border: 0; background: transparent;"
@@ -190,9 +190,9 @@ void OverlayScrollBarManager::registerArea(QAbstractScrollArea* area)
 
     states.insert(area, state);
 
-    const auto setupOverlay = [area](QScrollBar* bar,
-                                     QGraphicsOpacityEffect*& effect,
-                                     QPropertyAnimation*& animation) {
+    const auto setupOverlay = [](QScrollBar* bar,
+                                 QGraphicsOpacityEffect*& effect,
+                                 QPropertyAnimation*& animation) {
         if (!bar) {
             return;
         }
