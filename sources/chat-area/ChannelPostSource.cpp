@@ -986,6 +986,14 @@ bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
         return false;
     }
 
+    if (exactFirstHint < 0 && provisionalWindow.isValid()
+        && provisionalWindow.targetPostId == targetPostId
+        && provisionalWindow.postIds == ids
+        && provisionalWindow.reachedOldest == reachedOldest
+        && provisionalWindow.reachedNewest == reachedNewest) {
+        return true;
+    }
+
     const ProvisionalWindow oldWindow = provisionalWindow;
     const int oldTargetIndex = oldWindow.isValid() && oldWindow.targetPostId == targetPostId
         ? indexOfPost(targetPostId) : -1;
@@ -1317,27 +1325,67 @@ void ChannelPostSource::placePage(int page, const QStringList& chronologicalIds)
     if (count <= 0) {
         return;
     }
-    bool touchesProvisionalIdentity = false;
-    const QStringList pageIds = chronologicalIds.mid(0, count);
-    for (const QString& id : pageIds) {
-        touchesProvisionalIdentity = touchesProvisionalIdentity
-            || provisionalPostIds.contains(id);
-        provisionalPostIds.remove(id);
-    }
-    const ExactWindowMutation mutation = assignExactWindow(first, pageIds);
 
-    // An absolute page that happens to intersect the provisional island by ID
-    // provides the missing exact offset. Re-adopt the whole local context before
-    // publishing page changes so the target never disappears between states.
-    if (touchesProvisionalIdentity && provisionalWindow.isValid()) {
+    const QStringList pageIds = chronologicalIds.mid(0, count);
+    const int pageLast = first + count - 1;
+
+    // A provisional navigation island has semantic authority until an absolute
+    // page proves where that island belongs. Reconcile the whole context before
+    // publishing page identities; never overwrite the island by numeric slot.
+    if (provisionalWindow.isValid()) {
         const ProvisionalWindow window = provisionalWindow;
-        placeNavigationContext(window.targetPostId, window.postIds,
-                               window.reachedOldest, window.reachedNewest);
+        int exactContextFirst = -1;
+        bool touchesProvisionalIdentity = false;
+        for (int pageOffset = 0; pageOffset < pageIds.size(); ++pageOffset) {
+            const int contextOffset = window.postIds.indexOf(pageIds.at(pageOffset));
+            if (contextOffset < 0) {
+                continue;
+            }
+
+            touchesProvisionalIdentity = true;
+            const int candidate = first + pageOffset - contextOffset;
+            if (exactContextFirst < 0) {
+                exactContextFirst = candidate;
+            } else if (exactContextFirst != candidate) {
+                qCDebug(lcTimelineChannel).nospace()
+                    << "NAV_PAGE_DEFER page=" << page
+                    << " first=" << first
+                    << " last=" << pageLast
+                    << " reason=inconsistent-identity-overlap";
+                return;
+            }
+        }
+
+        const bool overlapsProvisionalSlots = first <= window.last()
+            && pageLast >= window.first;
+        if (touchesProvisionalIdentity) {
+            if (!placeNavigationContext(window.targetPostId, window.postIds,
+                                        window.reachedOldest, window.reachedNewest,
+                                        exactContextFirst)) {
+                qCDebug(lcTimelineChannel).nospace()
+                    << "NAV_PAGE_DEFER page=" << page
+                    << " first=" << first
+                    << " last=" << pageLast
+                    << " reason=context-conflict";
+                return;
+            }
+        } else if (overlapsProvisionalSlots) {
+            qCDebug(lcTimelineChannel).nospace()
+                << "NAV_PAGE_DEFER page=" << page
+                << " first=" << first
+                << " last=" << pageLast
+                << " reason=slot-overlap-without-identity";
+            return;
+        }
+    }
+
+    for (const QString& id : pageIds) {
+        provisionalPostIds.remove(id);
     }
 
     // Re-fetching an already known page is deliberately a no-op. The shared
     // publisher emits nothing unless the identity mapping actually changed.
-    publishExactWindow(mutation);
+    publishExactWindow(assignExactWindow(first, pageIds));
 }
 
 void ChannelPostSource::prependDiscovered(const QStringList& chronologicalIds)
