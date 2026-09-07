@@ -62,7 +62,7 @@ navigation. The collection itself never invents channel page numbers or thread c
 
 Message search reuses the same collection/navigation model as Saved. The difference is lifetime and
 producer, not row semantics. A magnifier beside the sidebar menu opens the transient Search page;
-queries are sent unchanged to Mattermost's search endpoint so server-side syntax remains authoritative.
+queries are sent to Mattermost's search endpoint with the server-side search syntax kept authoritative.
 The UI exposes the standard modifiers `from:`, `in:`, `before:`, `after:` and `on:`, plus reminders for
 quoted phrases, exclusions, suffix wildcards and hashtags. Search can target the current/specific team
 or the server's all-team search endpoint when supported.
@@ -95,13 +95,64 @@ The shared collection layer therefore owns:
 - semantic `goToPost(postId)` after the real conversation is open.
 
 `Saved` may be represented by a fixed virtual navigation destination. Search results are normally a
-transient destination created by a search action rather than a permanent sidebar row, but both should
-reuse the same post-collection view/source machinery.
+transient destination created by a search action rather than a permanent sidebar row, but both reuse
+the same post-collection view machinery.
 
-Collection paging advertises a possible next page with one unavailable logical sentinel. A successful
-page replaces that sentinel with real entries and optionally a new sentinel. A failed page collapses the
-logical count back to the number of concrete entries before completing the range request; this prevents
-a phantom row while preserving `LongListWidget`'s no-tight-retry failure semantics.
+### User-driven paging
+
+A collection exposes at most ten new rows for each paging step. Loading the first search page does not
+create an unavailable sentinel and does not let `LongListWidget` prefetch trigger another search. Only
+a direct user viewport gesture near the bottom asks the collection for the next ten rows.
+
+Mattermost installations do not all implement search pagination identically. In particular, some search
+backends can ignore the requested `page`/`per_page` and return a larger bounded result set. The
+repository marks such a response as a complete result snapshot. `PostCollectionView` keeps that raw
+snapshot buffered, materializes the first ten posts, and reveals the next ten only as the user scrolls.
+No duplicate server request is made for those buffered pages. When the server honors pagination, each
+user paging gesture requests the next server page normally.
+
+This separation is intentional:
+
+```text
+server response                    collection-visible rows
+      |                                      |
+      | <= 10, has next page                 +-- first 10
+      +-------------------------------------->+-- user scroll -> request next page
+      |
+      | > requested page size                +-- first 10
+      +--> buffered complete snapshot ------>+-- user scroll -> reveal buffered 10
+                                             +-- no repeated search request
+```
+
+### Interactive search input
+
+Search uses the same `InteractiveTextEdit` foundation as the message composer. The widget itself owns
+only generic editor/completion mechanics; each use case installs its own completion rules and providers.
+A rule defines a trigger prefix, candidate provider, human-facing display text, canonical insertion text,
+and additional filter keys.
+
+For search the initial rules are:
+
+- `in:` — candidates are known channels. Matching is case-insensitive `contains` over the displayed
+  channel title and, when human-readable, the canonical channel name/slug. Selecting a normal
+  public/private channel replaces the typed value after `in:` with its canonical channel name; DM/group
+  rows fall back to the channel ID where needed by server search semantics.
+- `from:` — candidates are known users. Matching includes display name, username, nickname, first name,
+  and last name; selection inserts the canonical username.
+
+The popup opens as soon as a configured prefix is active. Continuing to type filters the existing
+candidate set. Selection replaces the complete value belonging to that prefix up to the next whitespace,
+so editing in the middle of an existing token cannot leave stale suffix text behind. A leading exclusion
+marker is preserved, therefore `-in:` and `-from:` reuse the same rules.
+
+`CompletionCandidate::displayText` and `insertText` are deliberately separate. The first implementation
+keeps the editor/query wire representation plain text because Mattermost search syntax is textual. This
+also leaves room for a future rich visual token/atom presentation without changing completion providers
+or the canonical value sent to the server.
+
+The composer currently inherits the same editor foundation while preserving its existing Enter,
+Shift+Enter, Escape, previous-message edit, and auto-height behavior. Composer-specific completion rules
+can be added independently of the search rules.
 
 ## Cache interaction
 
