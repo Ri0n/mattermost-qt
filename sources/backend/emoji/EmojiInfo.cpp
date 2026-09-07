@@ -24,7 +24,9 @@
 
 #include "EmojiInfo.h"
 
+#include <QApplication>
 #include <QDebug>
+#include <QFontMetrics>
 #include <QMap>
 
 #include "EmojiRegistryNotifier.h"
@@ -38,6 +40,8 @@ extern QMap<QString, EmojiSeq> emojiMap;
 extern uint32_t nextEmojiSeq;
 
 namespace {
+
+constexpr qreal inlineEmojiScale = 1.3;
 
 bool isValidCustomEmojiName(const QString& name)
 {
@@ -65,6 +69,17 @@ void requestCustomEmoji(const QString& name)
     if (isValidCustomEmojiName(name)) {
         emit EmojiRegistryNotifier::instance().customEmojiRequested(name);
     }
+}
+
+int inlineEmojiExtent()
+{
+    QFont font = QApplication::font();
+    if (font.pointSizeF() > 0.0) {
+        font.setPointSizeF(font.pointSizeF() * inlineEmojiScale);
+    } else if (font.pixelSize() > 0) {
+        font.setPixelSize(qRound(font.pixelSize() * inlineEmojiScale));
+    }
+    return qMax(1, QFontMetrics(font).height());
 }
 
 } // namespace
@@ -187,7 +202,12 @@ void EmojiInfo::addCustomEmoji (const QString& emojiName, const QString& emojiPa
         return;
     }
 
-	emojiVecNoSkinVariadic[EmojiCategory::custom].push_back (Emoji {emojiName, " <img src=\"" + emojiPath + "\" width=32 height=32> "});
+    const int extent = inlineEmojiExtent();
+	emojiVecNoSkinVariadic[EmojiCategory::custom].push_back (
+        Emoji {emojiName,
+               QStringLiteral(" <img src=\"%1\" width=%2 height=%2> ")
+                   .arg(emojiPath)
+                   .arg(extent)});
 	emojiMap[emojiName] = nextEmojiSeq;
 	++nextEmojiSeq;
 	++lastCategorySeq[EmojiCategory::custom];
