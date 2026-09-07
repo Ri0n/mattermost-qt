@@ -37,7 +37,8 @@ constexpr int ThreadsPerPage = 100;
 Q_LOGGING_CATEGORY(lcFollowing, "mattermost.following")
 
 void logFollowingState(Backend& backend,
-                       const QVector<ThreadFollowService::ThreadSummary>& threads)
+                       const QVector<ThreadFollowService::ThreadSummary>& threads,
+                       bool unreadOnly)
 {
     auto& storage = backend.getStorage();
     auto& sidebar = SidebarService::instance(backend);
@@ -75,10 +76,9 @@ void logFollowingState(Backend& backend,
 
     int emptyThreadId = 0;
     int emptyChannelId = 0;
-    int noUnread = 0;
     int missingChannel = 0;
-    int mutedThread = 0;
-    int eligibleThreads = 0;
+    int unreadThreads = 0;
+    int readThreads = 0;
     qint64 unreadReplies = 0;
     qint64 unreadMentions = 0;
 
@@ -93,40 +93,33 @@ void logFollowingState(Backend& backend,
             ++emptyChannelId;
             continue;
         }
-        if (thread.unreadReplies <= 0 && thread.unreadMentions <= 0) {
-            ++noUnread;
-            continue;
-        }
-
-        const BackendChannel* channel = storage.getChannelById(thread.channelId);
-        if (!channel) {
+        if (!storage.getChannelById(thread.channelId)) {
             ++missingChannel;
             continue;
         }
-        if (sidebar.isChannelMuted(*channel)) {
-            ++mutedThread;
-            continue;
+        if (thread.unreadReplies > 0 || thread.unreadMentions > 0) {
+            ++unreadThreads;
+        } else {
+            ++readThreads;
         }
-        ++eligibleThreads;
     }
 
     qCDebug(lcFollowing).nospace()
-        << "state channels=" << storage.channels.size()
+        << "state mode=" << (unreadOnly ? "unread" : "all")
+        << " channels=" << storage.channels.size()
         << " dm=" << directChannels
         << " gm=" << groupChannels
         << " unreadDm=" << unreadDirectChannels
         << " unreadGm=" << unreadGroupChannels
         << " mutedUnreadConversation=" << mutedUnreadConversations
         << " serverThreads=" << threads.size()
-        << " eligibleThreads=" << eligibleThreads
+        << " unreadThreads=" << unreadThreads
+        << " readThreads=" << readThreads
         << " emptyThreadId=" << emptyThreadId
         << " emptyChannelId=" << emptyChannelId
-        << " noUnread=" << noUnread
         << " missingChannel=" << missingChannel
-        << " mutedThread=" << mutedThread
         << " unreadReplies=" << unreadReplies
-        << " unreadMentions=" << unreadMentions
-        << " expectedRows=" << (unreadDirectChannels + unreadGroupChannels + eligibleThreads);
+        << " unreadMentions=" << unreadMentions;
 }
 
 } // namespace
@@ -143,7 +136,7 @@ ThreadFollowService& ThreadFollowService::instance(Backend& backend)
 
 ThreadFollowService::ThreadFollowService(Backend& sourceBackend)
     : QObject(&sourceBackend)
-    , backend(sourceBackend)
+    , _backend(sourceBackend)
 {
     // A GET for an unfollowed thread is expected to fail because the server's
     // GetThreadForUser path only exposes following memberships. Keep those
@@ -152,7 +145,7 @@ ThreadFollowService::ThreadFollowService(Backend& sourceBackend)
 
 QString ThreadFollowService::threadPath(const QString& teamId, const QString& threadId) const
 {
-    return QStringLiteral("users/") + backend.getLoginUser().id
+    return QStringLiteral("users/") + _backend.getLoginUser().id
         + QStringLiteral("/teams/") + teamId
         + QStringLiteral("/threads/") + threadId;
 }
@@ -161,7 +154,7 @@ void ThreadFollowService::queryThread(const QString& teamId,
                                       const QString& threadId,
                                       ThreadStateCallback callback)
 {
-    if (teamId.isEmpty() || threadId.isEmpty() || backend.getLoginUser().id.isEmpty()) {
+    if (teamId.isEmpty() || threadId.isEmpty() || _backend.getLoginUser().id.isEmpty()) {
         if (callback) {
             callback(ThreadState {});
         }
@@ -172,7 +165,7 @@ void ThreadFollowService::queryThread(const QString& teamId,
     // boolean following flag. Keep its read metadata so navigation can use the
     // same last_viewed_at boundary as the Mattermost web client.
     NetworkRequest request(threadPath(teamId, threadId));
-    httpConnector.get(request, HttpResponseCallback(
+    _httpConnector.get(request, HttpResponseCallback(
         [callback = std::move(callback)](QVariant status, const QJsonDocument& doc) mutable {
             ThreadState state;
             state.available = status.toInt() == QNetworkReply::NoError && doc.isObject();
@@ -203,9 +196,19 @@ void ThreadFollowService::queryFollowing(const QString& teamId,
     });
 }
 
+void ThreadFollowService::queryFollowingThreads(ThreadListCallback callback)
+{
+    queryThreads(false, std::move(callback));
+}
+
 void ThreadFollowService::queryUnreadThreads(ThreadListCallback callback)
 {
-    if (backend.getLoginUser().id.isEmpty()) {
+    queryThreads(true, std::move(callback));
+}
+
+void ThreadFollowService::queryThreads(bool unreadOnly, ThreadListCallback callback)
+{
+    if (_backend.getLoginUser().id.isEmpty()) {
         qCDebug(lcFollowing) << "query skipped: login user id is empty";
         if (callback) {
             callback({});
@@ -214,19 +217,20 @@ void ThreadFollowService::queryUnreadThreads(ThreadListCallback callback)
     }
 
     auto teamIds = std::make_shared<QStringList>();
-    for (const auto& pair : backend.getStorage().teams) {
+    for (const auto& pair : _backend.getStorage().teams) {
         if (!pair.first.isEmpty()) {
             teamIds->push_back(pair.first);
         }
     }
 
     qCDebug(lcFollowing).nospace()
-        << "query start teams=" << teamIds->size()
-        << " channels=" << backend.getStorage().channels.size();
+        << "query start mode=" << (unreadOnly ? "unread" : "all")
+        << " teams=" << teamIds->size()
+        << " channels=" << _backend.getStorage().channels.size();
 
     if (teamIds->isEmpty()) {
         qCDebug(lcFollowing) << "query finished immediately: no teams in Storage";
-        logFollowingState(backend, {});
+        logFollowingState(_backend, {}, unreadOnly);
         if (callback) {
             callback({});
         }
@@ -234,20 +238,22 @@ void ThreadFollowService::queryUnreadThreads(ThreadListCallback callback)
     }
 
     auto collected = std::make_shared<QVector<ThreadSummary>>();
-    queryUnreadTeamPage(teamIds, 0, QString(), collected, std::move(callback));
+    queryTeamPage(teamIds, 0, QString(), unreadOnly, collected, std::move(callback));
 }
 
-void ThreadFollowService::queryUnreadTeamPage(
+void ThreadFollowService::queryTeamPage(
     const std::shared_ptr<QStringList>& teamIds,
     int teamIndex,
     const QString& before,
+    bool unreadOnly,
     const std::shared_ptr<QVector<ThreadSummary>>& collected,
     ThreadListCallback callback)
 {
     if (teamIndex >= teamIds->size()) {
         qCDebug(lcFollowing).nospace()
-            << "query complete collected=" << collected->size();
-        logFollowingState(backend, *collected);
+            << "query complete mode=" << (unreadOnly ? "unread" : "all")
+            << " collected=" << collected->size();
+        logFollowingState(_backend, *collected, unreadOnly);
         if (callback) {
             callback(*collected);
         }
@@ -255,22 +261,26 @@ void ThreadFollowService::queryUnreadTeamPage(
     }
 
     const QString teamId = teamIds->at(teamIndex);
-    QString path = QStringLiteral("users/") + backend.getLoginUser().id
+    QString path = QStringLiteral("users/") + _backend.getLoginUser().id
         + QStringLiteral("/teams/") + teamId
-        + QStringLiteral("/threads?unread=true&excludeDirect=true&per_page=")
+        + QStringLiteral("/threads?threadsOnly=true&extended=true&excludeDirect=true&per_page=")
         + QString::number(ThreadsPerPage);
+    if (unreadOnly) {
+        path += QStringLiteral("&unread=true");
+    }
     if (!before.isEmpty()) {
         path += QStringLiteral("&before=") + before;
     }
 
     const bool continuationPage = !before.isEmpty();
     qCDebug(lcFollowing).nospace()
-        << "request team=" << (teamIndex + 1) << '/' << teamIds->size()
+        << "request mode=" << (unreadOnly ? "unread" : "all")
+        << " team=" << (teamIndex + 1) << '/' << teamIds->size()
         << " page=" << (continuationPage ? "next" : "first");
 
     NetworkRequest request(path);
-    httpConnector.get(request, HttpResponseCallback(
-        [this, teamIds, teamIndex, teamId, continuationPage, collected,
+    _httpConnector.get(request, HttpResponseCallback(
+        [this, teamIds, teamIndex, teamId, continuationPage, unreadOnly, collected,
          callback = std::move(callback)](const QJsonDocument& doc,
                                           const QNetworkReply& reply) mutable {
             const int httpStatus = reply.attribute(
@@ -279,7 +289,8 @@ void ThreadFollowService::queryUnreadTeamPage(
             const QJsonArray threads = root.value(QStringLiteral("threads")).toArray();
 
             qCDebug(lcFollowing).nospace()
-                << "response team=" << (teamIndex + 1) << '/' << teamIds->size()
+                << "response mode=" << (unreadOnly ? "unread" : "all")
+                << " team=" << (teamIndex + 1) << '/' << teamIds->size()
                 << " page=" << (continuationPage ? "next" : "first")
                 << " networkError=" << static_cast<int>(reply.error())
                 << " http=" << httpStatus
@@ -333,7 +344,8 @@ void ThreadFollowService::queryUnreadTeamPage(
             }
 
             qCDebug(lcFollowing).nospace()
-                << "parsed team=" << (teamIndex + 1) << '/' << teamIds->size()
+                << "parsed mode=" << (unreadOnly ? "unread" : "all")
+                << " team=" << (teamIndex + 1) << '/' << teamIds->size()
                 << " pageEntries=" << threads.size()
                 << " unreadEntries=" << pageUnreadEntries
                 << " missingPost=" << missingPost
@@ -341,12 +353,12 @@ void ThreadFollowService::queryUnreadTeamPage(
                 << " collected=" << collected->size();
 
             if (threads.size() == ThreadsPerPage && !lastThreadId.isEmpty()) {
-                queryUnreadTeamPage(teamIds, teamIndex, lastThreadId, collected,
-                                    std::move(callback));
+                queryTeamPage(teamIds, teamIndex, lastThreadId, unreadOnly, collected,
+                              std::move(callback));
                 return;
             }
-            queryUnreadTeamPage(teamIds, teamIndex + 1, QString(), collected,
-                                std::move(callback));
+            queryTeamPage(teamIds, teamIndex + 1, QString(), unreadOnly, collected,
+                          std::move(callback));
         }));
 }
 
@@ -355,7 +367,7 @@ void ThreadFollowService::setFollowing(const QString& teamId,
                                        bool following,
                                        std::function<void(bool)> callback)
 {
-    if (teamId.isEmpty() || threadId.isEmpty() || backend.getLoginUser().id.isEmpty()) {
+    if (teamId.isEmpty() || threadId.isEmpty() || _backend.getLoginUser().id.isEmpty()) {
         if (callback) {
             callback(false);
         }
@@ -365,8 +377,8 @@ void ThreadFollowService::setFollowing(const QString& teamId,
     NetworkRequest request(threadPath(teamId, threadId) + QStringLiteral("/following"));
     if (!following) {
         // HTTPConnector's DELETE API is intentionally fire-and-forget. Update
-        // the UI optimistically; the next unread-thread query reconciles it.
-        httpConnector.del(request);
+        // the UI optimistically; the next thread query reconciles it.
+        _httpConnector.del(request);
         emit followingChanged(teamId, threadId, false);
         if (callback) {
             callback(true);
@@ -374,9 +386,9 @@ void ThreadFollowService::setFollowing(const QString& teamId,
         return;
     }
 
-    httpConnector.put(request, QByteArrayCreator(QJsonObject {}),
-                      HttpResponseCallback([this, teamId, threadId, callback = std::move(callback)](
-                                               QVariant status, const QJsonDocument&) mutable {
+    _httpConnector.put(request, QByteArrayCreator(QJsonObject {}),
+                       HttpResponseCallback([this, teamId, threadId, callback = std::move(callback)](
+                                                QVariant status, const QJsonDocument&) mutable {
         const bool success = status.toInt() == QNetworkReply::NoError;
         if (success) {
             emit followingChanged(teamId, threadId, true);
@@ -391,7 +403,7 @@ void ThreadFollowService::markThreadRead(const QString& teamId,
                                          const QString& threadId,
                                          std::function<void(bool)> callback)
 {
-    if (teamId.isEmpty() || threadId.isEmpty() || backend.getLoginUser().id.isEmpty()) {
+    if (teamId.isEmpty() || threadId.isEmpty() || _backend.getLoginUser().id.isEmpty()) {
         if (callback) {
             callback(false);
         }
@@ -401,9 +413,9 @@ void ThreadFollowService::markThreadRead(const QString& teamId,
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     NetworkRequest request(threadPath(teamId, threadId)
                            + QStringLiteral("/read/") + QString::number(now));
-    httpConnector.put(request, QByteArrayCreator(QJsonObject {}),
-                      HttpResponseCallback([callback = std::move(callback)](
-                                               QVariant status, const QJsonDocument&) mutable {
+    _httpConnector.put(request, QByteArrayCreator(QJsonObject {}),
+                       HttpResponseCallback([callback = std::move(callback)](
+                                                QVariant status, const QJsonDocument&) mutable {
         if (callback) {
             callback(status.toInt() == QNetworkReply::NoError);
         }
