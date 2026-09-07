@@ -24,6 +24,11 @@
 
 #pragma once
 
+#include <QHash>
+#include <QJsonObject>
+#include <QSet>
+#include <QVector>
+
 #include "events/ChannelCreatedEvent.h"
 #include "events/ChannelUpdatedEvent.h"
 #include "events/ChannelViewedEvent.h"
@@ -46,6 +51,7 @@
 namespace Mattermost {
 
 class Backend;
+class BackendChannel;
 class Storage;
 
 class WebSocketEventHandler {
@@ -76,10 +82,20 @@ public:
     void handleEvent (const PreferencesDeletedEvent& event);
 private:
     void handlePreferences(const QVector<QJsonObject>& preferences, bool deleted);
+    void deliverPost(const QString& channelId, const QJsonObject& postObject);
+    void drainPendingDirectPosts(BackendChannel& channel);
 
 	Backend& backend;
 	Storage& storage;
 
+    // direct_added only identifies the channel; Backend resolves its full model
+    // through an asynchronous GET. Mattermost can deliver the following posted
+    // event before that GET completes. Retain only this narrow race window so
+    // the first DM/GM is not lost from the live model. Channel::addPost remains
+    // identity-idempotent if another path materialized the post meanwhile.
+    QSet<QString> resolvingDirectChannels;
+    QHash<QString, QVector<QJsonObject>> pendingDirectPosts;
+    static constexpr int MaxPendingPostsPerChannel = 32;
 };
 
 } /* namespace Mattermost */
