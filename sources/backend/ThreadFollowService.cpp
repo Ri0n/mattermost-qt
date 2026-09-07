@@ -14,7 +14,9 @@
 
 #include "ThreadFollowService.h"
 
+#include <QDateTime>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkReply>
 #include <QPointer>
@@ -22,8 +24,14 @@
 #include "Backend.h"
 #include "NetworkRequest.h"
 #include "QByteArrayCreator.h"
+#include "Storage.h"
 
 namespace Mattermost {
+namespace {
+
+constexpr int ThreadsPerPage = 100;
+
+} // namespace
 
 ThreadFollowService& ThreadFollowService::instance(Backend& backend)
 {
@@ -97,6 +105,100 @@ void ThreadFollowService::queryFollowing(const QString& teamId,
     });
 }
 
+void ThreadFollowService::queryUnreadThreads(ThreadListCallback callback)
+{
+    if (backend.getLoginUser().id.isEmpty()) {
+        if (callback) {
+            callback({});
+        }
+        return;
+    }
+
+    auto teamIds = std::make_shared<QStringList>();
+    for (const auto& pair : backend.getStorage().teams) {
+        if (!pair.first.isEmpty()) {
+            teamIds->push_back(pair.first);
+        }
+    }
+
+    if (teamIds->isEmpty()) {
+        if (callback) {
+            callback({});
+        }
+        return;
+    }
+
+    auto collected = std::make_shared<QVector<ThreadSummary>>();
+    queryUnreadTeamPage(teamIds, 0, QString(), collected, std::move(callback));
+}
+
+void ThreadFollowService::queryUnreadTeamPage(
+    const std::shared_ptr<QStringList>& teamIds,
+    int teamIndex,
+    const QString& before,
+    const std::shared_ptr<QVector<ThreadSummary>>& collected,
+    ThreadListCallback callback)
+{
+    if (teamIndex >= teamIds->size()) {
+        if (callback) {
+            callback(*collected);
+        }
+        return;
+    }
+
+    const QString teamId = teamIds->at(teamIndex);
+    QString path = QStringLiteral("users/") + backend.getLoginUser().id
+        + QStringLiteral("/teams/") + teamId
+        + QStringLiteral("/threads?unread=true&excludeDirect=true&per_page=")
+        + QString::number(ThreadsPerPage);
+    if (!before.isEmpty()) {
+        path += QStringLiteral("&before=") + before;
+    }
+
+    NetworkRequest request(path);
+    httpConnector.get(request, HttpResponseCallback(
+        [this, teamIds, teamIndex, teamId, collected,
+         callback = std::move(callback)](const QJsonDocument& doc) mutable {
+            const QJsonArray threads = doc.object().value(QStringLiteral("threads")).toArray();
+            QString lastThreadId;
+            for (const QJsonValue& value : threads) {
+                const QJsonObject object = value.toObject();
+                const QJsonObject post = object.value(QStringLiteral("post")).toObject();
+
+                ThreadSummary entry;
+                entry.id = object.value(QStringLiteral("id")).toString();
+                entry.channelId = post.value(QStringLiteral("channel_id")).toString();
+                entry.teamId = teamId;
+                entry.authorId = post.value(QStringLiteral("user_id")).toString();
+                entry.message = post.value(QStringLiteral("message")).toString();
+                entry.lastViewedAt = object.value(QStringLiteral("last_viewed_at"))
+                    .toVariant().toULongLong();
+                entry.lastReplyAt = object.value(QStringLiteral("last_reply_at"))
+                    .toVariant().toULongLong();
+                if (entry.lastReplyAt == 0) {
+                    entry.lastReplyAt = post.value(QStringLiteral("create_at"))
+                        .toVariant().toULongLong();
+                }
+                entry.unreadReplies = object.value(QStringLiteral("unread_replies")).toInt();
+                entry.unreadMentions = object.value(QStringLiteral("unread_mentions")).toInt();
+                entry.urgent = object.value(QStringLiteral("is_urgent")).toBool();
+
+                if (!entry.id.isEmpty()) {
+                    lastThreadId = entry.id;
+                    collected->push_back(std::move(entry));
+                }
+            }
+
+            if (threads.size() == ThreadsPerPage && !lastThreadId.isEmpty()) {
+                queryUnreadTeamPage(teamIds, teamIndex, lastThreadId, collected,
+                                    std::move(callback));
+                return;
+            }
+            queryUnreadTeamPage(teamIds, teamIndex + 1, QString(), collected,
+                                std::move(callback));
+        }));
+}
+
 void ThreadFollowService::setFollowing(const QString& teamId,
                                        const QString& threadId,
                                        bool following,
@@ -112,7 +214,7 @@ void ThreadFollowService::setFollowing(const QString& teamId,
     NetworkRequest request(threadPath(teamId, threadId) + QStringLiteral("/following"));
     if (!following) {
         // HTTPConnector's DELETE API is intentionally fire-and-forget. Update
-        // the UI optimistically; the next query/Attention refresh reconciles it.
+        // the UI optimistically; the next unread-thread query reconciles it.
         httpConnector.del(request);
         emit followingChanged(teamId, threadId, false);
         if (callback) {
@@ -130,6 +232,29 @@ void ThreadFollowService::setFollowing(const QString& teamId,
         }
         if (callback) {
             callback(success);
+        }
+    }));
+}
+
+void ThreadFollowService::markThreadRead(const QString& teamId,
+                                         const QString& threadId,
+                                         std::function<void(bool)> callback)
+{
+    if (teamId.isEmpty() || threadId.isEmpty() || backend.getLoginUser().id.isEmpty()) {
+        if (callback) {
+            callback(false);
+        }
+        return;
+    }
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    NetworkRequest request(threadPath(teamId, threadId)
+                           + QStringLiteral("/read/") + QString::number(now));
+    httpConnector.put(request, QByteArrayCreator(QJsonObject {}),
+                      HttpResponseCallback([callback = std::move(callback)](
+                                               QVariant status, const QJsonDocument&) mutable {
+        if (callback) {
+            callback(status.toInt() == QNetworkReply::NoError);
         }
     }));
 }
