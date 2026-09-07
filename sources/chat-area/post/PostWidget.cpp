@@ -229,7 +229,7 @@ PostWidget::PostWidget(Backend& backend,
 	if (!post.isDeleted && post.poll) {
 		clearMessageText();
 		poll = std::make_unique<PostPoll>(backend, post, *post.poll, this);
-		ui->verticalLayout->addWidget(poll.get(), 0, Qt::AlignLeft);
+		ui->verticalLayout->addWidget(poll.get());
 	}
 
 	if (parentChatArea && !parentChatArea->isThread) {
