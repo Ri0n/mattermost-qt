@@ -11,7 +11,6 @@
 
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
-#include "backend/Storage.h"
 #include "backend/types/BackendChannel.h"
 #include "channel-tree/team-item/TeamItem.h"
 
@@ -73,24 +72,6 @@ void ChannelTree::admitStoredConversation(BackendChannel& channel)
             createChannelItem(*backendForSidebar, *teamItem, *categoryItem, channel);
         }
     }
-}
-
-void ChannelTree::openStoredChannel(QString channelID)
-{
-    if (channelID.isEmpty()) {
-        return;
-    }
-
-    const auto existing = channelToItemMap.constFind(channelID);
-    if (existing == channelToItemMap.cend() || existing.value().isEmpty()) {
-        BackendChannel* channel = backendForSidebar
-            ? backendForSidebar->getStorage().getChannelById(channelID) : nullptr;
-        if (channel) {
-            admitStoredConversation(*channel);
-        }
-    }
-
-    openChannel(channelID);
 }
 
 } // namespace Mattermost
