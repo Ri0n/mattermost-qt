@@ -27,47 +27,40 @@
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendTeam.h"
 #include "backend/types/BackendUser.h"
+#include "chat-area/PostListWidget.h"
 #include "chat-area/post/PostWidget.h"
 #include "navigation/AppNavigationService.h"
 #include "ui/ThemeIconWidgets.h"
 #include "widgets/InteractiveTextEdit.h"
-#include "widgets/LongListWidget.h"
 
 namespace Mattermost {
 
-class PostCollectionView::CollectionList final : public LongListWidget
+class PostCollectionView::CollectionList final : public PostListWidget
 {
 public:
     explicit CollectionList(PostCollectionView& collectionOwner, QWidget* parent)
-        : LongListWidget(parent)
-        , owner(collectionOwner)
+        : PostListWidget(parent)
+        , _owner(collectionOwner)
     {
         setDefaultItemHeight(132);
-        setMaterializationLimit(200);
-        setRequestBlockSize(10);
-        setPrefetchScreens(1);
-        setSeekDebounceMs(100);
-        if (owner.mode == Mode::Saved || owner.mode == Mode::Pinned) {
-            setFrameShape(QFrame::NoFrame);
-        }
 
         // Collection pagination is deliberately driven only by an actual user
         // viewport gesture. LongListWidget prefetch/materialization must never
         // turn a popular search into an automatic request chain.
         connect(this, &LongListWidget::userViewportChanged, this,
                 [this](bool atEnd) {
-            if (!owner.hasMoreResults() || owner.loading) {
+            if (!_owner.hasMoreResults() || _owner.loading) {
                 return;
             }
             const Range visible = visibleRange();
             const int threshold = std::max(
-                0, static_cast<int>(owner.posts.size()) - 2);
+                0, static_cast<int>(_owner.posts.size()) - 2);
             if (!atEnd && (!visible.isValid() || visible.last < threshold)) {
                 return;
             }
             QTimer::singleShot(0, this, [this] {
-                if (owner.hasMoreResults() && !owner.loading) {
-                    owner.loadNextPage();
+                if (_owner.hasMoreResults() && !_owner.loading) {
+                    _owner.loadNextPage();
                 }
             });
         });
@@ -76,11 +69,11 @@ public:
 protected:
     QWidget* createItemWidget(int index) override
     {
-        return owner.createRow(index, viewport());
+        return _owner.createRow(index, viewport());
     }
 
 private:
-    PostCollectionView& owner;
+    PostCollectionView& _owner;
 };
 
 PostCollectionView::PostCollectionView(Backend& backendInstance, Mode viewMode, QWidget* parent)
@@ -107,7 +100,12 @@ PostCollectionView::~PostCollectionView()
 void PostCollectionView::buildUi()
 {
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
+    // Pinned is embedded inside ChatArea, which already owns the standard 2px
+    // page gutter. Saved/Search are standalone stacked pages and provide that
+    // same gutter themselves. Do not stack the old 8px collection inset on top
+    // of the shared PostListWidget viewport policy.
+    const int outerMargin = mode == Mode::Pinned ? 0 : 2;
+    root->setContentsMargins(outerMargin, outerMargin, outerMargin, outerMargin);
     root->setSpacing(6);
 
     auto* header = new QHBoxLayout;
