@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -20,12 +20,14 @@
 #include <memory>
 #include <QApplication>
 #include <QMenu>
+#include <QStyleFactory>
 #include <QSystemTrayIcon>
 
 #include "login/LoginDialog.h"
 #include "mainwindow.h"
 #include "backend/Backend.h"
 #include "config/Config.h"
+#include "ui/TransientScrollBarStyle.h"
 
 namespace Mattermost {
 
@@ -52,6 +54,12 @@ inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 ,trayIconMenu (std::make_unique<QMenu> (nullptr))
 ,currentWindow (nullptr)
 {
+    // Keep the platform's current style as the drawing backend, but opt all
+    // QAbstractScrollArea descendants into Qt's transient scrollbar machinery.
+    // QProxyStyle owns this separately-created base style.
+    QStyle* baseStyle = QStyleFactory::create(style()->objectName());
+    setStyle(new TransientScrollBarStyle(baseStyle));
+
     Config::init ();
 	trayIcon->setToolTip(tr("Mattermost Qt"));
 	trayIcon->setContextMenu (trayIconMenu.get());
