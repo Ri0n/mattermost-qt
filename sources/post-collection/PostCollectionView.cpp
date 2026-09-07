@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include <QAbstractButton>
 #include <QCalendarWidget>
 #include <QComboBox>
 #include <QDate>
@@ -28,7 +29,7 @@
 #include "backend/types/BackendUser.h"
 #include "chat-area/post/PostWidget.h"
 #include "navigation/AppNavigationService.h"
-#include "ui/IconUtils.h"
+#include "ui/ThemeIconWidgets.h"
 #include "widgets/InteractiveTextEdit.h"
 #include "widgets/LongListWidget.h"
 
@@ -46,6 +47,9 @@ public:
         setRequestBlockSize(10);
         setPrefetchScreens(1);
         setSeekDebounceMs(100);
+        if (owner.mode == Mode::Saved || owner.mode == Mode::Pinned) {
+            setFrameShape(QFrame::NoFrame);
+        }
 
         // Collection pagination is deliberately driven only by an actual user
         // viewport gesture. LongListWidget prefetch/materialization must never
@@ -110,7 +114,7 @@ void PostCollectionView::buildUi()
     QString titleText;
     switch (mode) {
     case Mode::Saved:
-        titleText = tr("Saved messages");
+        titleText = tr("0 saved messages");
         break;
     case Mode::Search:
         titleText = tr("Search messages");
@@ -119,20 +123,26 @@ void PostCollectionView::buildUi()
         titleText = tr("Pinned messages");
         break;
     }
-    auto* title = new QLabel(titleText, this);
-    QFont titleFont = title->font();
+    _titleLabel = new QLabel(titleText, this);
+    QFont titleFont = _titleLabel->font();
     titleFont.setBold(true);
     titleFont.setPointSize(titleFont.pointSize() + 2);
-    title->setFont(titleFont);
-    header->addWidget(title);
+    _titleLabel->setFont(titleFont);
+    header->addWidget(_titleLabel);
     header->addStretch();
 
     if (mode == Mode::Saved) {
-        auto* refresh = new QToolButton(this);
-        refresh->setText(tr("Refresh"));
-        refresh->setAutoRaise(true);
-        connect(refresh, &QToolButton::clicked, this, &PostCollectionView::activateSaved);
-        header->addWidget(refresh);
+        _refreshButton = new ThemeIconButton(this);
+        _refreshButton->setText(QString());
+        _refreshButton->setFixedSize(28, 28);
+        _refreshButton->setIconSize(QSize(16, 16));
+        _refreshButton->setProperty(ThemeIconResourceProperty,
+                                    QStringLiteral(":/icons/refresh"));
+        _refreshButton->setToolTip(tr("Refresh saved messages"));
+        _refreshButton->setAccessibleName(tr("Refresh saved messages"));
+        connect(_refreshButton, &QPushButton::clicked,
+                this, &PostCollectionView::activateSaved);
+        header->addWidget(_refreshButton);
     }
     root->addLayout(header);
 
@@ -553,8 +563,10 @@ void PostCollectionView::loadNextPage()
             guard->serverHasMore = false;
             guard->bufferedPosts.clear();
             guard->bufferedOffset = 0;
+            guard->updateStatus();
             if (guard->statusLabel) {
                 const int count = static_cast<int>(guard->posts.size());
+                guard->statusLabel->setVisible(true);
                 if (count > 0) {
                     guard->statusLabel->setText(
                         guard->tr("%1 messages loaded — loading more failed").arg(count));
@@ -622,32 +634,35 @@ QWidget* PostCollectionView::createRow(int index, QWidget* parent)
     }
     metadata->addStretch();
 
+    auto configureActionButton = [](ThemeIconButton* button, const QString& resource) {
+        button->setText(QString());
+        button->setFixedSize(26, 24);
+        button->setIconSize(QSize(16, 16));
+        button->setProperty(ThemeIconResourceProperty, resource);
+    };
+
     if (mode == Mode::Saved || mode == Mode::Pinned) {
-        auto* remove = new QToolButton(row);
-        remove->setIcon(IconUtils::symbolicIcon(QStringLiteral(":/icons/trash")));
+        auto* remove = new ThemeIconButton(row);
+        configureActionButton(remove, QStringLiteral(":/icons/trash"));
         const QString removeLabel = mode == Mode::Pinned
             ? tr("Unpin message") : tr("Remove from saved");
         remove->setToolTip(removeLabel);
         remove->setAccessibleName(removeLabel);
-        remove->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        remove->setAutoRaise(true);
         if (mode == Mode::Pinned) {
-            connect(remove, &QToolButton::clicked, this,
+            connect(remove, &QPushButton::clicked, this,
                     [this, postId, remove] { unpinPost(postId, remove); });
         } else {
-            connect(remove, &QToolButton::clicked, this,
+            connect(remove, &QPushButton::clicked, this,
                     [this, postId] { removeSavedPost(postId); });
         }
         metadata->addWidget(remove);
     }
 
-    auto* jump = new QToolButton(row);
-    jump->setIcon(IconUtils::symbolicIcon(QStringLiteral(":/icons/jump")));
+    auto* jump = new ThemeIconButton(row);
+    configureActionButton(jump, QStringLiteral(":/icons/jump"));
     jump->setToolTip(tr("Show this message in its conversation"));
     jump->setAccessibleName(tr("Jump to message"));
-    jump->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    jump->setAutoRaise(true);
-    connect(jump, &QToolButton::clicked, this, [this, postId] {
+    connect(jump, &QPushButton::clicked, this, [this, postId] {
         if (mode == Mode::Pinned) {
             emit postActivated(postId);
             return;
@@ -698,6 +713,18 @@ QString PostCollectionView::originLabel(const BackendPost& post) const
 
 void PostCollectionView::removeSavedPost(const QString& postId)
 {
+    if (mode != Mode::Saved || postId.isEmpty() || indexOfPost(postId) < 0) {
+        return;
+    }
+
+    BackendUserPreferences preference {
+        QStringLiteral("flagged_post"), postId, QStringLiteral("true")};
+    backend.deleteUserPreferences(preference);
+    removeSavedPostLocally(postId);
+}
+
+void PostCollectionView::removeSavedPostLocally(const QString& postId)
+{
     if (mode != Mode::Saved || postId.isEmpty()) {
         return;
     }
@@ -705,10 +732,6 @@ void PostCollectionView::removeSavedPost(const QString& postId)
     if (index < 0) {
         return;
     }
-
-    BackendUserPreferences preference {
-        QStringLiteral("flagged_post"), postId, QStringLiteral("true")};
-    backend.deleteUserPreferences(preference);
 
     // removeItems destroys the materialized PostWidget before we release the
     // collection-owned BackendPost it references.
@@ -721,7 +744,21 @@ void PostCollectionView::removeSavedPost(const QString& postId)
     updateStatus();
 }
 
-void PostCollectionView::unpinPost(const QString& postId, QToolButton* button)
+void PostCollectionView::handleFlaggedPostChanged(const QString& postId, bool flagged)
+{
+    if (mode != Mode::Saved || postId.isEmpty()) {
+        return;
+    }
+    if (!flagged) {
+        removeSavedPostLocally(postId);
+        return;
+    }
+    if (!postIds.contains(postId) && !loading) {
+        QTimer::singleShot(0, this, &PostCollectionView::activateSaved);
+    }
+}
+
+void PostCollectionView::unpinPost(const QString& postId, QAbstractButton* button)
 {
     if (mode != Mode::Pinned || !pinnedChannel || postId.isEmpty()) {
         return;
@@ -745,28 +782,49 @@ void PostCollectionView::unpinPost(const QString& postId, QToolButton* button)
 
 void PostCollectionView::updateStatus()
 {
+    const int count = static_cast<int>(posts.size());
+
+    if (_titleLabel && mode == Mode::Saved) {
+        _titleLabel->setText(tr("%n saved message(s)", nullptr, count));
+    }
+    if (_refreshButton) {
+        _refreshButton->setProperty(ThemeIconBusyProperty, loading);
+        _refreshButton->setEnabled(!loading);
+    }
     if (!statusLabel) {
         return;
     }
+
+    statusLabel->setVisible(false);
+
+    // Saved uses its compact count as the title and the refresh icon itself as
+    // the loading indicator, so a second status line would only duplicate it.
+    if (mode == Mode::Saved) {
+        return;
+    }
+
+    // A non-empty pinned list already has its count in the channel-header badge.
+    if (mode == Mode::Pinned) {
+        if (posts.empty()) {
+            statusLabel->setText(tr("No pinned messages."));
+            statusLabel->setVisible(true);
+        }
+        return;
+    }
+
+    statusLabel->setVisible(true);
     if (loading) {
         statusLabel->setText(tr("Loading…"));
         return;
     }
-    if (mode == Mode::Search && activeTerms.isEmpty()) {
+    if (activeTerms.isEmpty()) {
         statusLabel->setText(tr("Enter search terms or use a modifier above."));
         return;
     }
     if (posts.empty()) {
-        if (mode == Mode::Saved) {
-            statusLabel->setText(tr("No saved messages."));
-        } else if (mode == Mode::Pinned) {
-            statusLabel->setText(tr("No pinned messages."));
-        } else {
-            statusLabel->setText(tr("No matching messages."));
-        }
+        statusLabel->setText(tr("No matching messages."));
         return;
     }
-    const int count = static_cast<int>(posts.size());
     statusLabel->setText(hasMoreResults()
         ? tr("%1 messages loaded — scroll for more").arg(count)
         : tr("%1 messages").arg(count));
