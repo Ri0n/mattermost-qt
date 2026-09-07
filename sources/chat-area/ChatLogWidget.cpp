@@ -40,13 +40,9 @@ const char* sourceName(const AbstractPostSource* source)
 } // namespace
 
 ChatLogWidget::ChatLogWidget(QWidget* parent)
-    : LongListWidget(parent)
+    : PostListWidget(parent)
 {
     setDefaultItemHeight(96);
-    setMaterializationLimit(200);
-    setRequestBlockSize(10);
-    setPrefetchScreens(1);
-    setSeekDebounceMs(100);
 
     connect(this, &LongListWidget::rangeRequested, this,
             [this](int first, int last, RequestReason reason, quint64 generation) {
