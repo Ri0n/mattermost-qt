@@ -18,6 +18,7 @@
 #include <QWidgetAction>
 
 #include "backend/Backend.h"
+#include "backend/NetworkRequest.h"
 #include "backend/PostRepository.h"
 #include "backend/Storage.h"
 #include "backend/types/BackendChannel.h"
@@ -82,14 +83,18 @@ PostCollectionView::PostCollectionView(Backend& backendInstance, Mode viewMode, 
     , backend(backendInstance)
     , mode(viewMode)
 {
+    connect(&actionConnector, &HTTPConnector::onNetworkError,
+            &backend, &Backend::onNetworkError);
+    connect(&actionConnector, &HTTPConnector::onHttpError,
+            &backend, &Backend::onHttpError);
     buildUi();
 }
 
 PostCollectionView::~PostCollectionView()
 {
     if (list) {
-        // Destroy PostWidgets (and their BackendPost references) before the
-        // collection-owned BackendPost instances themselves are released.
+        // Destroy PostWidgets before either collection-owned snapshots or
+        // borrowed pinned-post objects can disappear.
         list->setItemCount(0);
     }
 }
@@ -101,8 +106,19 @@ void PostCollectionView::buildUi()
     root->setSpacing(6);
 
     auto* header = new QHBoxLayout;
-    auto* title = new QLabel(mode == Mode::Saved ? tr("Saved messages")
-                                                 : tr("Search messages"), this);
+    QString titleText;
+    switch (mode) {
+    case Mode::Saved:
+        titleText = tr("Saved messages");
+        break;
+    case Mode::Search:
+        titleText = tr("Search messages");
+        break;
+    case Mode::Pinned:
+        titleText = tr("Pinned messages");
+        break;
+    }
+    auto* title = new QLabel(titleText, this);
     QFont titleFont = title->font();
     titleFont.setBold(true);
     titleFont.setPointSize(titleFont.pointSize() + 2);
@@ -231,6 +247,37 @@ void PostCollectionView::activateSearch(const QString& preferredTeamId)
         searchEdit->setFocus(Qt::ShortcutFocusReason);
         searchEdit->selectAll();
     }
+}
+
+void PostCollectionView::activatePinned(BackendChannel& channel)
+{
+    if (mode != Mode::Pinned) {
+        return;
+    }
+
+    ++generation;
+    pinnedChannel = &channel;
+    resetCollection();
+
+    for (BackendPost& post : channel.pinnedPosts) {
+        if (post.id.isEmpty() || postIds.contains(post.id)) {
+            continue;
+        }
+        postIds.insert(post.id);
+        posts.push_back(&post);
+    }
+
+    if (list) {
+        const int count = static_cast<int>(posts.size());
+        list->setItemCount(count);
+        for (int index = 0; index < count; ++index) {
+            list->setRangeAvailable(index, index, true);
+        }
+        if (count > 0) {
+            list->scrollToIndex(0, LongListWidget::Alignment::Top);
+        }
+    }
+    updateStatus();
 }
 
 void PostCollectionView::rebuildSearchScopes(const QString& preferredTeamId)
@@ -400,6 +447,7 @@ void PostCollectionView::resetCollection()
         list->setItemCount(0);
     }
     posts.clear();
+    ownedPosts.clear();
     postIds.clear();
     bufferedPosts.clear();
     bufferedOffset = 0;
@@ -411,8 +459,9 @@ void PostCollectionView::resetCollection()
 
 bool PostCollectionView::hasMoreResults() const
 {
-    return serverHasMore
-        || bufferedOffset < static_cast<int>(bufferedPosts.size());
+    return mode != Mode::Pinned
+        && (serverHasMore
+            || bufferedOffset < static_cast<int>(bufferedPosts.size()));
 }
 
 void PostCollectionView::appendPosts(const QVector<QJsonObject>& rawPosts)
@@ -424,7 +473,9 @@ void PostCollectionView::appendPosts(const QVector<QJsonObject>& rawPosts)
             continue;
         }
         postIds.insert(postId);
-        posts.push_back(std::make_unique<BackendPost>(raw, backend.getStorage()));
+        auto owned = std::make_unique<BackendPost>(raw, backend.getStorage());
+        posts.push_back(owned.get());
+        ownedPosts.push_back(std::move(owned));
     }
 
     const int newCount = static_cast<int>(posts.size());
@@ -471,7 +522,7 @@ bool PostCollectionView::appendBufferedPage()
 
 void PostCollectionView::loadNextPage()
 {
-    if (loading) {
+    if (mode == Mode::Pinned || loading) {
         return;
     }
     if (bufferedOffset < static_cast<int>(bufferedPosts.size())) {
@@ -561,22 +612,31 @@ QWidget* PostCollectionView::createRow(int index, QWidget* parent)
 
     auto* metadata = new QHBoxLayout;
     metadata->setContentsMargins(0, 0, 0, 0);
-    auto* origin = new QLabel(originLabel(post), row);
-    QFont originFont = origin->font();
-    originFont.setBold(true);
-    origin->setFont(originFont);
-    metadata->addWidget(origin);
+    if (mode != Mode::Pinned) {
+        auto* origin = new QLabel(originLabel(post), row);
+        QFont originFont = origin->font();
+        originFont.setBold(true);
+        origin->setFont(originFont);
+        metadata->addWidget(origin);
+    }
     metadata->addStretch();
 
-    if (mode == Mode::Saved) {
+    if (mode == Mode::Saved || mode == Mode::Pinned) {
         auto* remove = new QToolButton(row);
         remove->setIcon(IconUtils::symbolicIcon(QStringLiteral(":/icons/trash")));
-        remove->setToolTip(tr("Remove from saved"));
-        remove->setAccessibleName(tr("Remove from saved"));
+        const QString removeLabel = mode == Mode::Pinned
+            ? tr("Unpin message") : tr("Remove from saved");
+        remove->setToolTip(removeLabel);
+        remove->setAccessibleName(removeLabel);
         remove->setToolButtonStyle(Qt::ToolButtonIconOnly);
         remove->setAutoRaise(true);
-        connect(remove, &QToolButton::clicked, this,
-                [this, postId] { removeSavedPost(postId); });
+        if (mode == Mode::Pinned) {
+            connect(remove, &QToolButton::clicked, this,
+                    [this, postId, remove] { unpinPost(postId, remove); });
+        } else {
+            connect(remove, &QToolButton::clicked, this,
+                    [this, postId] { removeSavedPost(postId); });
+        }
         metadata->addWidget(remove);
     }
 
@@ -587,6 +647,10 @@ QWidget* PostCollectionView::createRow(int index, QWidget* parent)
     jump->setToolButtonStyle(Qt::ToolButtonIconOnly);
     jump->setAutoRaise(true);
     connect(jump, &QToolButton::clicked, this, [this, postId] {
+        if (mode == Mode::Pinned) {
+            emit postActivated(postId);
+            return;
+        }
         AppNavigationService::instance(backend).openPost(postId);
     });
     metadata->addWidget(jump);
@@ -651,8 +715,31 @@ void PostCollectionView::removeSavedPost(const QString& postId)
         list->removeItems(index, 1);
     }
     posts.erase(posts.begin() + index);
+    ownedPosts.erase(ownedPosts.begin() + index);
     postIds.remove(postId);
     updateStatus();
+}
+
+void PostCollectionView::unpinPost(const QString& postId, QToolButton* button)
+{
+    if (mode != Mode::Pinned || !pinnedChannel || postId.isEmpty()) {
+        return;
+    }
+    if (button) {
+        button->setEnabled(false);
+    }
+
+    const QString channelId = pinnedChannel->id;
+    QPointer<PostCollectionView> guard(this);
+    NetworkRequest request(QStringLiteral("posts/") + postId + QStringLiteral("/unpin"));
+    actionConnector.post(request, QByteArray(), HttpResponseCallback(
+        [guard, channelId](const QJsonDocument&) {
+            if (!guard || !guard->pinnedChannel
+                || guard->pinnedChannel->id != channelId) {
+                return;
+            }
+            guard->backend.retrieveChannelPinnedPosts(*guard->pinnedChannel);
+        }));
 }
 
 void PostCollectionView::updateStatus()
@@ -669,8 +756,13 @@ void PostCollectionView::updateStatus()
         return;
     }
     if (posts.empty()) {
-        statusLabel->setText(mode == Mode::Saved
-            ? tr("No saved messages.") : tr("No matching messages."));
+        if (mode == Mode::Saved) {
+            statusLabel->setText(tr("No saved messages."));
+        } else if (mode == Mode::Pinned) {
+            statusLabel->setText(tr("No pinned messages."));
+        } else {
+            statusLabel->setText(tr("No matching messages."));
+        }
         return;
     }
     const int count = static_cast<int>(posts.size());
