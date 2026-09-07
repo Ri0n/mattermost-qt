@@ -343,6 +343,12 @@ void PostWidget::showPostContextMenu(const QPoint& globalPos)
         });
     });
 
+    QAction* saveAction = menu.addAction(tr("Save message"));
+    connect(saveAction, &QAction::triggered, this, [this] {
+        backend.updateUserPreferences(BackendUserPreferences {
+            QStringLiteral("flagged_post"), post.id, QStringLiteral("true")});
+    });
+
     if (post.author) {
         menu.addSeparator();
         QAction* profileAction = menu.addAction(

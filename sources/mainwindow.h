@@ -47,6 +47,7 @@ class BackendPost;
 class BackendTeam;
 class ChannelQuickList;
 class NotificationManager;
+class PostCollectionView;
 class SettingsWindow;
 struct NotificationTarget;
 
@@ -83,8 +84,12 @@ private:
 	void refreshChannelUnreadFilter ();
 	void applySidebarTextFilter(QTreeWidget* tree) const;
 	void openDirectMessageSearch ();
+    void openMessageSearch();
+    void openSavedMessages(const QString& teamId = QString());
+    void showCollectionPage(PostCollectionView* page);
 	void openAttentionThread (const QString& channelId, const QString& rootPostId);
 	void refreshMenuButtonIcon ();
+    void refreshSearchButtonIcon();
 	void refreshUnreadFilterIcon ();
 private:
 	std::unique_ptr<Ui::MainWindow>		ui;
@@ -99,6 +104,8 @@ private:
 	QToolButton*						unreadFilterButton = nullptr;
 	ChannelQuickList*					recentChannels = nullptr;
 	AttentionList*						attentionList = nullptr;
+    PostCollectionView*                 savedMessagesPage = nullptr;
+    PostCollectionView*                 searchMessagesPage = nullptr;
 	QString								retainedUnreadFilterChannelId;
 	bool								currentTeamRestoredFromSettings;
 	QMenu*								mainMenu;

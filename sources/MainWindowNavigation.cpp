@@ -33,6 +33,11 @@ void MainWindow::openChannelPost(const QString& channelId,
         return;
     }
 
+    // openStoredChannel() may synchronously activate/init the ChatArea and queue
+    // its weak default "show newest" position. Invalidate that intent now,
+    // before this function queues the actual semantic navigation work.
+    area->preparePostNavigation();
+
     // A permalink can point directly at a thread reply. Replies deliberately do
     // not have rows in the main channel timeline, so route those links to the
     // thread window instead of searching the channel root timeline.
@@ -50,6 +55,9 @@ void MainWindow::openChannelPost(const QString& channelId,
             area->threadsAreas.insert(threadArea);
         }
 
+        // The thread constructor/init path also queues its default newest
+        // position. The explicit reply jump has stronger intent.
+        threadArea->preparePostNavigation();
         threadArea->show();
         threadArea->raise();
         threadArea->activateWindow();
@@ -83,12 +91,14 @@ void MainWindow::openChannelPost(const QString& channelId,
                 return;
             }
 
+            bool contextReady = false;
             if (!contextPostIds.isEmpty()) {
-                if (!areaGuard->ensurePinnedPostVisible(postId, contextPostIds,
-                                                        reachedOldest, reachedNewest)) {
-                    return;
-                }
-            } else if (!areaGuard->ensurePostVisible(postId)) {
+                contextReady = areaGuard->ensurePinnedPostVisible(postId, contextPostIds,
+                                                                  reachedOldest, reachedNewest);
+            } else {
+                contextReady = areaGuard->ensurePostVisible(postId);
+            }
+            if (!contextReady) {
                 return;
             }
 

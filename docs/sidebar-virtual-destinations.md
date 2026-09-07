@@ -1,7 +1,7 @@
 # Virtual sidebar destinations and post collections
 
 This note records the model for user-centric destinations that look like navigation entries but are
-not ordinary server sidebar rows, plus the common collection semantics needed by Saved and future
+not ordinary server sidebar rows, plus the common collection semantics needed by Saved and
 message search.
 
 ## Personal
@@ -30,9 +30,15 @@ explicit instead of pretending the local row is an ordinary server channel row.
 ## Saved
 
 **Saved** (`Сохранённое`) is fundamentally different. Saved posts can originate from multiple channels
-and threads, so it must not pretend to be a `BackendChannel`.
+and threads, so it does not pretend to be a `BackendChannel`.
 
-It should be modeled as a virtual destination backed by a cross-conversation post collection:
+It is implemented as the second fixed local row in Favorites and opens the shared virtualized
+`PostCollectionView`. The producer is the paged `/users/{user_id}/posts/flagged` endpoint. Ordinary
+message context menus can add `flagged_post` preferences and Saved rows can remove them again. The
+sidebar row is a concrete virtual-destination item with no channel context menu: it deliberately cannot
+inherit mute, profile, or category-mutation actions from an unrelated real channel.
+
+The destination is backed by a cross-conversation post collection:
 
 ```text
 Saved
@@ -54,8 +60,12 @@ navigation. The collection itself never invents channel page numbers or thread c
 
 ## Message search
 
-Future message search should reuse the same collection/navigation model as Saved. The difference is
-lifetime and producer, not row semantics:
+Message search reuses the same collection/navigation model as Saved. The difference is lifetime and
+producer, not row semantics. A magnifier beside the sidebar menu opens the transient Search page;
+queries are sent to Mattermost's search endpoint with the server-side search syntax kept authoritative.
+The UI exposes the standard modifiers `from:`, `in:`, `before:`, `after:` and `on:`, plus reminders for
+quoted phrases, exclusions, suffix wildcards and hashtags. Search can target the current/specific team
+or the server's all-team search endpoint when supported.
 
 ```text
 Saved collection                 Search result collection
@@ -76,7 +86,7 @@ This means search results should not be inserted into `BackendChannel::posts` as
 contiguous history window. A search endpoint proves only that those posts matched a query and their
 result ordering; it does not prove adjacency in the source conversation.
 
-The eventual shared collection layer can therefore own:
+The shared collection layer therefore owns:
 
 - ordered collection entries and collection-specific paging;
 - lazy body resolution through `PostRepository::loadPost()`;
@@ -85,8 +95,64 @@ The eventual shared collection layer can therefore own:
 - semantic `goToPost(postId)` after the real conversation is open.
 
 `Saved` may be represented by a fixed virtual navigation destination. Search results are normally a
-transient destination created by a search action rather than a permanent sidebar row, but both should
-reuse the same post-collection view/source machinery.
+transient destination created by a search action rather than a permanent sidebar row, but both reuse
+the same post-collection view machinery.
+
+### User-driven paging
+
+A collection exposes at most ten new rows for each paging step. Loading the first search page does not
+create an unavailable sentinel and does not let `LongListWidget` prefetch trigger another search. Only
+a direct user viewport gesture near the bottom asks the collection for the next ten rows.
+
+Mattermost installations do not all implement search pagination identically. In particular, some search
+backends can ignore the requested `page`/`per_page` and return a larger bounded result set. The
+repository marks such a response as a complete result snapshot. `PostCollectionView` keeps that raw
+snapshot buffered, materializes the first ten posts, and reveals the next ten only as the user scrolls.
+No duplicate server request is made for those buffered pages. When the server honors pagination, each
+user paging gesture requests the next server page normally.
+
+This separation is intentional:
+
+```text
+server response                    collection-visible rows
+      |                                      |
+      | <= 10, has next page                 +-- first 10
+      +-------------------------------------->+-- user scroll -> request next page
+      |
+      | > requested page size                +-- first 10
+      +--> buffered complete snapshot ------>+-- user scroll -> reveal buffered 10
+                                             +-- no repeated search request
+```
+
+### Interactive search input
+
+Search uses the same `InteractiveTextEdit` foundation as the message composer. The widget itself owns
+only generic editor/completion mechanics; each use case installs its own completion rules and providers.
+A rule defines a trigger prefix, candidate provider, human-facing display text, canonical insertion text,
+and additional filter keys.
+
+For search the initial rules are:
+
+- `in:` — candidates are known channels. Matching is case-insensitive `contains` over the displayed
+  channel title and, when human-readable, the canonical channel name/slug. Selecting a normal
+  public/private channel replaces the typed value after `in:` with its canonical channel name; DM/group
+  rows fall back to the channel ID where needed by server search semantics.
+- `from:` — candidates are known users. Matching includes display name, username, nickname, first name,
+  and last name; selection inserts the canonical username.
+
+The popup opens as soon as a configured prefix is active. Continuing to type filters the existing
+candidate set. Selection replaces the complete value belonging to that prefix up to the next whitespace,
+so editing in the middle of an existing token cannot leave stale suffix text behind. A leading exclusion
+marker is preserved, therefore `-in:` and `-from:` reuse the same rules.
+
+`CompletionCandidate::displayText` and `insertText` are deliberately separate. The first implementation
+keeps the editor/query wire representation plain text because Mattermost search syntax is textual. This
+also leaves room for a future rich visual token/atom presentation without changing completion providers
+or the canonical value sent to the server.
+
+The composer currently inherits the same editor foundation while preserving its existing Enter,
+Shift+Enter, Escape, previous-message edit, and auto-height behavior. Composer-specific completion rules
+can be added independently of the search rules.
 
 ## Cache interaction
 

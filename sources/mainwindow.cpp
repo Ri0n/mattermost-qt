@@ -57,6 +57,7 @@
 #include "chat-area/ChatArea.h"
 #include "log.h"
 #include "notifications/NotificationManager.h"
+#include "post-collection/PostCollectionView.h"
 #include "ui/IconUtils.h"
 
 namespace Mattermost {
@@ -96,8 +97,18 @@ MainWindow::MainWindow(QWidget* parent, QSystemTrayIcon& trayIcon, Backend& _bac
 
 	ui->setupUi(this);
 	ui->toolButton->installEventFilter(this);
+    ui->searchButton->installEventFilter(this);
 	setupChannelTabs();
 	refreshMenuButtonIcon();
+    refreshSearchButtonIcon();
+    connect(ui->searchButton, &QToolButton::clicked,
+            this, &MainWindow::openMessageSearch);
+    connect(ui->channelList, &ChannelTree::virtualDestinationRequested,
+            this, [this](int destination, const QString& teamId) {
+        if (destination == SidebarItem::SavedDestination) {
+            openSavedMessages(teamId);
+        }
+    });
 	ui->channelList->setChatAreaStackedWidget(ui->chatAreaStackedWidget);
 	ui->channelList->setFocus();
 
@@ -527,6 +538,53 @@ void MainWindow::refreshChannelUnreadFilter()
 	}
 }
 
+void MainWindow::showCollectionPage(PostCollectionView* page)
+{
+    if (!page || !ui || !ui->chatAreaStackedWidget) {
+        return;
+    }
+    if (ChatArea* current = ui->channelList->getCurrentPage()) {
+        current->onDeactivate();
+    }
+    if (ui->chatAreaStackedWidget->indexOf(page) < 0) {
+        ui->chatAreaStackedWidget->addWidget(page);
+    }
+    ui->chatAreaStackedWidget->setCurrentWidget(page);
+}
+
+void MainWindow::openSavedMessages(const QString& teamId)
+{
+    Q_UNUSED(teamId)
+    if (!savedMessagesPage) {
+        savedMessagesPage = new PostCollectionView(
+            backend, PostCollectionView::Mode::Saved, ui->chatAreaStackedWidget);
+    }
+    showCollectionPage(savedMessagesPage);
+    savedMessagesPage->activateSaved();
+}
+
+void MainWindow::openMessageSearch()
+{
+    if (!searchMessagesPage) {
+        searchMessagesPage = new PostCollectionView(
+            backend, PostCollectionView::Mode::Search, ui->chatAreaStackedWidget);
+    }
+
+    QString preferredTeamId;
+    if (BackendChannel* channel = backend.getCurrentChannel()) {
+        if (channel->team) {
+            preferredTeamId = channel->team->id;
+        }
+    }
+
+    // Search is a transient destination, not the selected sidebar channel. Clear
+    // currentItem so clicking the previously active channel will always navigate
+    // back even though its tree row did not otherwise change.
+    ui->channelList->setCurrentItem(nullptr);
+    showCollectionPage(searchMessagesPage);
+    searchMessagesPage->activateSearch(preferredTeamId);
+}
+
 void MainWindow::openDirectMessageSearch()
 {
 	FilterListDialogConfig config;
@@ -647,6 +705,8 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 	if (event && event->type() == QEvent::PaletteChange) {
 		if (watched == ui->toolButton) {
 			refreshMenuButtonIcon();
+        } else if (watched == ui->searchButton) {
+            refreshSearchButtonIcon();
 		} else if (watched == unreadFilterButton) {
 			refreshUnreadFilterIcon();
 		}
@@ -662,6 +722,16 @@ void MainWindow::refreshMenuButtonIcon()
 	ui->toolButton->setIcon(IconUtils::tintedSymbolicIcon(
 		QStringLiteral(":/icons/burger"),
 		ui->toolButton->palette().color(QPalette::ButtonText)));
+}
+
+void MainWindow::refreshSearchButtonIcon()
+{
+    if (!ui || !ui->searchButton) {
+        return;
+    }
+    ui->searchButton->setIcon(IconUtils::tintedSymbolicIcon(
+        QStringLiteral(":/icons/search"),
+        ui->searchButton->palette().color(QPalette::ButtonText)));
 }
 
 void MainWindow::refreshUnreadFilterIcon()

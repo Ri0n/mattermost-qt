@@ -143,6 +143,7 @@ set_tests_properties(backend-user-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=o
 add_executable(sidebar-item-delegate-test
     SidebarItemDelegateTest.cpp
     "${CMAKE_SOURCE_DIR}/sources/channel-tree/ChannelItemDelegate.cpp"
+    "${CMAKE_SOURCE_DIR}/sources/ui/IconUtils.cpp"
 )
 
 target_include_directories(sidebar-item-delegate-test
@@ -196,6 +197,7 @@ add_test(NAME post-navigation-window-test COMMAND post-navigation-window-test)
 add_executable(message-text-edit-widget-test
     MessageTextEditWidgetTest.cpp
     "${CMAKE_SOURCE_DIR}/sources/chat-area/outgoing-post/MessageTextEditWidget.cpp"
+    "${CMAKE_SOURCE_DIR}/sources/widgets/InteractiveTextEdit.cpp"
 )
 
 target_include_directories(message-text-edit-widget-test

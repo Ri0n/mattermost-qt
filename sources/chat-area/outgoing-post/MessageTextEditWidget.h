@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -24,17 +24,17 @@
 
 #pragma once
 
-#include <qtextedit.h>
+#include "widgets/InteractiveTextEdit.h"
 
 class QResizeEvent;
 
 namespace Mattermost {
 
-class MessageTextEditWidget: public QTextEdit {
+class MessageTextEditWidget: public InteractiveTextEdit {
 	Q_OBJECT
 public:
 	MessageTextEditWidget (QWidget *parent = nullptr);
-	virtual ~MessageTextEditWidget ();
+	~MessageTextEditWidget () override;
 public:
 	void keyPressEvent (QKeyEvent* event) override;
 	bool hasNonEmptyText ();

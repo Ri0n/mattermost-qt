@@ -643,13 +643,13 @@ void AttentionList::openThread(const QString& channelId,
     }
 
     // A root mention intentionally behaves like a one-message tracked thread,
-    // but the Mattermost server has no actual Thread row until a reply exists.
-    // The root post is already in channel.posts from the websocket event, so it
-    // can be opened directly and must not hit the thread-read endpoint.
+    // but there is no actual thread until somebody replies. Navigate to the
+    // canonical root post in the channel so the normal jump/highlight behavior
+    // is used instead of opening an empty thread window.
     if (syntheticMentions.contains(threadId)) {
         syntheticMentions.remove(threadId);
         refresh();
-        emit threadSelected(channelId, threadId);
+        AppNavigationService::instance(*backend).openPost(threadId);
         return;
     }
 

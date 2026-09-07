@@ -19,9 +19,12 @@
 
 #pragma once
 
+#include <functional>
+
 #include <QLabel>
 #include <QPointer>
 #include <QTimer>
+#include <QUrl>
 
 class QTextBrowser;
 
@@ -38,11 +41,14 @@ class ChannelHeaderTextLabel final: public QLabel
 {
     Q_OBJECT
 public:
+    using LinkHandler = std::function<void(const QUrl&)>;
+
     explicit ChannelHeaderTextLabel(QWidget* parent = nullptr);
 
     // QLabel::setText() is not virtual, but ui_ChatArea stores this concrete
     // type, so ChatArea's existing calls resolve to this formatting wrapper.
     void setText(const QString& text);
+    void setLinkHandler(LinkHandler handler);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -55,11 +61,13 @@ private:
     void hidePopoverSoon();
     void hidePopover();
     void updateCollapsedHeight();
+    void openLink(const QUrl& url);
 
     QString sourceText;
     QString formattedText;
     QPointer<QTextBrowser> popover;
     QTimer hideTimer;
+    LinkHandler linkHandler;
 };
 
 } // namespace Mattermost

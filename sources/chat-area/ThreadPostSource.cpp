@@ -147,6 +147,7 @@ ThreadPostSource::ThreadPostSource(Backend& backendInstance,
                     << " new=" << count
                     << " replyCount=" << post.reply_count;
                 resizeLogicalTail(count);
+                pruneProvisionalPostIds();
                 qCDebug(lcThreadTimelineTrace).nospace()
                     << "THREAD_SLOTS source=" << static_cast<const void*>(this)
                     << ' ' << slotSummary(postIds);
@@ -175,6 +176,9 @@ int ThreadPostSource::ensurePostIndex(const QString& postId)
 {
     const int existing = indexOfPost(postId);
     if (existing >= 0) {
+        if (provisionalPostIds.contains(postId)) {
+            navigationProvisionalPostId = postId;
+        }
         return existing;
     }
 
@@ -186,6 +190,7 @@ int ThreadPostSource::ensurePostIndex(const QString& postId)
     if (post->id == rootId) {
         postIds[0] = rootId;
         rebuildIndex();
+        navigationProvisionalPostId.clear();
         emit rangeAvailable(0, 0);
         return 0;
     }
@@ -195,6 +200,8 @@ int ThreadPostSource::ensurePostIndex(const QString& postId)
         return -1;
     }
     postIds[index] = postId;
+    provisionalPostIds.insert(postId);
+    navigationProvisionalPostId = postId;
     rebuildIndex();
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PROVISIONAL source=" << static_cast<const void*>(this)
@@ -623,14 +630,44 @@ void ThreadPostSource::pruneProvisionalPostIds()
             ++it;
         }
     }
+    if (!navigationProvisionalPostId.isEmpty()
+        && indexOfPost(navigationProvisionalPostId) < 0) {
+        navigationProvisionalPostId.clear();
+    }
 }
 
 void ThreadPostSource::placeExactWindow(int first, const QStringList& ids)
 {
+    if (ids.isEmpty()) {
+        return;
+    }
+
+    // A thread jump can seed one cached reply at a timestamp-estimated slot.
+    // Preserve that semantic identity until an exact window actually contains
+    // it. Numeric overlap alone is not authority to replace the jump target.
+    if (!navigationProvisionalPostId.isEmpty()) {
+        const int currentIndex = indexOfPost(navigationProvisionalPostId);
+        const int last = first + static_cast<int>(ids.size()) - 1;
+        if (currentIndex >= first && currentIndex <= last
+            && !ids.contains(navigationProvisionalPostId)) {
+            qCDebug(lcThreadTimelineTrace).nospace()
+                << "THREAD_NAV_WINDOW_DEFER source=" << static_cast<const void*>(this)
+                << " target=" << shortId(navigationProvisionalPostId)
+                << " targetIndex=" << currentIndex
+                << " incoming=[" << first << ',' << last << ']';
+            return;
+        }
+    }
+
+    const bool confirmsNavigation = !navigationProvisionalPostId.isEmpty()
+        && ids.contains(navigationProvisionalPostId);
     for (const QString& id : ids) {
         provisionalPostIds.remove(id);
     }
     publishExactWindow(assignExactWindow(first, ids));
+    if (confirmsNavigation) {
+        navigationProvisionalPostId.clear();
+    }
     pruneProvisionalPostIds();
 }
 

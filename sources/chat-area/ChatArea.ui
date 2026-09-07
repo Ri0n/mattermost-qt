@@ -39,7 +39,7 @@
        <item>
         <layout class="QHBoxLayout" name="titlelLayout">
          <property name="rightMargin"><number>0</number></property>
-         <item alignment="Qt::AlignBottom">
+         <item alignment="Qt::AlignVCenter">
           <widget class="QLabel" name="titleLabel">
            <property name="sizePolicy"><sizepolicy hsizetype="Preferred" vsizetype="Minimum"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
            <property name="font"><font><pointsize>16</pointsize><bold>true</bold></font></property>
@@ -50,30 +50,54 @@
            <property name="text"><string>title</string></property>
           </widget>
          </item>
-         <item alignment="Qt::AlignBottom">
+         <item><spacer name="horizontalSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+         <item>
+          <layout class="QHBoxLayout" name="propertieslLayout">
+           <property name="spacing"><number>2</number></property>
+           <property name="leftMargin"><number>0</number></property>
+           <property name="topMargin"><number>0</number></property>
+           <property name="rightMargin"><number>0</number></property>
+           <property name="bottomMargin"><number>0</number></property>
+           <item>
+            <widget class="QToolButton" name="usersButton">
+             <property name="text"><string>N</string></property>
+             <property name="toolButtonStyle"><enum>Qt::ToolButtonTextBesideIcon</enum></property>
+             <property name="autoRaise"><bool>true</bool></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QToolButton" name="pinnedPostsButton">
+             <property name="text"><string>N</string></property>
+             <property name="toolButtonStyle"><enum>Qt::ToolButtonTextBesideIcon</enum></property>
+             <property name="autoRaise"><bool>true</bool></property>
+             <property name="checkable"><bool>true</bool></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QToolButton" name="loadOldPosts">
+             <property name="text"><string>Load older messages</string></property>
+             <property name="autoRaise"><bool>true</bool></property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="topicLayout">
+         <property name="spacing"><number>0</number></property>
+         <property name="leftMargin"><number>0</number></property>
+         <property name="topMargin"><number>0</number></property>
+         <property name="rightMargin"><number>0</number></property>
+         <property name="bottomMargin"><number>0</number></property>
+         <item>
           <widget class="Mattermost::ChannelHeaderTextLabel" name="statusLabel">
-           <property name="sizePolicy"><sizepolicy hsizetype="Preferred" vsizetype="Maximum"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
+           <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Maximum"><horstretch>1</horstretch><verstretch>0</verstretch></sizepolicy></property>
            <property name="styleSheet"><string notr="true">padding-left:1px; padding-bottom: 3px</string></property>
            <property name="frameShape"><enum>QFrame::NoFrame</enum></property>
            <property name="text"><string>TextLabel</string></property>
           </widget>
          </item>
-         <item><spacer name="horizontalSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
-        </layout>
-       </item>
-       <item>
-        <layout class="QHBoxLayout" name="propertieslLayout">
-         <property name="spacing"><number>6</number></property>
-         <property name="bottomMargin"><number>0</number></property>
-         <item><widget class="QPushButton" name="usersButton"><property name="text"><string>N members</string></property></widget></item>
-         <item><widget class="QPushButton" name="loadOldPosts"><property name="text"><string>Load older messages</string></property></widget></item>
-         <item>
-          <widget class="QPushButton" name="pinnedPostsButton">
-           <property name="text"><string>N pinned posts</string></property>
-           <property name="icon"><iconset><normaloff>:/img/pushpin.png</normaloff>:/img/pushpin.png</iconset></property>
-          </widget>
-         </item>
-         <item><spacer name="horizontalSpacer_2"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
         </layout>
        </item>
       </layout>

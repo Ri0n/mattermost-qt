@@ -125,6 +125,9 @@ public:
 	bool canRemoveChannelFromCategory(const ChannelItem* item) const;
 	void removeChannelFromCategory(ChannelItem* item);
 
+signals:
+    void virtualDestinationRequested(int destination, const QString& teamId);
+
 protected:
 	void currentChanged(const QModelIndex& current, const QModelIndex& previous) override;
 	void mousePressEvent(QMouseEvent* event) override;
@@ -145,6 +148,8 @@ private:
 	                               QTreeWidgetItem& categoryItem, BackendChannel& channel);
     ChannelItem* createPersonalItem(Backend& backend, TeamItem& teamItem,
                                     QTreeWidgetItem& categoryItem);
+    ChannelItem* createSavedItem(Backend& backend, TeamItem& teamItem,
+                                 QTreeWidgetItem& categoryItem);
     QTreeWidgetItem* personalItemForTeam(const QString& teamId) const;
     void refreshPersonalItems();
 	ChatArea* ensureChatArea(QTreeWidgetItem* item);

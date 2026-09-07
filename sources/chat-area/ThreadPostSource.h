@@ -56,6 +56,10 @@ private:
     QString rootId;
     PostResidencyLease rootResidencyLease;
     QSet<QString> provisionalPostIds;
+    // A semantic jump may temporarily place one cached reply by timestamp.
+    // Exact thread windows may move this identity when they contain it, but may
+    // not silently overwrite its estimated slot with an unrelated reply.
+    QString navigationProvisionalPostId;
 };
 
 } // namespace Mattermost

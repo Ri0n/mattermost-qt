@@ -24,7 +24,6 @@
 #include <utility>
 #include <vector>
 
-#include <QPointer>
 #include <QSet>
 #include <QStringList>
 #include <QTreeWidgetItem>
@@ -36,14 +35,15 @@ namespace Ui {
 class ChatArea;
 }
 
-class QDockWidget;
 class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
 class QEvent;
 class QResizeEvent;
 class QShowEvent;
+class QStackedWidget;
 class QTimer;
+class QToolButton;
 
 namespace Mattermost {
 
@@ -53,6 +53,7 @@ class BackendChannel;
 class BackendPost;
 class BackendUser;
 class ChannelItem;
+class PostCollectionView;
 
 class ChatArea: public QWidget {
 	Q_OBJECT
@@ -70,6 +71,14 @@ public:
 	/** Scroll to a post through the logical post source, materializing it if known. */
 	void goToPost (const BackendPost& post);
 	void goToPost (const QString& postId);
+
+	/**
+	 * Explicit semantic navigation supersedes the weak queued "show newest"
+	 * position installed by channel activation. Call this synchronously as soon
+	 * as an external jump selects this ChatArea, before the queued navigation
+	 * callback itself runs.
+	 */
+	void preparePostNavigation () { ++viewportNavigationGeneration; }
 
 	bool ensurePostVisible (const QString& postId);
 	bool ensurePinnedPostVisible(const QString& postId,
@@ -98,6 +107,11 @@ private:
 	void dragMoveEvent (QDragMoveEvent* event) override;
 	void dropEvent (QDropEvent* event) override;
 
+	void setupHeaderUi();
+	void refreshHeaderActionIcons();
+	void updateUsersButton();
+	void setupPinnedPostsView();
+	void showPinnedPosts(bool show);
 	void setupComposerUi();
 	void focusComposer();
 	void beginMessageLoading();
@@ -116,8 +130,12 @@ private:
 	ChatArea* parentArea;
 	QString parentPostId;
 	QString pendingPostId;
+	std::uint64_t viewportNavigationGeneration = 0;
 	AbstractPostSource* postSource = nullptr; // QObject child; owned by ChatArea
 	QTimer* loadingDelayTimer = nullptr;
+	QToolButton* threadFollowButton = nullptr;
+	QStackedWidget* contentStack = nullptr;
+	PostCollectionView* pinnedPostsView = nullptr;
 	int pendingMessageLoads = 0;
 
 public:
@@ -126,7 +144,6 @@ public:
 	BackendChannel& channel;
 	ChannelItem* treeItem;
 	QString lastReadPostId;
-	QPointer<QDockWidget> pinnedPostsDockWidget;
 	void init();
 	void deinit();
 

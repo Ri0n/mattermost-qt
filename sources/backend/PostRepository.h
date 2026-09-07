@@ -21,6 +21,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <QVariant>
+#include <QVector>
 
 #include "HTTPConnector.h"
 #include "PostCacheService.h"
@@ -66,14 +67,36 @@ public:
         bool success = false;
     };
 
+    /** One page of a cross-conversation endpoint, preserving server order. */
+    struct CollectionPage {
+        QVector<QJsonObject> posts;
+        bool hasMore = false;
+        // Some Mattermost search backends ignore page/per_page and return a
+        // complete bounded snapshot. The view can buffer that snapshot and
+        // reveal it in client-sized pages instead of repeating the same search.
+        bool completeResultSet = false;
+        bool success = false;
+    };
+
     using PageCallback = std::function<void(const Page&)>;
     using ContextCallback = std::function<void(const Context&)>;
     using PostCallback = std::function<void(const PostResult&)>;
+    using CollectionCallback = std::function<void(const CollectionPage&)>;
 
     static PostRepository& instance(Backend& backend);
 
     /** Fetch one post by id and quietly merge it into its known channel cache. */
     void loadPost(const QString& postId, PostCallback callback);
+
+    /** Fetch the logged-in user's saved/flagged posts, preserving collection order. */
+    void loadFlaggedPosts(int page, int perPage, CollectionCallback callback);
+
+    /** Search message posts in one team, or all teams when teamId is empty. */
+    void searchPosts(const QString& teamId,
+                     const QString& terms,
+                     int page,
+                     int perPage,
+                     CollectionCallback callback);
 
     /** Fetch an absolute main-channel page. Replies are deliberately excluded. */
     void loadChannelPage(BackendChannel& channel,
