@@ -24,7 +24,6 @@
 #include <utility>
 #include <vector>
 
-#include <QPointer>
 #include <QSet>
 #include <QStringList>
 #include <QTreeWidgetItem>
@@ -36,13 +35,13 @@ namespace Ui {
 class ChatArea;
 }
 
-class QDockWidget;
 class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
 class QEvent;
 class QResizeEvent;
 class QShowEvent;
+class QStackedWidget;
 class QTimer;
 class QToolButton;
 
@@ -54,6 +53,7 @@ class BackendChannel;
 class BackendPost;
 class BackendUser;
 class ChannelItem;
+class PostCollectionView;
 
 class ChatArea: public QWidget {
 	Q_OBJECT
@@ -110,6 +110,8 @@ private:
 	void setupHeaderUi();
 	void refreshHeaderActionIcons();
 	void updateUsersButton();
+	void setupPinnedPostsView();
+	void showPinnedPosts(bool show);
 	void setupComposerUi();
 	void focusComposer();
 	void beginMessageLoading();
@@ -132,6 +134,8 @@ private:
 	AbstractPostSource* postSource = nullptr; // QObject child; owned by ChatArea
 	QTimer* loadingDelayTimer = nullptr;
 	QToolButton* threadFollowButton = nullptr;
+	QStackedWidget* contentStack = nullptr;
+	PostCollectionView* pinnedPostsView = nullptr;
 	int pendingMessageLoads = 0;
 
 public:
@@ -140,7 +144,6 @@ public:
 	BackendChannel& channel;
 	ChannelItem* treeItem;
 	QString lastReadPostId;
-	QPointer<QDockWidget> pinnedPostsDockWidget;
 	void init();
 	void deinit();
 
