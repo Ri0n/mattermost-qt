@@ -209,9 +209,13 @@ void EmojiInfo::addCustomEmoji (const QString& emojiName, const QString& emojiPa
         return;
     }
 
+    // width/height are deliberately a non-presentation sentinel. Qt 6's
+    // MessageFormatter uses explicit image dimensions to distinguish generated
+    // custom emoji from user Markdown images while serializing the document;
+    // every actual renderer replaces this 1px box through EmojiPresentation.
 	emojiVecNoSkinVariadic[EmojiCategory::custom].push_back (
         Emoji {emojiName,
-               QStringLiteral(" <img src=\"%1\"> ")
+               QStringLiteral(" <img src=\"%1\" width=1 height=1> ")
                    .arg(emojiPath.toHtmlEscaped())});
 	emojiMap[emojiName] = nextEmojiSeq;
 	++nextEmojiSeq;
