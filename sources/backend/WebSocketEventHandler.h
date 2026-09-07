@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -41,6 +41,7 @@
 #include "events/UserAddedToChannelEvent.h"
 #include "events/UserRemovedFromChannelEvent.h"
 #include "events/OpenDialogEvent.h"
+#include "events/PreferencesEvent.h"
 
 namespace Mattermost {
 
@@ -70,7 +71,12 @@ public:
 	void handleEvent (const ChannelCreatedEvent& event);
 	void handleEvent (const ChannelUpdatedEvent& event);
 	void handleEvent (const OpenDialogEvent& event);
+    void handleEvent (const PreferenceChangedEvent& event);
+    void handleEvent (const PreferencesChangedEvent& event);
+    void handleEvent (const PreferencesDeletedEvent& event);
 private:
+    void handlePreferences(const QVector<QJsonObject>& preferences, bool deleted);
+
 	Backend& backend;
 	Storage& storage;
 
