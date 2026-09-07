@@ -41,6 +41,7 @@ add_executable(message-formatter-test
     "${CMAKE_SOURCE_DIR}/sources/chat-area/post/MessageFormatter.cpp"
     "${CMAKE_SOURCE_DIR}/sources/backend/emoji/EmojiInfo.cpp"
     "${CMAKE_SOURCE_DIR}/sources/backend/emoji/EmojiMap.cpp"
+    "${CMAKE_SOURCE_DIR}/sources/backend/emoji/EmojiRegistryNotifier.cpp"
 )
 
 target_include_directories(message-formatter-test
@@ -63,6 +64,7 @@ add_executable(message-content-widget-test
     "${CMAKE_SOURCE_DIR}/sources/chat-area/post/MessageFormatter.cpp"
     "${CMAKE_SOURCE_DIR}/sources/backend/emoji/EmojiInfo.cpp"
     "${CMAKE_SOURCE_DIR}/sources/backend/emoji/EmojiMap.cpp"
+    "${CMAKE_SOURCE_DIR}/sources/backend/emoji/EmojiRegistryNotifier.cpp"
 )
 
 target_include_directories(message-content-widget-test
