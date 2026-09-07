@@ -20,6 +20,7 @@
 #include <memory>
 #include <QApplication>
 #include <QMenu>
+#include <QStyle>
 #include <QStyleFactory>
 #include <QSystemTrayIcon>
 
@@ -70,7 +71,7 @@ inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 	connect (trayIcon.get(), &QSystemTrayIcon::activated, [this] (QSystemTrayIcon::ActivationReason reason) {
 		if (reason == QSystemTrayIcon::Trigger) {
 			toggleShowWindow ();
-		}
+	}
 	});
 
 	trayIconMenu->addAction ("Open Mattermost", this, &MattermostApplication::showWindow);
