@@ -182,6 +182,60 @@ PostWidget* ChatLogWidget::findPost(const QString& postId) const
     return index >= 0 ? qobject_cast<PostWidget*>(itemWidget(index)) : nullptr;
 }
 
+bool ChatLogWidget::captureViewportBookmark(QString& postId) const
+{
+    postId.clear();
+    if (!postSource || itemCount() <= 0 || viewport()->height() <= 0) {
+        return false;
+    }
+
+    // Preserve a semantic identity rather than a logical index. Choosing the
+    // message under the viewport centre gives a stable visual neighborhood when
+    // the view is rebuilt later, even if posts were inserted while inactive.
+    const int centerIndex = indexAtViewportPosition(viewport()->height() / 2);
+    if (centerIndex >= 0) {
+        if (BackendPost* post = postSource->postAt(centerIndex)) {
+            if (!post->id.isEmpty()) {
+                postId = post->id;
+                return true;
+            }
+        }
+    }
+
+    // A sparse estimated window can have no resident body exactly at centre.
+    // Fall back to the nearest concrete visible post.
+    const Range visible = visibleRange();
+    if (!visible.isValid()) {
+        return false;
+    }
+    const int center = (visible.first + visible.last) / 2;
+    for (int distance = 0; distance <= visible.count(); ++distance) {
+        const int candidates[] = {center - distance, center + distance};
+        for (int index : candidates) {
+            if (index < visible.first || index > visible.last) {
+                continue;
+            }
+            BackendPost* post = postSource->postAt(index);
+            if (post && !post->id.isEmpty()) {
+                postId = post->id;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool ChatLogWidget::restoreViewportBookmark(const QString& postId)
+{
+    if (!postSource || postId.isEmpty()) {
+        return false;
+    }
+
+    // Reuse the measured-row semantic navigation path, but deliberately do not
+    // request a navigation flash for an ordinary channel revisit.
+    return lockNavigationToPost(postId, Alignment::Center, 0);
+}
+
 bool ChatLogWidget::ensurePostVisible(const QString& postId, Alignment alignment)
 {
     if (!postSource || postId.isEmpty()) {
