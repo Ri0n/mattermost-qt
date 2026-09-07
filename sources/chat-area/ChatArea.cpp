@@ -21,10 +21,12 @@
 
 #include <QDockWidget>
 #include <QIcon>
+#include <QPalette>
 #include <QPointer>
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QTimer>
+#include <QToolButton>
 #include <QTreeWidget>
 
 #include "AbstractPostSource.h"
@@ -42,17 +44,15 @@
 #include "channel-tree-dialogs/ViewChannelMembersListDialog.h"
 #include "log.h"
 #include "post/PostWidget.h"
+#include "ui/IconUtils.h"
 #include "ui_ChatArea.h"
 
 namespace Mattermost {
 
 namespace {
 
-const QIcon& getUserButtonIcon()
-{
-    static QIcon icon(QStringLiteral(":/img/user-icon.png"));
-    return icon;
-}
+constexpr int HeaderActionIconExtent = 18;
+constexpr int HeaderIconButtonExtent = 28;
 
 } // namespace
 
@@ -75,9 +75,9 @@ ChatArea::ChatArea(Backend& backend,
     setAcceptDrops(true);
     ui->setupUi(this);
     ui->listWidget->configure(backend, *this);
+    setupHeaderUi();
     setupComposerUi();
 
-    ui->usersButton->setIcon(getUserButtonIcon());
     ui->outgoingPostCreator->init(backend, channel, *ui->listWidget,
                                   ui->footerLayout, *ui->composerStatusLabel,
                                   *ui->attachButton, *ui->addEmojiButton,
@@ -111,9 +111,8 @@ ChatArea::ChatArea(Backend& backend,
             if (!ui) {
                 return;
             }
+            updateUsersButton();
             ui->usersButton->show();
-            ui->usersButton->setText(QString::number(this->channel.members.size())
-                                     + QStringLiteral(" members"));
         });
     }
 
@@ -148,6 +147,7 @@ ChatArea::ChatArea(Backend& backend,
     setAcceptDrops(true);
     ui->setupUi(this);
     ui->listWidget->configure(backend, *this);
+    setupHeaderUi();
     setupComposerUi();
 
     ui->outgoingPostCreator->init(backend, channel, *ui->listWidget,
@@ -167,26 +167,40 @@ ChatArea::ChatArea(Backend& backend,
     if (channel.team && !root_id.isEmpty()) {
         const QString teamId = channel.team->id;
         const QString threadId = root_id;
-        auto* followButton = new QPushButton(tr("Follow"), this);
-        followButton->setEnabled(false);
-        followButton->setProperty("following", false);
-        ui->propertieslLayout->insertWidget(0, followButton);
+        threadFollowButton = new QToolButton(this);
+        threadFollowButton->setObjectName(QStringLiteral("threadFollowButton"));
+        threadFollowButton->setAutoRaise(true);
+        threadFollowButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        threadFollowButton->setIconSize(QSize(HeaderActionIconExtent,
+                                              HeaderActionIconExtent));
+        threadFollowButton->setFixedSize(HeaderIconButtonExtent,
+                                         HeaderIconButtonExtent);
+        threadFollowButton->setCursor(Qt::PointingHandCursor);
+        threadFollowButton->setEnabled(false);
+        threadFollowButton->setProperty("following", false);
+        threadFollowButton->setToolTip(tr("Follow thread"));
+        threadFollowButton->setAccessibleName(tr("Follow thread"));
+        ui->propertieslLayout->addWidget(threadFollowButton, 0, Qt::AlignVCenter);
+        refreshHeaderActionIcons();
 
         QPointer<ChatArea> areaGuard(this);
-        QPointer<QPushButton> buttonGuard(followButton);
+        QPointer<QToolButton> buttonGuard(threadFollowButton);
         auto setButtonState = [areaGuard, buttonGuard](bool following) {
             if (!areaGuard || !buttonGuard) {
                 return;
             }
             buttonGuard->setProperty("following", following);
-            buttonGuard->setText(following ? areaGuard->tr("Unfollow")
-                                           : areaGuard->tr("Follow"));
+            const QString label = following ? areaGuard->tr("Unfollow thread")
+                                            : areaGuard->tr("Follow thread");
+            buttonGuard->setToolTip(label);
+            buttonGuard->setAccessibleName(label);
             buttonGuard->setEnabled(true);
+            areaGuard->refreshHeaderActionIcons();
         };
 
         auto& followService = ThreadFollowService::instance(backend);
         connect(&followService, &ThreadFollowService::followingChanged,
-                followButton,
+                threadFollowButton,
                 [teamId, threadId, setButtonState](const QString& changedTeamId,
                                                    const QString& changedThreadId,
                                                    bool following) {
@@ -196,7 +210,7 @@ ChatArea::ChatArea(Backend& backend,
         });
 
         followService.queryFollowing(teamId, threadId, setButtonState);
-        connect(followButton, &QPushButton::clicked, this,
+        connect(threadFollowButton, &QToolButton::clicked, this,
                 [this, teamId, threadId, buttonGuard, setButtonState] {
             if (!buttonGuard) {
                 return;
@@ -227,6 +241,62 @@ ChatArea::~ChatArea()
         parentArea->threadsAreas.remove(this);
     }
     delete ui;
+}
+
+void ChatArea::setupHeaderUi()
+{
+    ui->usersButton->setFlat(true);
+    ui->usersButton->setCursor(Qt::PointingHandCursor);
+    ui->usersButton->setIconSize(QSize(HeaderActionIconExtent,
+                                       HeaderActionIconExtent));
+
+    ui->pinnedPostsButton->setFlat(true);
+    ui->pinnedPostsButton->setCursor(Qt::PointingHandCursor);
+    ui->pinnedPostsButton->setIconSize(QSize(HeaderActionIconExtent,
+                                             HeaderActionIconExtent));
+
+    ui->loadOldPosts->setFlat(true);
+    refreshHeaderActionIcons();
+}
+
+void ChatArea::refreshHeaderActionIcons()
+{
+    if (!ui) {
+        return;
+    }
+
+    if (ui->usersButton) {
+        ui->usersButton->setIcon(IconUtils::tintedSymbolicIcon(
+            QStringLiteral(":/icons/members"),
+            ui->usersButton->palette().color(QPalette::ButtonText)));
+    }
+    if (ui->pinnedPostsButton) {
+        ui->pinnedPostsButton->setIcon(IconUtils::tintedSymbolicIcon(
+            QStringLiteral(":/icons/pin"),
+            ui->pinnedPostsButton->palette().color(QPalette::ButtonText)));
+    }
+    if (threadFollowButton) {
+        const bool following = threadFollowButton->property("following").toBool();
+        threadFollowButton->setIcon(IconUtils::tintedSymbolicIcon(
+            following ? QStringLiteral(":/icons/bell-filled")
+                      : QStringLiteral(":/icons/bell"),
+            threadFollowButton->palette().color(QPalette::ButtonText)));
+    }
+}
+
+void ChatArea::updateUsersButton()
+{
+    if (!ui || !ui->usersButton) {
+        return;
+    }
+
+    const qulonglong memberCount = static_cast<qulonglong>(channel.members.size());
+    ui->usersButton->setText(QString::number(memberCount));
+    const QString tooltip = memberCount == 1
+        ? tr("1 member")
+        : tr("%1 members").arg(memberCount);
+    ui->usersButton->setToolTip(tooltip);
+    ui->usersButton->setAccessibleName(tooltip);
 }
 
 void ChatArea::setupPostSource()
@@ -302,13 +372,11 @@ void ChatArea::init()
 
         signalConnections.push_back(connect(&channel, &BackendChannel::onUserAdded,
                                             this, [this](const BackendUser&) {
-            ui->usersButton->setText(QString::number(channel.members.size())
-                                     + QStringLiteral(" members"));
+            updateUsersButton();
         }));
         signalConnections.push_back(connect(&channel, &BackendChannel::onUserRemoved,
                                             this, [this](const BackendUser&) {
-            ui->usersButton->setText(QString::number(channel.members.size())
-                                     + QStringLiteral(" members"));
+            updateUsersButton();
         }));
 
         signalConnections.push_back(connect(ui->listWidget,
@@ -441,11 +509,14 @@ void ChatArea::updatePinnedPostsButton()
         return;
     }
 
-    const auto pinnedPostCount = channel.pinnedPosts.size();
-    ui->pinnedPostsButton->setText(
-        QString::number(static_cast<qulonglong>(pinnedPostCount))
-        + (pinnedPostCount == 1 ? QStringLiteral(" pinned post")
-                                : QStringLiteral(" pinned posts")));
+    const qulonglong pinnedPostCount =
+        static_cast<qulonglong>(channel.pinnedPosts.size());
+    ui->pinnedPostsButton->setText(QString::number(pinnedPostCount));
+    const QString tooltip = pinnedPostCount == 1
+        ? tr("1 pinned post")
+        : tr("%1 pinned posts").arg(pinnedPostCount);
+    ui->pinnedPostsButton->setToolTip(tooltip);
+    ui->pinnedPostsButton->setAccessibleName(tooltip);
     ui->pinnedPostsButton->show();
 }
 
