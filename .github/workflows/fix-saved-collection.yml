@@ -1,0 +1,83 @@
+name: Fix Saved collection compile and paging
+
+on:
+  push:
+    branches:
+      - chatgpt/saved-search-collections
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/saved-search-collections
+      - name: Apply fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          channel = Path('sources/channel-tree/ChannelTree.cpp')
+          text = channel.read_text()
+          anchor = '''#endif
+          }
+
+          } // namespace
+          '''
+          replacement = '''#endif
+          }
+
+          class VirtualDestinationItem final : public ChannelItem
+          {
+          public:
+              using ChannelItem::ChannelItem;
+
+              void showContextMenu(const QPoint&) override {}
+          };
+
+          } // namespace
+          '''
+          if anchor not in text:
+              raise SystemExit('ChannelTree namespace anchor not found')
+          text = text.replace(anchor, replacement, 1)
+          old = '    auto* item = new ChannelItem(backend, nullptr);\n'
+          new = '    auto* item = new VirtualDestinationItem(backend, nullptr);\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'unexpected ChannelItem construction count: {text.count(old)}')
+          text = text.replace(old, new, 1)
+          channel.write_text(text)
+
+          collection = Path('sources/post-collection/PostCollectionView.cpp')
+          text = collection.read_text()
+          old = '''        if (!result.success) {
+              guard->hasMore = false;
+              guard->finishPendingRangeRequests();
+              guard->updateStatus();
+              return;
+          }
+          '''
+          new = '''        if (!result.success) {
+              guard->hasMore = false;
+              if (guard->list) {
+                  guard->list->setItemCount(static_cast<int>(guard->posts.size()));
+              }
+              guard->finishPendingRangeRequests();
+              guard->updateStatus();
+              return;
+          }
+          '''
+          if old not in text:
+              raise SystemExit('PostCollectionView failure block not found')
+          collection.write_text(text.replace(old, new, 1))
+          PY
+
+          rm .github/workflows/fix-saved-collection.yml
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add -A
+          git commit -m 'Fix Saved destination item and paging failure'
+          git push origin HEAD:chatgpt/saved-search-collections
