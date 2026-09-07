@@ -73,10 +73,10 @@ public:
 	void goToPost (const QString& postId);
 
 	/**
-	 * Explicit semantic navigation supersedes the weak queued "show newest"
-	 * position installed by channel activation. Call this synchronously as soon
-	 * as an external jump selects this ChatArea, before the queued navigation
-	 * callback itself runs.
+	 * Explicit semantic navigation supersedes weak queued activation positioning
+	 * (newest or an inactive-page bookmark). Call this synchronously as soon as
+	 * an external jump selects this ChatArea, before the queued navigation itself
+	 * runs.
 	 */
 	void preparePostNavigation () { ++viewportNavigationGeneration; }
 
@@ -125,11 +125,13 @@ private:
 	void tryExplicitReadAcknowledgement ();
 	void setupPostSource();
 	void scheduleNewestPosition();
+	void scheduleStoredPosition();
 	void finishPendingNavigation();
 
 	ChatArea* parentArea;
 	QString parentPostId;
 	QString pendingPostId;
+	QString storedViewportPostId;
 	std::uint64_t viewportNavigationGeneration = 0;
 	AbstractPostSource* postSource = nullptr; // QObject child; owned by ChatArea
 	QTimer* loadingDelayTimer = nullptr;
