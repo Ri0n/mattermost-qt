@@ -11,6 +11,7 @@
 #include <QFontDatabase>
 #include <QFontMetrics>
 #include <QHBoxLayout>
+#include <QImageReader>
 #include <QPainter>
 #include <QPalette>
 #include <QPlainTextEdit>
@@ -42,7 +43,7 @@ namespace Mattermost {
 namespace {
 
 constexpr qreal inlineEmojiScale = 1.3;
-constexpr qreal jumboEmojiScale = 2.0;
+constexpr qreal jumboEmojiScale = 4.0;
 
 const QSet<QString>& unicodeEmojiStrings()
 {
@@ -121,13 +122,36 @@ bool isEmojiOnlyMessage(const QString& message)
 
 int emojiExtent(const QFont& baseFont, qreal scale)
 {
-    QFont font(baseFont);
-    if (font.pointSizeF() > 0.0) {
-        font.setPointSizeF(font.pointSizeF() * scale);
-    } else if (font.pixelSize() > 0) {
-        font.setPixelSize(qRound(font.pixelSize() * scale));
+    return std::max(1, qRound(QFontMetrics(baseFont).ascent() * scale));
+}
+
+bool isCustomEmojiImage(const QTextImageFormat& imageFormat)
+{
+    // MessageFormatter gives custom emoji explicit dimensions. User Markdown
+    // images do not carry dimensions because raw HTML is disabled, so this is
+    // also the marker that keeps ordinary message images out of emoji sizing.
+    return imageFormat.width() > 0.0 && imageFormat.height() > 0.0;
+}
+
+QSize customEmojiRenderSize(const QTextImageFormat& imageFormat,
+                            int extent,
+                            bool capAtNativeSize)
+{
+    const QSize target(extent, extent);
+    QImageReader reader(imageFormat.name());
+    const QSize nativeSize = reader.size();
+    if (!nativeSize.isValid() || nativeSize.isEmpty()) {
+        return target;
     }
-    return std::max(1, QFontMetrics(font).height());
+
+    QSize bounds = target;
+    if (capAtNativeSize) {
+        bounds.setWidth(std::min(bounds.width(), nativeSize.width()));
+        bounds.setHeight(std::min(bounds.height(), nativeSize.height()));
+    }
+
+    const QSize scaled = nativeSize.scaled(bounds, Qt::KeepAspectRatio);
+    return scaled.isValid() && !scaled.isEmpty() ? scaled : target;
 }
 
 void resizeInlineEmojis(QTextDocument& document, bool jumbo)
@@ -170,14 +194,12 @@ void resizeInlineEmojis(QTextDocument& document, bool jumbo)
         start = end;
     }
 
-    if (!jumbo) {
-        return;
-    }
-
-    // An emoji-only message cannot contain a user Markdown image. Any image
-    // object left in this document is therefore a custom emoji inserted by the
-    // formatter. Resize the rendered object, not the cached source asset.
-    const int extent = emojiExtent(document.defaultFont(), jumboEmojiScale);
+    // Custom emoji are QTextImageFormat objects. Normalize them on every pass,
+    // not only in jumbo mode: their cached HTML dimensions are merely fallback
+    // metadata and must not determine the visual size of an inline message.
+    // AlignMiddle avoids the default image-baseline behavior that made adjacent
+    // text appear to sag below the emoji.
+    const int extent = emojiExtent(document.defaultFont(), scale);
     for (QTextBlock block = document.begin(); block.isValid(); block = block.next()) {
         for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
             const QTextFragment fragment = it.fragment();
@@ -186,8 +208,14 @@ void resizeInlineEmojis(QTextDocument& document, bool jumbo)
             }
 
             QTextImageFormat imageFormat = fragment.charFormat().toImageFormat();
-            imageFormat.setWidth(extent);
-            imageFormat.setHeight(extent);
+            if (!isCustomEmojiImage(imageFormat)) {
+                continue;
+            }
+
+            const QSize renderSize = customEmojiRenderSize(imageFormat, extent, jumbo);
+            imageFormat.setWidth(renderSize.width());
+            imageFormat.setHeight(renderSize.height());
+            imageFormat.setVerticalAlignment(QTextCharFormat::AlignMiddle);
 
             QTextCursor cursor(&document);
             cursor.setPosition(fragment.position());
