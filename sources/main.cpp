@@ -25,6 +25,7 @@
 #include "login/LoginDialog.h"
 #include "mainwindow.h"
 #include "backend/Backend.h"
+#include "backend/CustomEmojiService.h"
 #include "config/Config.h"
 #include "ui/OverlayScrollBarManager.h"
 #include "ui/SplitterHandleManager.h"
@@ -56,6 +57,7 @@ inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 {
     OverlayScrollBarManager::install(*this);
     SplitterHandleManager::install(*this);
+    (void)CustomEmojiService::instance(backend);
 
     Config::init ();
 	trayIcon->setToolTip(tr("Mattermost Qt"));
