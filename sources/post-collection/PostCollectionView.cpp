@@ -28,9 +28,9 @@ namespace Mattermost {
 class PostCollectionView::CollectionList final : public LongListWidget
 {
 public:
-    explicit CollectionList(PostCollectionView& owner, QWidget* parent)
+    explicit CollectionList(PostCollectionView& collectionOwner, QWidget* parent)
         : LongListWidget(parent)
-        , owner(owner)
+        , owner(collectionOwner)
     {
         setDefaultItemHeight(132);
         setMaterializationLimit(200);
