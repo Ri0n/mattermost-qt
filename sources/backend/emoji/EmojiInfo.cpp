@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -23,15 +23,18 @@
  */
 
 #include "EmojiInfo.h"
-#include <QMap>
+
 #include <QDebug>
+#include <QMap>
+
+#include "EmojiRegistryNotifier.h"
 
 namespace Mattermost {
 
 extern uint32_t lastCategorySeq[EmojiCategory::COUNT];
 extern QVector<Emoji> emojiVecNoSkinVariadic[EmojiCategory::COUNT];
 extern QVector<SkinVariadicEmoji> emojiVecSkinVariadic;
-extern QMap<QString, EmojiSeq>  emojiMap;
+extern QMap<QString, EmojiSeq> emojiMap;
 extern uint32_t nextEmojiSeq;
 
 /**
@@ -148,6 +151,8 @@ void EmojiInfo::addCustomEmoji (const QString& emojiName, const QString& emojiPa
 	emojiMap[emojiName] = nextEmojiSeq;
 	++nextEmojiSeq;
 	++lastCategorySeq[EmojiCategory::custom];
+
+    emit EmojiRegistryNotifier::instance().customEmojiAdded(emojiName);
 }
 
 } /* namespace Mattermost */
