@@ -103,15 +103,16 @@ InteractiveTextEdit::ActiveCompletion InteractiveTextEdit::activeCompletion() co
         return result;
     }
 
-    const QString beforeCursor = block.text().left(blockOffset);
+    const QString blockText = block.text();
+    const QString beforeCursor = blockText.left(blockOffset);
     int tokenStart = beforeCursor.size();
     while (tokenStart > 0 && !beforeCursor.at(tokenStart - 1).isSpace()) {
         --tokenStart;
     }
 
-    const QString token = beforeCursor.mid(tokenStart);
-    const int exclusionOffset = token.startsWith(QLatin1Char('-')) ? 1 : 0;
-    const QString ruleText = token.mid(exclusionOffset);
+    const QString typedToken = beforeCursor.mid(tokenStart);
+    const int exclusionOffset = typedToken.startsWith(QLatin1Char('-')) ? 1 : 0;
+    const QString ruleText = typedToken.mid(exclusionOffset);
 
     for (int index = 0; index < completionRules.size(); ++index) {
         const CompletionRule& rule = completionRules.at(index);
@@ -120,10 +121,19 @@ InteractiveTextEdit::ActiveCompletion InteractiveTextEdit::activeCompletion() co
         }
 
         const int queryOffset = exclusionOffset + rule.prefix.size();
+        int tokenEnd = blockOffset;
+        while (tokenEnd < blockText.size() && !blockText.at(tokenEnd).isSpace()) {
+            ++tokenEnd;
+        }
+
         result.ruleIndex = index;
         result.queryStart = block.position() + tokenStart + queryOffset;
-        result.queryEnd = cursor.position();
-        result.query = token.mid(queryOffset);
+        // Replace the complete value belonging to the active prefix, not just
+        // the substring before the cursor. This keeps editing an existing token
+        // deterministic: `in:geneXral` with the caret at X becomes exactly the
+        // selected canonical channel value.
+        result.queryEnd = block.position() + tokenEnd;
+        result.query = typedToken.mid(queryOffset);
         return result;
     }
 
