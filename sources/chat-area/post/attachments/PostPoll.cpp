@@ -79,7 +79,7 @@ PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll
 		if (actionId.isEmpty() || actionId.startsWith("vote")) {
 			connect(pushButton, &QPushButton::released, this,
 			        [this, &post, actionId] {
-				backend.sendPostAction(post, actionId);
+				this->backend.sendPostAction(post, actionId);
 			});
 		} else {
 			adminButtons.push_back(pushButton);
@@ -89,7 +89,7 @@ PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll
 				        this, tr("Are you sure?"),
 				        tr("Are you sure that you want to %1?").arg(pushButton->text()))
 				    == QMessageBox::Yes) {
-					backend.sendPostAction(post, actionId);
+					this->backend.sendPostAction(post, actionId);
 				}
 			});
 
