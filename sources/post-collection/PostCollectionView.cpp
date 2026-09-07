@@ -6,10 +6,10 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QLineEdit>
 #include <QPalette>
 #include <QPointer>
 #include <QPushButton>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -19,8 +19,10 @@
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendTeam.h"
+#include "backend/types/BackendUser.h"
 #include "chat-area/post/PostWidget.h"
 #include "navigation/AppNavigationService.h"
+#include "widgets/InteractiveTextEdit.h"
 #include "widgets/LongListWidget.h"
 
 namespace Mattermost {
@@ -34,26 +36,29 @@ public:
     {
         setDefaultItemHeight(132);
         setMaterializationLimit(200);
-        setRequestBlockSize(20);
+        setRequestBlockSize(10);
         setPrefetchScreens(1);
         setSeekDebounceMs(100);
 
-        connect(this, &LongListWidget::rangeRequested, this,
-                [this](int first, int last, RequestReason, quint64) {
-            if (last < static_cast<int>(owner.posts.size()) || !owner.hasMore) {
-                finishRangeRequest(first, last);
+        // Collection pagination is deliberately driven only by an actual user
+        // viewport gesture. LongListWidget prefetch/materialization must never
+        // turn a popular search into an automatic request chain.
+        connect(this, &LongListWidget::userViewportChanged, this,
+                [this](bool atEnd) {
+            if (!owner.hasMoreResults() || owner.loading) {
                 return;
             }
-            owner.pendingRangeRequests.push_back(qMakePair(first, last));
-            owner.loadNextPage();
-        });
-
-        connect(this, &LongListWidget::visibleRangeChanged, this,
-                [this](int, int last) {
-            if (owner.hasMore && !owner.loading
-                && last >= std::max(0, static_cast<int>(owner.posts.size()) - 5)) {
-                owner.loadNextPage();
+            const Range visible = visibleRange();
+            const int threshold = std::max(
+                0, static_cast<int>(owner.posts.size()) - 2);
+            if (!atEnd && (!visible.isValid() || visible.last < threshold)) {
+                return;
             }
+            QTimer::singleShot(0, this, [this] {
+                if (owner.hasMoreResults() && !owner.loading) {
+                    owner.loadNextPage();
+                }
+            });
         });
     }
 
@@ -115,9 +120,18 @@ void PostCollectionView::buildUi()
         scopeCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
         searchRow->addWidget(scopeCombo);
 
-        searchEdit = new QLineEdit(this);
-        searchEdit->setClearButtonEnabled(true);
+        searchEdit = new InteractiveTextEdit(this);
+        searchEdit->setAcceptRichText(false);
+        searchEdit->setLineWrapMode(QTextEdit::NoWrap);
+        searchEdit->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        searchEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        searchEdit->setTabChangesFocus(true);
+        searchEdit->setSubmitOnEnter(true);
+        searchEdit->setSubmitHandler([this] { startSearch(); });
         searchEdit->setPlaceholderText(tr("Search messages…"));
+        searchEdit->setFixedHeight(
+            std::max(30, searchEdit->fontMetrics().lineSpacing() + 12));
+        configureSearchCompletions();
         searchRow->addWidget(searchEdit, 1);
 
         searchAction = new QToolButton(this);
@@ -154,8 +168,6 @@ void PostCollectionView::buildUi()
         syntax->setPalette(mutedPalette);
         root->addWidget(syntax);
 
-        connect(searchEdit, &QLineEdit::returnPressed,
-                this, &PostCollectionView::startSearch);
         connect(searchAction, &QToolButton::clicked,
                 this, &PostCollectionView::startSearch);
     }
@@ -228,15 +240,108 @@ void PostCollectionView::rebuildSearchScopes(const QString& preferredTeamId)
     }
 }
 
+void PostCollectionView::configureSearchCompletions()
+{
+    if (!searchEdit) {
+        return;
+    }
+
+    QVector<InteractiveTextEdit::CompletionRule> rules;
+
+    InteractiveTextEdit::CompletionRule channelRule;
+    channelRule.prefix = QStringLiteral("in:");
+    channelRule.provider = [this] {
+        QVector<InteractiveTextEdit::CompletionCandidate> candidates;
+        const auto& channels = backend.getStorage().channels;
+        candidates.reserve(channels.size());
+
+        for (auto it = channels.cbegin(); it != channels.cend(); ++it) {
+            BackendChannel* channel = it.value();
+            if (!channel || channel->id.isEmpty()) {
+                continue;
+            }
+
+            const bool namedChannel = channel->type == BackendChannel::publicChannel
+                || channel->type == BackendChannel::privateChannel;
+            const QString canonical = namedChannel && !channel->name.isEmpty()
+                ? channel->name : channel->id;
+            QString display = channel->display_name.trimmed();
+            if (display.isEmpty()) {
+                display = !channel->name.isEmpty() ? channel->name : canonical;
+            }
+
+            InteractiveTextEdit::CompletionCandidate candidate;
+            candidate.displayText = display;
+            candidate.insertText = canonical;
+            if (namedChannel && !channel->name.isEmpty()
+                && channel->name != display) {
+                candidate.detailText = channel->name;
+                candidate.filterKeys.push_back(channel->name);
+            }
+            candidates.push_back(std::move(candidate));
+        }
+
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const auto& lhs, const auto& rhs) {
+            return QString::localeAwareCompare(lhs.displayText, rhs.displayText) < 0;
+        });
+        return candidates;
+    };
+    rules.push_back(std::move(channelRule));
+
+    InteractiveTextEdit::CompletionRule userRule;
+    userRule.prefix = QStringLiteral("from:");
+    userRule.provider = [this] {
+        QVector<InteractiveTextEdit::CompletionCandidate> candidates;
+        const auto& users = backend.getStorage().getAllUsers();
+        candidates.reserve(static_cast<int>(users.size()));
+
+        for (const auto& entry : users) {
+            const BackendUser& user = entry.second;
+            if (user.username.isEmpty()) {
+                continue;
+            }
+
+            InteractiveTextEdit::CompletionCandidate candidate;
+            candidate.displayText = user.getDisplayName();
+            if (candidate.displayText.isEmpty()) {
+                candidate.displayText = user.username;
+            }
+            candidate.insertText = user.username;
+            candidate.detailText = QStringLiteral("@") + user.username;
+            if (!user.nickname.isEmpty()) {
+                candidate.filterKeys.push_back(user.nickname);
+            }
+            if (!user.first_name.isEmpty()) {
+                candidate.filterKeys.push_back(user.first_name);
+            }
+            if (!user.last_name.isEmpty()) {
+                candidate.filterKeys.push_back(user.last_name);
+            }
+            candidates.push_back(std::move(candidate));
+        }
+
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const auto& lhs, const auto& rhs) {
+            return QString::localeAwareCompare(lhs.displayText, rhs.displayText) < 0;
+        });
+        return candidates;
+    };
+    rules.push_back(std::move(userRule));
+
+    searchEdit->setCompletionRules(std::move(rules));
+}
+
 void PostCollectionView::insertSearchToken(const QString& token)
 {
     if (!searchEdit) {
         return;
     }
-    if (!searchEdit->text().isEmpty() && !searchEdit->text().endsWith(QLatin1Char(' '))) {
-        searchEdit->insert(QStringLiteral(" "));
+    const QString current = searchEdit->toPlainText();
+    if (!current.isEmpty() && !current.endsWith(QLatin1Char(' '))) {
+        searchEdit->insertPlainText(QStringLiteral(" "));
     }
-    searchEdit->insert(token);
+    searchEdit->insertPlainText(token);
     searchEdit->setFocus(Qt::ShortcutFocusReason);
 }
 
@@ -246,7 +351,7 @@ void PostCollectionView::startSearch()
         return;
     }
 
-    const QString terms = searchEdit->text().trimmed();
+    const QString terms = searchEdit->toPlainText().trimmed();
     if (terms.isEmpty()) {
         activeTerms.clear();
         ++generation;
@@ -269,20 +374,78 @@ void PostCollectionView::resetCollection()
     }
     posts.clear();
     postIds.clear();
-    pendingRangeRequests.clear();
+    bufferedPosts.clear();
+    bufferedOffset = 0;
     nextPage = 0;
     loading = false;
-    hasMore = false;
+    serverHasMore = false;
     updateStatus();
+}
+
+bool PostCollectionView::hasMoreResults() const
+{
+    return serverHasMore || bufferedOffset < bufferedPosts.size();
+}
+
+void PostCollectionView::appendPosts(const QVector<QJsonObject>& rawPosts)
+{
+    const int oldCount = static_cast<int>(posts.size());
+    for (const QJsonObject& raw : rawPosts) {
+        const QString postId = raw.value(QStringLiteral("id")).toString();
+        if (postId.isEmpty() || postIds.contains(postId)) {
+            continue;
+        }
+        postIds.insert(postId);
+        posts.push_back(std::make_unique<BackendPost>(raw, backend.getStorage()));
+    }
+
+    const int newCount = static_cast<int>(posts.size());
+    if (!list || newCount == oldCount) {
+        return;
+    }
+
+    list->setItemCount(newCount);
+    for (int index = oldCount; index < newCount; ++index) {
+        list->setRangeAvailable(index, index, true);
+    }
+}
+
+bool PostCollectionView::appendBufferedPage()
+{
+    if (bufferedOffset < 0 || bufferedOffset >= bufferedPosts.size()) {
+        return false;
+    }
+
+    const int end = std::min(bufferedPosts.size(), bufferedOffset + PageSize);
+    QVector<QJsonObject> page;
+    page.reserve(end - bufferedOffset);
+    for (int index = bufferedOffset; index < end; ++index) {
+        page.push_back(bufferedPosts.at(index));
+    }
+    bufferedOffset = end;
+    if (bufferedOffset >= bufferedPosts.size()) {
+        bufferedPosts.clear();
+        bufferedOffset = 0;
+    }
+
+    appendPosts(page);
+    updateStatus();
+    return true;
 }
 
 void PostCollectionView::loadNextPage()
 {
-    if (loading || (nextPage > 0 && !hasMore)) {
+    if (loading) {
+        return;
+    }
+    if (bufferedOffset < bufferedPosts.size()) {
+        appendBufferedPage();
+        return;
+    }
+    if (nextPage > 0 && !serverHasMore) {
         return;
     }
     if (mode == Mode::Search && activeTerms.isEmpty()) {
-        finishPendingRangeRequests();
         return;
     }
 
@@ -299,11 +462,9 @@ void PostCollectionView::loadNextPage()
 
         guard->loading = false;
         if (!result.success) {
-            guard->hasMore = false;
-            if (guard->list) {
-                guard->list->setItemCount(static_cast<int>(guard->posts.size()));
-            }
-            guard->finishPendingRangeRequests();
+            guard->serverHasMore = false;
+            guard->bufferedPosts.clear();
+            guard->bufferedOffset = 0;
             if (guard->statusLabel) {
                 const int count = static_cast<int>(guard->posts.size());
                 if (count > 0) {
@@ -319,29 +480,23 @@ void PostCollectionView::loadNextPage()
         }
 
         const int oldCount = static_cast<int>(guard->posts.size());
-        for (const QJsonObject& raw : result.posts) {
-            const QString postId = raw.value(QStringLiteral("id")).toString();
-            if (postId.isEmpty() || guard->postIds.contains(postId)) {
-                continue;
-            }
-            guard->postIds.insert(postId);
-            guard->posts.push_back(
-                std::make_unique<BackendPost>(raw, guard->backend.getStorage()));
-        }
-
-        const int newCount = static_cast<int>(guard->posts.size());
-        guard->hasMore = result.hasMore && newCount > oldCount;
         guard->nextPage = page + 1;
 
-        // A single unavailable logical sentinel advertises that more collection
-        // rows exist. LongListWidget requests it before the viewport reaches the
-        // end, but no fake message widget is ever created for the sentinel.
-        guard->list->setItemCount(newCount + (guard->hasMore ? 1 : 0));
-        for (int index = oldCount; index < newCount; ++index) {
-            guard->list->setRangeAvailable(index, index, true);
+        if (result.completeResultSet) {
+            // The backend ignored per_page (database search is the common
+            // example). Keep the full response in memory but expose only one
+            // ten-row page now; subsequent pages are revealed on user scroll
+            // without issuing the same expensive search again.
+            guard->serverHasMore = false;
+            guard->bufferedPosts = result.posts;
+            guard->bufferedOffset = 0;
+            guard->appendBufferedPage();
+            return;
         }
 
-        guard->finishPendingRangeRequests();
+        guard->appendPosts(result.posts);
+        const int newCount = static_cast<int>(guard->posts.size());
+        guard->serverHasMore = result.hasMore && newCount > oldCount;
         guard->updateStatus();
     };
 
@@ -351,19 +506,6 @@ void PostCollectionView::loadNextPage()
     } else {
         repository.searchPosts(activeTeamId, activeTerms, page, PageSize,
                                std::move(callback));
-    }
-}
-
-void PostCollectionView::finishPendingRangeRequests()
-{
-    if (!list) {
-        pendingRangeRequests.clear();
-        return;
-    }
-    const QVector<QPair<int, int>> pending = pendingRangeRequests;
-    pendingRangeRequests.clear();
-    for (const auto& range : pending) {
-        list->finishRangeRequest(range.first, range.second);
     }
 }
 
@@ -491,7 +633,7 @@ void PostCollectionView::updateStatus()
         return;
     }
     const int count = static_cast<int>(posts.size());
-    statusLabel->setText(hasMore
+    statusLabel->setText(hasMoreResults()
         ? tr("%1 messages loaded — scroll for more").arg(count)
         : tr("%1 messages").arg(count));
 }
