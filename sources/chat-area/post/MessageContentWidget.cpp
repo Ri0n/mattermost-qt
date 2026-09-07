@@ -116,10 +116,6 @@ public:
     {
         setObjectName(QStringLiteral("messageRichText"));
         setReadOnly(true);
-        // The post owns the semantic context menu (reply/save/reaction/etc.).
-        // QTextBrowser's stock menu would otherwise swallow right-clicks over
-        // the actual message text, making those actions appear unavailable.
-        setContextMenuPolicy(Qt::NoContextMenu);
         setOpenExternalLinks(true);
         setFrameShape(QFrame::NoFrame);
         setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -278,9 +274,6 @@ std::optional<SourceLanguage> sourceLanguageForName(QString language)
     if (language == QLatin1String("ini")) {
         return SourceLanguage::CodeINI;
     }
-    if (language == QLatin1String("vex")) {
-        return SourceLanguage::CodeVex;
-    }
     if (language == QLatin1String("cmake")) {
         return SourceLanguage::CodeCMake;
     }
@@ -313,7 +306,6 @@ public:
         setObjectName(QStringLiteral("messageCodeBlock"));
         setProperty("codeLanguage", language);
         setReadOnly(true);
-        setContextMenuPolicy(Qt::NoContextMenu);
         setLineWrapMode(QPlainTextEdit::NoWrap);
         setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
         setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
