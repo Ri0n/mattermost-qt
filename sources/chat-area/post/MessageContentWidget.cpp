@@ -7,8 +7,10 @@
 #include <utility>
 
 #include <QAbstractTextDocumentLayout>
+#include <QEvent>
 #include <QFontDatabase>
 #include <QHBoxLayout>
+#include <QPainter>
 #include <QPalette>
 #include <QPlainTextEdit>
 #include <QResizeEvent>
@@ -24,6 +26,7 @@
 #include <QTextOption>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QVector>
 
 #include "MessageFormatter.h"
 #include "backend/emoji/EmojiInfo.h"
@@ -191,6 +194,191 @@ private:
 
     std::function<void()> heightChanged;
 };
+
+class QuoteBar final : public QWidget
+{
+public:
+    using QWidget::QWidget;
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.fillRect(rect(), palette().color(QPalette::Mid));
+    }
+};
+
+class QuoteBlock final : public QWidget
+{
+public:
+    QuoteBlock(const QString& html,
+               std::function<void()> heightChanged,
+               QWidget* parent = nullptr)
+        : QWidget(parent)
+        , heightChanged(std::move(heightChanged))
+    {
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        setMinimumWidth(0);
+
+        auto* layout = new QHBoxLayout(this);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(8);
+
+        auto* bar = new QuoteBar(this);
+        bar->setFixedWidth(3);
+        layout->addWidget(bar);
+
+        text = new WrappedRichText([this] {
+            updateGeometry();
+            if (this->heightChanged) {
+                this->heightChanged();
+            }
+        }, this);
+        text->setContentHtml(html);
+        layout->addWidget(text, 1);
+        updateMutedPalette();
+    }
+
+    WrappedRichText* browser() const { return text; }
+
+    QSize sizeHint() const override
+    {
+        return QSize(0, text ? text->height() : fontMetrics().height());
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        return sizeHint();
+    }
+
+protected:
+    void changeEvent(QEvent* event) override
+    {
+        QWidget::changeEvent(event);
+        if (event && (event->type() == QEvent::PaletteChange
+                      || event->type() == QEvent::ApplicationPaletteChange)) {
+            updateMutedPalette();
+        }
+    }
+
+private:
+    void updateMutedPalette()
+    {
+        if (!text) {
+            return;
+        }
+        QPalette muted = text->palette();
+        const QColor mutedText = palette().color(QPalette::Disabled, QPalette::Text);
+        muted.setColor(QPalette::Text, mutedText);
+        muted.setColor(QPalette::WindowText, mutedText);
+        text->setPalette(muted);
+        update();
+    }
+
+    WrappedRichText* text = nullptr;
+    std::function<void()> heightChanged;
+};
+
+struct MessageSegment {
+    bool quote = false;
+    QString text;
+};
+
+int markdownFenceRun(const QString& line, QChar& fenceCharacter, int& contentStart)
+{
+    int position = 0;
+    while (position < line.size() && position < 3 && line.at(position) == QLatin1Char(' ')) {
+        ++position;
+    }
+    contentStart = position;
+    if (position >= line.size()) {
+        return 0;
+    }
+
+    const QChar character = line.at(position);
+    if (character != QLatin1Char('`') && character != QLatin1Char('~')) {
+        return 0;
+    }
+
+    int run = 0;
+    while (position + run < line.size() && line.at(position + run) == character) {
+        ++run;
+    }
+    if (run < 3) {
+        return 0;
+    }
+    fenceCharacter = character;
+    contentStart = position + run;
+    return run;
+}
+
+bool extractQuoteLine(const QString& line, QString& content)
+{
+    int position = 0;
+    while (position < line.size() && position < 3 && line.at(position) == QLatin1Char(' ')) {
+        ++position;
+    }
+    if (position >= line.size() || line.at(position) != QLatin1Char('>')) {
+        return false;
+    }
+
+    ++position;
+    if (position < line.size() && line.at(position) == QLatin1Char(' ')) {
+        ++position;
+    }
+    content = line.mid(position);
+    return true;
+}
+
+QVector<MessageSegment> splitMessageSegments(const QString& message)
+{
+    QVector<MessageSegment> result;
+    const QStringList lines = message.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+
+    bool inFence = false;
+    QChar fenceCharacter;
+    int fenceLength = 0;
+
+    auto append = [&result](bool quote, const QString& line) {
+        if (result.isEmpty() || result.back().quote != quote) {
+            result.push_back(MessageSegment {quote, line});
+        } else {
+            result.back().text += QLatin1Char('\n');
+            result.back().text += line;
+        }
+    };
+
+    for (const QString& line : lines) {
+        QString renderedLine = line;
+
+        QChar candidateCharacter;
+        int afterFence = 0;
+        const int candidateLength = markdownFenceRun(line, candidateCharacter, afterFence);
+
+        if (inFence) {
+            append(false, renderedLine);
+            if (candidateLength >= fenceLength && candidateCharacter == fenceCharacter
+                && line.mid(afterFence).trimmed().isEmpty()) {
+                inFence = false;
+                fenceCharacter = QChar();
+                fenceLength = 0;
+            }
+            continue;
+        }
+
+        if (candidateLength >= 3) {
+            inFence = true;
+            fenceCharacter = candidateCharacter;
+            fenceLength = candidateLength;
+            append(false, renderedLine);
+            continue;
+        }
+
+        append(extractQuoteLine(line, renderedLine), renderedLine);
+    }
+
+    return result;
+}
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
 
@@ -433,11 +621,21 @@ void MessageContentWidget::setMessage(const QString& message)
     }
 
     setVisible(true);
+    const QVector<MessageSegment> segments = splitMessageSegments(message);
+    for (const MessageSegment& segment : segments) {
+        if (segment.quote) {
+            addQuote(MessageFormatter::formatMessageText(segment.text));
+            continue;
+        }
+        if (segment.text.isEmpty()) {
+            continue;
+        }
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
-    addMarkdownContent(message);
+        addMarkdownContent(segment.text);
 #else
-    addRichText(MessageFormatter::formatMessageText(message));
+        addRichText(MessageFormatter::formatMessageText(segment.text));
 #endif
+    }
     scheduleDimensionsChanged();
 }
 
@@ -453,11 +651,24 @@ QString MessageContentWidget::selectedText() const
     QStringList selections;
     for (int i = 0; i < contentLayout->count(); ++i) {
         QWidget* widget = contentLayout->itemAt(i)->widget();
+        if (!widget) {
+            continue;
+        }
         if (const auto* browser = qobject_cast<QTextBrowser*>(widget)) {
             if (browser->textCursor().hasSelection()) {
                 selections.push_back(browser->textCursor().selectedText());
             }
         } else if (const auto* editor = qobject_cast<QPlainTextEdit*>(widget)) {
+            if (editor->textCursor().hasSelection()) {
+                selections.push_back(editor->textCursor().selectedText());
+            }
+        }
+        for (const auto* browser : widget->findChildren<QTextBrowser*>()) {
+            if (browser->textCursor().hasSelection()) {
+                selections.push_back(browser->textCursor().selectedText());
+            }
+        }
+        for (const auto* editor : widget->findChildren<QPlainTextEdit*>()) {
             if (editor->textCursor().hasSelection()) {
                 selections.push_back(editor->textCursor().selectedText());
             }
@@ -490,6 +701,22 @@ void MessageContentWidget::scheduleDimensionsChanged()
         }
         emit dimensionsChanged();
     });
+}
+
+void MessageContentWidget::addQuote(const QString& html)
+{
+    if (html.isEmpty()) {
+        return;
+    }
+
+    auto* quote = new QuoteBlock(html, [this] { scheduleDimensionsChanged(); }, this);
+    connect(quote->browser(),
+            QOverload<const QUrl&>::of(&QTextBrowser::highlighted),
+            this,
+            [this](const QUrl& url) {
+                emit linkHovered(url.toString());
+            });
+    contentLayout->addWidget(quote);
 }
 
 void MessageContentWidget::addRichText(const QString& html)

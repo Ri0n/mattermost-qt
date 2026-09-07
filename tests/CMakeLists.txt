@@ -140,6 +140,24 @@ target_link_libraries(backend-user-test
 add_test(NAME backend-user-test COMMAND backend-user-test)
 set_tests_properties(backend-user-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+add_executable(backend-poll-test
+    BackendPollTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/backend/types/BackendPoll.cpp"
+)
+
+target_include_directories(backend-poll-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(backend-poll-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME backend-poll-test COMMAND backend-poll-test)
+
 add_executable(sidebar-item-delegate-test
     SidebarItemDelegateTest.cpp
     "${CMAKE_SOURCE_DIR}/sources/channel-tree/ChannelItemDelegate.cpp"

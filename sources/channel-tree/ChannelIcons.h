@@ -8,7 +8,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  */
 
@@ -39,6 +39,32 @@ inline QIcon channel()
     font.setPixelSize(18);
     painter.setFont(font);
     painter.drawText(pixmap.rect(), Qt::AlignCenter, QStringLiteral("#"));
+    return QIcon(pixmap);
+}
+
+inline QIcon privateChannel()
+{
+    QPixmap pixmap(24, 24);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const QColor color = QApplication::palette().color(QPalette::Text);
+    QPen pen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+
+    QPainterPath shackle;
+    shackle.moveTo(8.0, 11.0);
+    shackle.lineTo(8.0, 8.5);
+    shackle.cubicTo(8.0, 5.6, 10.0, 4.0, 12.0, 4.0);
+    shackle.cubicTo(14.0, 4.0, 16.0, 5.6, 16.0, 8.5);
+    shackle.lineTo(16.0, 11.0);
+    painter.drawPath(shackle);
+
+    // Keep the lock visually as light as the public-channel '#': the outline
+    // communicates privacy without turning every private row into a dark badge.
+    painter.drawRoundedRect(QRectF(6.0, 10.0, 12.0, 10.0), 2.0, 2.0);
     return QIcon(pixmap);
 }
 

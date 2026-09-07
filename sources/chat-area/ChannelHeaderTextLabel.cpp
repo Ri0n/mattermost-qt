@@ -25,6 +25,7 @@
 
 #include <QDesktopServices>
 #include <QEvent>
+#include <QSizePolicy>
 #include <QTextBrowser>
 #include <QTextDocument>
 
@@ -42,6 +43,8 @@ ChannelHeaderTextLabel::ChannelHeaderTextLabel(QWidget* parent)
     setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::TextSelectableByMouse);
     setOpenExternalLinks(false);
     setWordWrap(false);
+    setMinimumWidth(0);
+    setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     installEventFilter(this);
 
     connect(this, &QLabel::linkActivated, this, [this](const QString& href) {
@@ -118,6 +121,16 @@ void ChannelHeaderTextLabel::setLinkHandler(LinkHandler handler)
     linkHandler = std::move(handler);
 }
 
+QSize ChannelHeaderTextLabel::sizeHint() const
+{
+    return QSize(0, std::max(1, fontMetrics().lineSpacing() + 6));
+}
+
+QSize ChannelHeaderTextLabel::minimumSizeHint() const
+{
+    return QSize(0, std::max(1, fontMetrics().lineSpacing() + 6));
+}
+
 void ChannelHeaderTextLabel::updateCollapsedHeight()
 {
     const int height = std::max(1, fontMetrics().lineSpacing() + 6);
@@ -149,7 +162,16 @@ bool ChannelHeaderTextLabel::isOverflowing() const
 
 void ChannelHeaderTextLabel::ensurePopover()
 {
-    QWidget* host = window();
+    QWidget* host = nullptr;
+    for (QWidget* candidate = this; candidate; candidate = candidate->parentWidget()) {
+        if (qobject_cast<ChatArea*>(candidate)) {
+            host = candidate;
+            break;
+        }
+    }
+    if (!host) {
+        host = window();
+    }
     if (!host) {
         return;
     }
@@ -171,15 +193,10 @@ void ChannelHeaderTextLabel::ensurePopover()
     browser->setFrameShadow(QFrame::Plain);
     browser->setLineWidth(1);
     browser->setAutoFillBackground(true);
-    browser->setStyleSheet(QStringLiteral(
-        "QTextBrowser#channelHeaderTextPopover {"
-        " border: 1px solid palette(mid);"
-        " background: palette(base);"
-        " }"));
     browser->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     browser->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     browser->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    browser->document()->setDocumentMargin(4);
+    browser->document()->setDocumentMargin(8);
     browser->setHtml(formattedText);
     connect(browser, &QTextBrowser::anchorClicked, this,
             [this](const QUrl& url) { openLink(url); });
@@ -200,38 +217,32 @@ void ChannelHeaderTextLabel::positionPopover()
         return;
     }
 
-    const QPoint labelPos = mapTo(host, QPoint(0, 0));
-    const int left = std::max(4, labelPos.x() - 4);
-    const int availableWidth = std::max(120, host->width() - left - 4);
+    // This is an expansion of the ChatArea header rather than an independent
+    // card. Use the exact panel background and the entire chat-side width.
+    QPalette popoverPalette = popover->palette();
+    const QColor panelBackground = host->palette().color(QPalette::Window);
+    popoverPalette.setColor(QPalette::Base, panelBackground);
+    popoverPalette.setColor(QPalette::Window, panelBackground);
+    popover->setPalette(popoverPalette);
 
-    // Measure with a throw-away document instead of the QTextBrowser's current
-    // viewport. On the first hover QTextBrowser can still carry the default
-    // pre-show viewport width, which made document()->size() report a wildly
-    // inflated height. The second hover happened after layout and therefore
-    // appeared correct. A standalone document makes both passes deterministic.
+    const QPoint labelPos = mapTo(host, QPoint(0, 0));
+    const int popupWidth = std::max(1, host->width());
+
+    // Measure independently from the browser's pre-show viewport so the first
+    // hover and every later hover use identical wrapping and height.
     QTextDocument measure;
     measure.setDefaultFont(popover->font());
-    measure.setDocumentMargin(4);
+    measure.setDocumentMargin(8);
     measure.setHtml(formattedText);
+    measure.setTextWidth(std::max(1, popupWidth - 16));
+    const int documentHeight = static_cast<int>(std::ceil(measure.size().height())) + 2;
 
-    const int naturalWidth = static_cast<int>(std::ceil(measure.idealWidth())) + 10;
-    const int labelWidth = std::max(1, width() + 8);
-    const int wantedWidth = std::max(220, std::min(naturalWidth, labelWidth));
-    const int popupWidth = std::min(wantedWidth, availableWidth);
+    const int top = std::max(0, labelPos.y());
+    const int availableHeight = std::max(1, host->height() - top);
+    const int popupHeight = std::min(std::max(height(), documentHeight), availableHeight);
 
-    measure.setTextWidth(std::max(1, popupWidth - 10));
-    const int documentHeight = static_cast<int>(std::ceil(measure.size().height())) + 10;
-
-    // Start on top of the compact line and expand downwards. The overlap avoids
-    // a mouse gap between the reference label and the interactive overlay.
-    const int top = std::max(4, labelPos.y() - 4);
-    const int availableHeight = std::max(80, host->height() - top - 4);
-    const int popupHeight = std::min(std::max(height() + 8, documentHeight), availableHeight);
-
-    // Apply the final text width before showing the browser so its first layout
-    // already matches the geometry we just measured.
-    popover->document()->setTextWidth(std::max(1, popupWidth - 10));
-    popover->setGeometry(left, top, popupWidth, popupHeight);
+    popover->document()->setTextWidth(std::max(1, popupWidth - 16));
+    popover->setGeometry(0, top, popupWidth, popupHeight);
     popover->raise();
 }
 
@@ -322,6 +333,12 @@ bool ChannelHeaderTextLabel::eventFilter(QObject* watched, QEvent* event)
         case QEvent::FontChange:
             if (isLabel) {
                 updateCollapsedHeight();
+            }
+            break;
+        case QEvent::PaletteChange:
+        case QEvent::ApplicationPaletteChange:
+            if (popover && popover->isVisible()) {
+                positionPopover();
             }
             break;
         default:

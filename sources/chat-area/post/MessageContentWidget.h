@@ -26,6 +26,7 @@ signals:
 private:
     void clearContent();
     void addRichText(const QString& html);
+    void addQuote(const QString& html);
     void scheduleDimensionsChanged();
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)

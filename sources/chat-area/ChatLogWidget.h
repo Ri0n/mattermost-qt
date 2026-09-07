@@ -26,6 +26,13 @@ public:
     AbstractPostSource* source() const { return postSource; }
 
     PostWidget* findPost(const QString& postId) const;
+
+    /** Capture a semantic post near the viewport centre for inactive-page restore. */
+    bool captureViewportBookmark(QString& postId) const;
+
+    /** Restore an inactive-page bookmark without the navigation highlight animation. */
+    bool restoreViewportBookmark(const QString& postId);
+
     bool ensurePostVisible(const QString& postId,
                            Alignment alignment = Alignment::EnsureVisible);
     void highlightPost(const QString& postId);

@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -20,8 +20,10 @@
 #include "PostPoll.h"
 #include "ui_PostPoll.h"
 
-#include <QPushButton>
 #include <QMessageBox>
+#include <QPushButton>
+#include <QSizePolicy>
+
 #include "backend/Backend.h"
 #include "backend/types/BackendPoll.h"
 
@@ -33,10 +35,6 @@ PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll
 ,backend (backend)
 {
 	ui->setupUi(this);
-
-	if (!poll.id.isEmpty()) {
-		backend.retrievePollMetadata (poll);
-	}
 
 	ui->titleLabel->setText (poll.title);
 
@@ -59,59 +57,93 @@ PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll
 
 	ui->textLabel->setText (text);
 
-	for (auto& option: poll.options) {
-
+	for (const auto& option: poll.options) {
 		QPushButton* pushButton = new QPushButton (option.name, this);
-		pushButton->setMinimumSize (QSize(200, 30));
-		pushButton->setMaximumSize (QSize(200, 30));
-
+		pushButton->setMinimumHeight(30);
+		pushButton->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 		pushButton->setToolTip (option.voters);
 
 		if (poll.hasEnded) {
 			pushButton->setDisabled (true);
 		}
 
+		ui->verticalLayout->addWidget(pushButton);
 
-		ui->verticalLayout->addWidget (pushButton, 0, Qt::AlignLeft|Qt::AlignTop);
+		// Keep this vector aligned 1:1 with BackendPoll::options. Poll metadata
+		// reports indices in that full option array, which also contains admin
+		// actions. Storing only voting buttons here made those indices diverge and
+		// caused QList::operator[] assertions on valid metadata.
+		optionButtons.push_back(pushButton);
 
-		if (option.actionID.isEmpty() || option.actionID.startsWith ("vote")) {
-			optionButtons.push_back (pushButton);
-			connect (pushButton, &QPushButton::released, [this, &post, &option] {
-				this->backend.sendPostAction (post, option.actionID);
+		const QString actionId = option.actionID;
+		if (actionId.isEmpty() || actionId.startsWith("vote")) {
+			connect(pushButton, &QPushButton::released, this,
+			        [this, &post, actionId] {
+				this->backend.sendPostAction(post, actionId);
 			});
 		} else {
-			adminButtons.push_back (pushButton);
-			connect (pushButton, &QPushButton::released, [this, &post, &option, pushButton] {
-
-				if (QMessageBox::question (this, "Are you sure?", "Are you sure that you want to " + pushButton->text() + "?") == QMessageBox::Yes) {
-					this->backend.sendPostAction (post, option.actionID);
+			adminButtons.push_back(pushButton);
+			connect(pushButton, &QPushButton::released, this,
+			        [this, &post, actionId, pushButton] {
+				if (QMessageBox::question(
+				        this, tr("Are you sure?"),
+				        tr("Are you sure that you want to %1?").arg(pushButton->text()))
+				    == QMessageBox::Yes) {
+					this->backend.sendPostAction(post, actionId);
 				}
-
 			});
 
 			QPalette pal = pushButton->palette();
 			pal.setColor (QPalette::Button, QColor(Qt::darkGray));
 			pushButton->setPalette (pal);
-
 			pushButton->setVisible (poll.metadata.hasAdminPermissions);
 		}
 	}
 
-	connect (&poll, &BackendPoll::onMetadataUpdated, [this, &poll] {
-		for (auto& adminButton: adminButtons) {
-			if (!adminButton->isVisible()) {
-				adminButton->setVisible (poll.metadata.hasAdminPermissions);
+	// Use this PostPoll as the QObject connection context. The BackendPoll model
+	// can outlive a materialized PostWidget, so a context-less lambda capturing
+	// this would otherwise run after the poll widget had been evicted.
+	connect(&poll, &BackendPoll::onMetadataUpdated, this, [this, &poll] {
+		for (QPushButton* adminButton: adminButtons) {
+			if (adminButton) {
+				adminButton->setVisible(poll.metadata.hasAdminPermissions);
 			}
 		}
 
-		for (auto& idx: poll.metadata.ownVoteOptions) {
-			QFont font (optionButtons[idx]->font());
-			font.setBold (true);
-			optionButtons[idx]->setFont (font);
+		for (QPushButton* button: optionButtons) {
+			if (!button) {
+				continue;
+			}
+			QFont font = button->font();
+			font.setBold(false);
+			button->setFont(font);
 		}
 
-		adjustSize();
+		for (uint32_t idx: poll.metadata.ownVoteOptions) {
+			if (idx >= static_cast<uint32_t>(optionButtons.size())) {
+				continue;
+			}
+			QPushButton* button = optionButtons.at(static_cast<int>(idx));
+			if (!button) {
+				continue;
+			}
+			QFont font = button->font();
+			font.setBold(true);
+			button->setFont(font);
+		}
+
+		ui->verticalLayout->invalidate();
+		updateGeometry();
+		if (QWidget* parent = parentWidget()) {
+			parent->updateGeometry();
+		}
 	});
+
+	// Request metadata only after the buttons and the lifetime-safe callback are
+	// in place. This also removes a needless race with very fast/local responses.
+	if (!poll.id.isEmpty()) {
+		backend.retrievePollMetadata (poll);
+	}
 }
 
 PostPoll::~PostPoll()

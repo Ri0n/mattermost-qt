@@ -367,6 +367,29 @@ void ChatArea::scheduleNewestPosition()
     });
 }
 
+void ChatArea::scheduleStoredPosition()
+{
+    if (storedViewportPostId.isEmpty()) {
+        scheduleNewestPosition();
+        return;
+    }
+
+    const std::uint64_t generation = viewportNavigationGeneration;
+    const QString postId = storedViewportPostId;
+    QPointer<ChatArea> guard(this);
+    QTimer::singleShot(0, this, [guard, generation, postId] {
+        if (!guard || !guard->ui || !guard->ui->listWidget
+            || generation != guard->viewportNavigationGeneration
+            || !guard->pendingPostId.isEmpty()) {
+            return;
+        }
+
+        if (!guard->ui->listWidget->restoreViewportBookmark(postId)) {
+            guard->scheduleNewestPosition();
+        }
+    });
+}
+
 void ChatArea::finishPendingNavigation()
 {
     if (pendingPostId.isEmpty() || !ui || !ui->listWidget) {
@@ -387,9 +410,10 @@ void ChatArea::init()
 
     setupPostSource();
 
-    // The generic source remains connected while the page is inactive; these
-    // connections are only view/orchestration concerns and are rebuilt on
-    // activation.
+    // The semantic source object remains alive while a channel page is inactive,
+    // but ChatLogWidget detaches from it so all concrete PostWidgets and their
+    // repository residency leases can be released. Rebuild only orchestration
+    // connections and the view attachment on activation.
     if (!isThread) {
         signalConnections.push_back(connect(&channel, &BackendChannel::onViewed,
                                             this, [this] {
@@ -474,7 +498,11 @@ void ChatArea::init()
     }
 
     initialized = true;
-    scheduleNewestPosition();
+    if (!isThread && !storedViewportPostId.isEmpty()) {
+        scheduleStoredPosition();
+    } else {
+        scheduleNewestPosition();
+    }
 
     if (!pendingPostId.isEmpty()) {
         goToPost(pendingPostId);
@@ -568,16 +596,35 @@ void ChatArea::handleUserTyping(const BackendUser& user)
 void ChatArea::onActivate()
 {
     backend.setCurrentChannel(channel);
-    const bool wasInitialized = initialized;
-    init();
-    if (wasInitialized) {
-        scheduleNewestPosition();
+
+    // Pinned is an inspection mode, not durable channel state. Entering a chat
+    // always returns to the canonical conversation surface.
+    if (!isThread) {
+        showPinnedPosts(false);
     }
+
+    init();
 }
 
 void ChatArea::onDeactivate()
 {
+    if (!isThread && ui && ui->listWidget) {
+        showPinnedPosts(false);
+
+        QString postId;
+        if (ui->listWidget->captureViewportBookmark(postId)) {
+            storedViewportPostId = postId;
+        }
+    }
+
     deinit();
+
+    if (!isThread && ui && ui->listWidget) {
+        // Keep ChannelPostSource alive as the semantic timeline authority while
+        // dropping the concrete view. setItemCount(0) inside setSource(nullptr)
+        // destroys every materialized PostWidget and releases its residency lease.
+        ui->listWidget->setSource(nullptr);
+    }
 }
 
 void ChatArea::onMainWindowActivate()
@@ -680,7 +727,7 @@ void ChatArea::goToPost(const QString& postId)
     // ChatLogWidget has stayed alive, so this does not disturb its viewport.
     showPinnedPosts(false);
 
-    // Opening/reactivating a channel schedules a weak "show newest" position on
+    // Opening/reactivating a channel schedules a weak activation position on
     // the next event-loop turn. Explicit post navigation supersedes that intent,
     // even when the destination materializes immediately and pendingPostId is
     // cleared before the queued callback gets a chance to run.
