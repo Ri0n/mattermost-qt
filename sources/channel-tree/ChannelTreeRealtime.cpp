@@ -90,7 +90,7 @@ void ChannelTree::openStoredChannel(QString channelID)
         }
     }
 
-    openChannel(std::move(channelID));
+    openChannel(channelID);
 }
 
 } // namespace Mattermost
