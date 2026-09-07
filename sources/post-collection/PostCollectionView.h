@@ -21,6 +21,7 @@ class Backend;
 class BackendChannel;
 class BackendPost;
 class InteractiveTextEdit;
+class ThemeIconButton;
 
 /**
  * Virtualized post collection used by Saved, Search, and an in-channel Pinned view.
@@ -67,6 +68,8 @@ private:
     int indexOfPost(const QString& postId) const;
     QString originLabel(const BackendPost& post) const;
     void removeSavedPost(const QString& postId);
+    void removeSavedPostLocally(const QString& postId);
+    void handleFlaggedPostChanged(const QString& postId, bool flagged);
     void unpinPost(const QString& postId, QToolButton* button);
     void updateStatus();
 
@@ -79,6 +82,9 @@ private:
     QToolButton* searchAction = nullptr;
     BackendChannel* pinnedChannel = nullptr;
     HTTPConnector actionConnector;
+
+    QLabel* _titleLabel = nullptr;
+    ThemeIconButton* _refreshButton = nullptr;
 
     std::vector<std::unique_ptr<BackendPost>> ownedPosts;
     std::vector<BackendPost*> posts;
