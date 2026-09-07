@@ -1,0 +1,65 @@
+name: Finalize interactive search
+
+on:
+  push:
+    branches:
+      - chatgpt/saved-search-collections
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: chatgpt/saved-search-collections
+      - name: Apply focused source patches
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          repo = Path('sources/backend/PostRepository.cpp')
+          text = repo.read_text()
+          old = '''    const int returnedCount = order.isEmpty()
+              ? static_cast<int>(result.posts.size()) : order.size();
+          result.hasMore = perPage > 0 && returnedCount >= perPage;
+          result.success = true;
+          '''
+          new = '''    const int returnedCount = order.isEmpty()
+              ? static_cast<int>(result.posts.size()) : order.size();
+          result.completeResultSet = perPage > 0 && returnedCount > perPage;
+          result.hasMore = !result.completeResultSet
+              && perPage > 0 && returnedCount >= perPage;
+          result.success = true;
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'PostRepository collection anchor count: {text.count(old)}')
+          repo.write_text(text.replace(old, new, 1))
+
+          cmake = Path('tests/CMakeLists.txt')
+          text = cmake.read_text()
+          old = '''add_executable(message-text-edit-widget-test
+              MessageTextEditWidgetTest.cpp
+              "${CMAKE_SOURCE_DIR}/sources/chat-area/outgoing-post/MessageTextEditWidget.cpp"
+          )
+          '''
+          new = '''add_executable(message-text-edit-widget-test
+              MessageTextEditWidgetTest.cpp
+              "${CMAKE_SOURCE_DIR}/sources/chat-area/outgoing-post/MessageTextEditWidget.cpp"
+              "${CMAKE_SOURCE_DIR}/sources/widgets/InteractiveTextEdit.cpp"
+          )
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'message text test target anchor count: {text.count(old)}')
+          cmake.write_text(text.replace(old, new, 1))
+          PY
+
+          rm .github/workflows/finalize-interactive-search.yml
+          git config user.name 'Sergei Ilinykh'
+          git config user.email 'rion4ik@gmail.com'
+          git add -A
+          git commit -m 'Finalize lazy search paging infrastructure'
+          git push origin HEAD:chatgpt/saved-search-collections
