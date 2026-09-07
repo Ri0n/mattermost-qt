@@ -196,6 +196,7 @@ add_test(NAME post-navigation-window-test COMMAND post-navigation-window-test)
 add_executable(message-text-edit-widget-test
     MessageTextEditWidgetTest.cpp
     "${CMAKE_SOURCE_DIR}/sources/chat-area/outgoing-post/MessageTextEditWidget.cpp"
+    "${CMAKE_SOURCE_DIR}/sources/widgets/InteractiveTextEdit.cpp"
 )
 
 target_include_directories(message-text-edit-widget-test

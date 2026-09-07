@@ -124,11 +124,12 @@ PostRepository::CollectionPage collectionPageFromDocument(
             result.posts.push_back(it->toObject());
         }
     }
-
     const int returnedCount = order.isEmpty()
-        ? static_cast<int>(result.posts.size()) : order.size();
-    result.hasMore = perPage > 0 && returnedCount >= perPage;
-    result.success = true;
+    ? static_cast<int>(result.posts.size()) : order.size();
+result.completeResultSet = perPage > 0 && returnedCount > perPage;
+result.hasMore = !result.completeResultSet
+    && perPage > 0 && returnedCount >= perPage;
+result.success = true;
     return result;
 }
 
