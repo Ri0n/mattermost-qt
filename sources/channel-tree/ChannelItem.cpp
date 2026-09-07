@@ -51,9 +51,19 @@ ChannelItem::~ChannelItem () = default;
 
 void ChannelItem::setIcon (const QIcon& icon)
 {
-    QTreeWidgetItem::setIcon(0, icon);
+    // Private channels are semantic rows, not arbitrary icon holders. Some
+    // sidebar construction paths still assign the generic channel icon after
+    // setLabel(); normalize here so a private row cannot be downgraded back to
+    // the public-channel '#'. Direct/group conversations are unaffected.
+    QIcon effectiveIcon = icon;
+    if (BackendChannel* channel = backendChannel();
+        channel && channel->type == BackendChannel::privateChannel) {
+        effectiveIcon = ChannelIcons::privateChannel();
+    }
+
+    QTreeWidgetItem::setIcon(0, effectiveIcon);
 	if (widget) {
-		widget->setIcon (icon);
+		widget->setIcon (effectiveIcon);
 	}
 }
 
