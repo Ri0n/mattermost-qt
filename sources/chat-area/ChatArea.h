@@ -65,6 +65,8 @@ public:
 	Ui::ChatArea* getUi ();
 	Backend& getBackend ();
 	BackendChannel& getChannel ();
+    /** Last semantic centre captured when an inactive channel view was detached. */
+    QString storedNavigationBookmark() const { return storedViewportPostId; }
 	void handleUserTyping (const BackendUser& user);
 	void editPost(BackendPost& post);
 
