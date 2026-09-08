@@ -74,7 +74,7 @@ private:
     ChannelTree* channelTree = nullptr;
     QStackedWidget* mainStack = nullptr;
     QSplitter* sidebarSplitter = nullptr;
-    QSplitter* contentSplitter = nullptr;
+    QPointer<QSplitter> contentSplitter;
     QStackedWidget* threadStack = nullptr;
     QToolButton* backButton = nullptr;
     QToolButton* forwardButton = nullptr;
