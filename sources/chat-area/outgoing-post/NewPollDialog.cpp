@@ -72,7 +72,7 @@ NewPollDialog::NewPollDialog(QWidget* parent, BackendNewPollData initialPollData
     ui->questionValue->setText(initialPollData.question);
 
     QStringList initialOptions;
-    initialOptions.reserve(initialPollData.options.size());
+    initialOptions.reserve(static_cast<int>(initialPollData.options.size()));
     for (const QString& option : initialPollData.options) {
         initialOptions.push_back(option);
     }
@@ -96,13 +96,14 @@ NewPollDialog::~NewPollDialog()
 void NewPollDialog::validateInput()
 {
     const QStringList options = pollOptionsFromText(ui->optionsValue->toPlainText());
-    ui->maxVotesValue->setMaximum(qMax(2, options.size()));
+    const int optionCount = static_cast<int>(options.size());
+    ui->maxVotesValue->setMaximum(qMax(2, optionCount));
 
     if (ui->questionValue->text().trimmed().isEmpty()) {
         return disableSendButton(tr("'Question' is empty"));
     }
 
-    if (options.size() < 2) {
+    if (optionCount < 2) {
         return disableSendButton(tr("At least two options are required"));
     }
 
@@ -132,7 +133,7 @@ BackendNewPollData NewPollDialog::getData()
     ret.question = ui->questionValue->text().trimmed();
 
     const QStringList options = pollOptionsFromText(ui->optionsValue->toPlainText());
-    ret.options.reserve(options.size());
+    ret.options.reserve(static_cast<int>(options.size()));
     for (const QString& option : options) {
         ret.options.push_back(option);
     }
