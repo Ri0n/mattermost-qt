@@ -25,9 +25,60 @@
 #include <QSizePolicy>
 
 #include "backend/Backend.h"
+#include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPoll.h"
+#include "chat-area/ChatArea.h"
+#include "channel-tree/SidebarItem.h"
 
 namespace Mattermost {
+namespace {
+
+QString pollActionTeamContextId(QWidget* origin, Backend& backend, const BackendPost& post)
+{
+	if (BackendChannel* actionChannel = backend.getStorage().getChannelById(post.channel_id)) {
+		if (actionChannel->team) {
+			return actionChannel->team->id;
+		}
+	}
+
+	for (QWidget* widget = origin; widget; widget = widget->parentWidget()) {
+		auto* area = qobject_cast<ChatArea*>(widget);
+		if (!area) {
+			continue;
+		}
+
+		for (ChatArea* contextArea = area; contextArea;
+		     contextArea = contextArea->parentChatArea()) {
+			if (contextArea->channel.team) {
+				return contextArea->channel.team->id;
+			}
+			if (!contextArea->treeItem) {
+				continue;
+			}
+
+			const QString teamId = contextArea->treeItem
+				->data(0, SidebarItem::TeamIdRole).toString();
+			if (!teamId.isEmpty()) {
+				return teamId;
+			}
+		}
+		break;
+	}
+
+	return backend.getCurrentTeamContextId();
+}
+
+void sendPollAction(Backend& backend, QWidget* origin,
+                    const BackendPost& post, const QString& actionId)
+{
+	const QString teamId = pollActionTeamContextId(origin, backend, post);
+	if (!teamId.isEmpty()) {
+		backend.setCurrentTeamContextId(teamId);
+	}
+	backend.sendPostAction(post, actionId);
+}
+
+} // namespace
 
 PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll, QWidget *parent)
 :QFrame(parent)
@@ -79,7 +130,7 @@ PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll
 		if (actionId.isEmpty() || actionId.startsWith("vote")) {
 			connect(pushButton, &QPushButton::released, this,
 			        [this, &post, actionId] {
-				this->backend.sendPostAction(post, actionId);
+				sendPollAction(this->backend, this, post, actionId);
 			});
 		} else {
 			adminButtons.push_back(pushButton);
@@ -89,7 +140,7 @@ PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll
 				        this, tr("Are you sure?"),
 				        tr("Are you sure that you want to %1?").arg(pushButton->text()))
 				    == QMessageBox::Yes) {
-					this->backend.sendPostAction(post, actionId);
+					sendPollAction(this->backend, this, post, actionId);
 				}
 			});
 
