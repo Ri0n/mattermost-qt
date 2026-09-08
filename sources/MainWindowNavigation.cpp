@@ -7,6 +7,7 @@
 #include "backend/types/BackendChannel.h"
 #include "channel-tree/ChannelTree.h"
 #include "chat-area/ChatArea.h"
+#include "navigation/NavigationUiController.h"
 #include "ui_mainwindow.h"
 
 namespace Mattermost {
@@ -16,7 +17,8 @@ void MainWindow::openChannelPost(const QString& channelId,
                                  const QString& rootId,
                                  const QStringList& contextPostIds,
                                  bool reachedOldest,
-                                 bool reachedNewest)
+                                 bool reachedNewest,
+                                 bool preserveIfOpen)
 {
     if (channelId.isEmpty()) {
         return;
@@ -27,69 +29,73 @@ void MainWindow::openChannelPost(const QString& channelId,
         return;
     }
 
-    ui->channelList->openStoredChannel(channelId);
-    ChatArea* area = ui->channelList->getCurrentPage();
-    if (!area || &area->getChannel() != channel) {
-        return;
-    }
+    auto& navigationUi = NavigationUiController::instance(*this);
 
-    auto ensureThreadArea = [this, area, channel, &rootId]() -> ChatArea* {
-        if (rootId.isEmpty()) {
-            return nullptr;
-        }
-
-        for (ChatArea* existing : area->threadsAreas) {
-            if (existing && existing->root_id == rootId) {
-                return existing;
-            }
-        }
-
-        auto* threadArea = new ChatArea(backend, *channel, rootId, area);
-        area->threadsAreas.insert(threadArea);
-        return threadArea;
-    };
-
-    // A thread request without a concrete post target means "open at newest".
-    // This is used when a followed thread is already fully read: there is no
-    // first unread reply to target, and returning to the root would be the wrong
-    // end of the conversation.
-    if (postId.isEmpty()) {
-        if (ChatArea* threadArea = ensureThreadArea()) {
-            threadArea->show();
-            threadArea->raise();
-            threadArea->activateWindow();
-            threadArea->goToNewest();
-        }
-        return;
-    }
-
-    // openStoredChannel() may synchronously activate/init the ChatArea and queue
-    // its weak default "show newest" position. Invalidate that intent now,
-    // before this function queues the actual semantic navigation work.
-    area->preparePostNavigation();
-
-    // A permalink can point directly at a thread reply. Replies deliberately do
-    // not have rows in the main channel timeline, so route those links to the
-    // thread window instead of searching the channel root timeline.
+    // Thread presentation is independent from the main-channel surface. A
+    // followed thread can therefore open in the right pane without stealing an
+    // already visible central channel. A completely empty centre is different:
+    // showing a thread beside blank space looks broken, so establish its parent
+    // channel as the central context first.
     if (!rootId.isEmpty()) {
-        ChatArea* threadArea = ensureThreadArea();
-        if (!threadArea) {
+        ChatArea* centralArea = ui->channelList->getCurrentPage();
+        if (!centralArea) {
+            ui->channelList->openStoredChannel(channelId);
+            centralArea = ui->channelList->getCurrentPage();
+            if (!centralArea) {
+                return;
+            }
+
+            // ChannelTree records the newly activated main-channel location on
+            // the next event-loop turn. Let that settle before presenting the
+            // thread, otherwise its delayed history update can arrive after the
+            // thread record and make the parent channel look like the active
+            // semantic destination.
+            QPointer<MainWindow> guard(this);
+            QTimer::singleShot(0, this,
+                [guard, channelId, postId, rootId, contextPostIds,
+                 reachedOldest, reachedNewest, preserveIfOpen] {
+                    if (guard) {
+                        guard->openChannelPost(channelId, postId, rootId,
+                                               contextPostIds, reachedOldest,
+                                               reachedNewest, preserveIfOpen);
+                    }
+                });
             return;
         }
 
-        // The thread constructor/init path also queues its default newest
-        // position. The explicit reply jump has stronger intent.
-        threadArea->preparePostNavigation();
-        threadArea->show();
-        threadArea->raise();
-        threadArea->activateWindow();
+        ChatArea* threadArea = navigationUi.findThread(channelId, rootId);
+        if (threadArea && preserveIfOpen) {
+            navigationUi.presentThread(threadArea);
+            return;
+        }
 
-        // A newly created thread ChatArea installs its ThreadPostSource on the
-        // next event-loop turn. Queue the semantic target behind that setup so
-        // even a reply outside the initial thread page can be materialized from
-        // the cached post. Keep the semantic viewport lock used by channel
-        // permalink navigation so an overlapping async page or attachment reflow
-        // cannot move the target before the user scrolls.
+        const bool created = !threadArea;
+        if (!threadArea) {
+            ChatArea* parentArea = centralArea;
+            if (!parentArea || &parentArea->getChannel() != channel) {
+                parentArea = nullptr;
+            }
+
+            threadArea = new ChatArea(backend, *channel, rootId, parentArea);
+            if (parentArea) {
+                parentArea->threadsAreas.insert(threadArea);
+            }
+        }
+
+        if (postId.isEmpty()) {
+            navigationUi.presentThread(threadArea);
+            if (created || !preserveIfOpen) {
+                threadArea->goToNewest();
+            }
+            return;
+        }
+
+        // A permalink/notification is an explicit semantic target and may
+        // reposition an existing thread. Following uses preserveIfOpen and was
+        // handled above, so its repeat activation never disturbs the viewport.
+        threadArea->preparePostNavigation();
+        navigationUi.presentThread(threadArea);
+
         QPointer<ChatArea> threadGuard(threadArea);
         QTimer::singleShot(0, threadArea, [threadGuard, postId] {
             if (!threadGuard) {
@@ -101,6 +107,21 @@ void MainWindow::openChannelPost(const QString& channelId,
         });
         return;
     }
+
+    ui->channelList->openStoredChannel(channelId);
+    ChatArea* area = ui->channelList->getCurrentPage();
+    if (!area || &area->getChannel() != channel) {
+        return;
+    }
+
+    if (postId.isEmpty()) {
+        return;
+    }
+
+    // openStoredChannel() may synchronously activate/init the ChatArea and queue
+    // its weak default "show newest" position. Invalidate that intent now,
+    // before this function queues the actual semantic navigation work.
+    area->preparePostNavigation();
 
     // A freshly opened lazy ChatArea installs its ChannelPostSource on the next
     // event-loop turn. Apply the already-fetched permalink context after that

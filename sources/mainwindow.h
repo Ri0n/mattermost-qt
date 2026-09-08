@@ -64,7 +64,8 @@ public:
 	                     const QString& rootId = QString(),
 	                     const QStringList& contextPostIds = QStringList(),
 	                     bool reachedOldest = false,
-	                     bool reachedNewest = false);
+	                     bool reachedNewest = false,
+                         bool preserveIfOpen = false);
 
 	void changeEvent (QEvent* event) override;
 	void closeEvent(QCloseEvent *event) override;

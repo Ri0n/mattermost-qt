@@ -36,11 +36,13 @@ signals:
                           const QString& rootId,
                           const QStringList& contextPostIds,
                           bool reachedOldest,
-                          bool reachedNewest);
+                          bool reachedNewest,
+                          bool preserveIfOpen);
 
 private:
     explicit AppNavigationService(Backend& backend);
 
+    void ensureMainWindowConnection();
     bool isLocalUrl(const QUrl& url) const;
     BackendChannel* findChannel(const QString& teamName,
                                 const QString& channelName) const;

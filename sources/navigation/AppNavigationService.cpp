@@ -34,6 +34,15 @@ AppNavigationService::AppNavigationService(Backend& sourceBackend)
     : QObject(&sourceBackend)
     , backend(sourceBackend)
 {
+    ensureMainWindowConnection();
+}
+
+void AppNavigationService::ensureMainWindowConnection()
+{
+    // The singleton can be instantiated by cached-link/sidebar code before the
+    // MainWindow exists. Re-discover it at the navigation boundary; the unique
+    // connection makes this cheap and idempotent and removes startup-order
+    // dependence from semantic navigation.
     for (QWidget* widget : QApplication::topLevelWidgets()) {
         if (auto* mainWindow = qobject_cast<MainWindow*>(widget)) {
             connect(this, &AppNavigationService::channelRequested,
@@ -90,7 +99,9 @@ BackendChannel* AppNavigationService::findPostChannel(const QString& postId) con
 void AppNavigationService::openChannel(const QString& channelId)
 {
     if (!channelId.isEmpty() && backend.getStorage().getChannelById(channelId)) {
-        emit channelRequested(channelId, QString(), QString(), QStringList(), false, false);
+        ensureMainWindowConnection();
+        emit channelRequested(channelId, QString(), QString(), QStringList(),
+                              false, false, false);
     }
 }
 
@@ -202,8 +213,18 @@ void AppNavigationService::openThreadAtLastViewed(const QString& channelId,
                 targetPostId = fallbackPostId;
             }
 
+            guard->ensureMainWindowConnection();
             if (!targetPostId.isEmpty()) {
-                guard->openPost(targetPostId);
+                // Following is an activation request, not a demand to reposition
+                // a thread that the user already has open. MainWindow uses the
+                // preserve flag to reveal/raise the existing surface unchanged.
+                emit guard->channelRequested(channelId,
+                                             targetPostId,
+                                             rootId,
+                                             QStringList(),
+                                             false,
+                                             false,
+                                             true);
                 if (callback) {
                     callback(true);
                 }
@@ -221,6 +242,7 @@ void AppNavigationService::openThreadAtLastViewed(const QString& channelId,
                                              rootId,
                                              QStringList(),
                                              false,
+                                             true,
                                              true);
                 if (callback) {
                     callback(true);
@@ -239,10 +261,12 @@ void AppNavigationService::openPostInChannel(BackendChannel& channel,
 {
     if (BackendPost* cached = channel.postIdToPost.value(postId, nullptr)) {
         if (!cached->root_id.isEmpty()) {
+            ensureMainWindowConnection();
             emit channelRequested(channel.id,
                                   postId,
                                   cached->root_id,
                                   QStringList(),
+                                  false,
                                   false,
                                   false);
             return;
@@ -266,12 +290,14 @@ void AppNavigationService::openPostInChannel(BackendChannel& channel,
                 }
             }
 
+            guard->ensureMainWindowConnection();
             emit guard->channelRequested(channelId,
                                          postId,
                                          rootId,
                                          context.postIds,
                                          context.reachedOldest,
-                                         context.reachedNewest);
+                                         context.reachedNewest,
+                                         false);
         },
         true);
 }
