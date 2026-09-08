@@ -25,6 +25,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QStringList>
 #include <QVariant>
@@ -103,6 +104,10 @@ public:
 	QString						pending_post_id;
 	std::list<BackendFile>		files;
 	std::map<EmojiID, BackendPostReaction> reactions;
+	// Server-generated embed metadata (permalinks, OpenGraph, etc.). Keep this
+	// opaque in the backend so UI consumers can understand only the embed types
+	// they support without duplicating Mattermost's metadata model here.
+	QJsonArray                      embeds;
 
 	// Transient thread metadata supplied by Mattermost for root posts.
 	int64_t						reply_count = 0;
