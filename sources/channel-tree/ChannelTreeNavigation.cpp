@@ -43,12 +43,14 @@ void ChannelTree::openStoredChannel(QString channelID)
     }
 
     if (!backendForSidebar) {
+        emit storedChannelOpenFinished(channelID, false);
         return;
     }
 
     BackendChannel* channel = backendForSidebar->getStorage().getChannelById(channelID);
     if (!channel) {
         qDebug() << "openStoredChannel" << channelID << ": channel not found in storage";
+        emit storedChannelOpenFinished(channelID, false);
         return;
     }
 
@@ -127,6 +129,7 @@ void ChannelTree::openStoredChannel(QString channelID)
         if (channel->type != BackendChannel::publicChannel || !channel->team) {
             qDebug() << "openStoredChannel" << channelID
                      << ": no sidebar category contains channel";
+            emit storedChannelOpenFinished(channelID, false);
             return;
         }
         if (pendingChannelJoins.contains(channelID)) {
@@ -145,6 +148,11 @@ void ChannelTree::openStoredChannel(QString channelID)
                 if (containsChannel(refreshedState, channelID)) {
                     guard->pendingChannelJoins.remove(channelID);
                     guard->openStoredChannel(channelID);
+                    QTreeWidgetItem* current = guard->currentItem();
+                    const bool opened = current
+                        && current->data(0, ItemKindRole).toInt() == ChannelItemKind
+                        && current->data(0, ItemIdRole).toString() == channelID;
+                    emit guard->storedChannelOpenFinished(channelID, opened);
                     return;
                 }
 
@@ -153,6 +161,7 @@ void ChannelTree::openStoredChannel(QString channelID)
                 if (!currentChannel || currentChannel->type != BackendChannel::publicChannel) {
                     guard->pendingChannelJoins.remove(channelID);
                     qWarning() << "Cannot auto-join non-public channel" << channelID;
+                    emit guard->storedChannelOpenFinished(channelID, false);
                     return;
                 }
 
@@ -183,6 +192,7 @@ void ChannelTree::openStoredChannel(QString channelID)
                             guard->pendingChannelJoins.remove(channelID);
                             qWarning() << "Failed to auto-join public channel" << channelID
                                        << "network status" << status.toInt();
+                            emit guard->storedChannelOpenFinished(channelID, false);
                             return;
                         }
 
@@ -192,6 +202,7 @@ void ChannelTree::openStoredChannel(QString channelID)
                             guard->pendingChannelJoins.remove(channelID);
                             qWarning() << "Joined channel" << channelID
                                        << "but team disappeared" << teamId;
+                            emit guard->storedChannelOpenFinished(channelID, false);
                             return;
                         }
 
@@ -205,9 +216,16 @@ void ChannelTree::openStoredChannel(QString channelID)
                                 if (!containsChannel(joinedState, channelID)) {
                                     qWarning() << "Joined channel" << channelID
                                                << "but it is still absent from sidebar categories";
+                                    emit guard->storedChannelOpenFinished(channelID, false);
                                     return;
                                 }
+
                                 guard->openStoredChannel(channelID);
+                                QTreeWidgetItem* current = guard->currentItem();
+                                const bool opened = current
+                                    && current->data(0, ItemKindRole).toInt() == ChannelItemKind
+                                    && current->data(0, ItemIdRole).toString() == channelID;
+                                emit guard->storedChannelOpenFinished(channelID, opened);
                             });
                     }));
             });
@@ -219,6 +237,7 @@ void ChannelTree::openStoredChannel(QString channelID)
                                           *fallback.categoryItem,
                                           *channel);
     if (!item) {
+        emit storedChannelOpenFinished(channelID, false);
         return;
     }
 
