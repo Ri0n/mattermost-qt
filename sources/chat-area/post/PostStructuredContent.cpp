@@ -17,7 +17,6 @@
 
 #include "MessageContentWidget.h"
 #include "PostWidget.h"
-#include "chat-area/ChatArea.h"
 #include "navigation/AppNavigationService.h"
 
 namespace Mattermost {
@@ -152,31 +151,16 @@ QString attachmentCardMarkdown(const QJsonObject& attachment)
     return paragraphs.join(QStringLiteral("\n\n"));
 }
 
-ChatArea* findChatArea(QWidget* widget)
-{
-    for (QWidget* current = widget; current; current = current->parentWidget()) {
-        if (auto* area = qobject_cast<ChatArea*>(current)) {
-            return area;
-        }
-    }
-    return nullptr;
-}
-
 void wireLinks(MessageContentWidget& content, PostWidget& postWidget)
 {
-    ChatArea* area = findChatArea(&postWidget);
+    QPointer<PostWidget> guard(&postWidget);
     for (QTextBrowser* browser : content.findChildren<QTextBrowser*>()) {
         if (!browser) {
-            continue;
-        }
-        if (!area) {
-            browser->setOpenExternalLinks(true);
             continue;
         }
 
         browser->setOpenLinks(false);
         browser->setOpenExternalLinks(false);
-        QPointer<ChatArea> guard(area);
         QObject::connect(browser, &QTextBrowser::anchorClicked,
                          browser, [guard](const QUrl& url) {
             if (guard) {
