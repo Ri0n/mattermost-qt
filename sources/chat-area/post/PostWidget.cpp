@@ -406,6 +406,7 @@ void PostWidget::setAuthor(Backend& backendInstance, const BackendUser* user)
 			QStringList {user->id}, [guard] {
 				if (guard) {
 					guard->updateAuthorAvatar();
+				}
 			});
 	}
 }
