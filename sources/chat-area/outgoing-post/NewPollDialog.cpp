@@ -24,6 +24,7 @@
 
 #include <QPushButton>
 #include "NewPollDialog.h"
+#include "OutgoingPostCreator.h"
 #include "ui_NewPollDialog.h"
 
 namespace Mattermost {
@@ -31,9 +32,19 @@ namespace Mattermost {
 NewPollDialog::NewPollDialog(QWidget *parent, BackendNewPollData initialPollData)
 :QDialog(parent)
 ,ui(new Ui::NewPollDialog)
+,rootId(initialPollData.rootId)
 {
 	ui->setupUi(this);
 	ui->buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Create"));
+
+	// The legacy /poll path constructs BackendNewPollData inside the composer.
+	// Preserve the thread root from that composer so Matterpoll can create the
+	// generated post as a real thread reply via callback_id.
+	if (rootId.isEmpty()) {
+		if (const auto* creator = qobject_cast<const OutgoingPostCreator*>(parent)) {
+			rootId = creator->rootId();
+		}
+	}
 
 	connect (ui->questionValue, &QLineEdit::textChanged, this, &NewPollDialog::validateInput);
 	connect (ui->option1Value, &QLineEdit::textChanged, this, &NewPollDialog::validateInput);
@@ -104,6 +115,7 @@ BackendNewPollData NewPollDialog::getData ()
 		ret.options.push_back (ui->option3Value->text());
 	}
 
+	ret.rootId = rootId;
 	ret.isAnonymous = ui->checkBoxAnonymous->isChecked();
 	ret.isAnonymousCreator = ui->checkBoxAnonymousCreator->isChecked();
 	ret.showProgress = ui->checkBoxProgress->isChecked();
