@@ -127,7 +127,7 @@ void MainWindow::openChannelPost(const QString& channelId,
             }
             threadGuard->lockNavigationToPost(postId, 0);
             threadGuard->ensurePostVisible(postId);
-            threadGuard->goToPost(postId);
+            threadGuard->highlightPostWhenAuthoritative(postId);
         });
         return;
     }
