@@ -119,24 +119,18 @@ void PostCreateService::submitPoll(BackendChannel& channel,
                                    const BackendNewPollData& pollData,
                                    ResultCallback callback)
 {
-    if (!channel.team) {
-        if (callback) {
-            callback(false);
-        }
-        return;
-    }
-
     NetworkRequest request(QStringLiteral("actions/dialogs/submit"));
     QJsonObject json {
         {QStringLiteral("callback_id"), QString()},
         {QStringLiteral("channel_id"), channel.id},
         {QStringLiteral("state"), QString()},
         {QStringLiteral("url"), QStringLiteral("/plugins/com.github.matterpoll.matterpoll/api/v1/polls/create")},
-        {QStringLiteral("team_id"), channel.team->id},
+        {QStringLiteral("team_id"), channel.team ? channel.team->id : QString()},
     };
 
     QJsonObject submission {
         {QStringLiteral("question"), pollData.question},
+        {QStringLiteral("setting-multi"), pollData.maxVotes},
     };
     for (int i = 0; i < pollData.options.size(); ++i) {
         submission.insert(QStringLiteral("option") + QString::number(i + 1),
@@ -144,6 +138,9 @@ void PostCreateService::submitPoll(BackendChannel& channel,
     }
     if (pollData.isAnonymous) {
         submission.insert(QStringLiteral("setting-anonymous"), true);
+    }
+    if (pollData.isAnonymousCreator) {
+        submission.insert(QStringLiteral("setting-anonymous-creator"), true);
     }
     if (pollData.showProgress) {
         submission.insert(QStringLiteral("setting-progress"), true);
@@ -155,9 +152,18 @@ void PostCreateService::submitPoll(BackendChannel& channel,
 
     const QByteArrayCreator payload(json);
     httpConnector.post(request, payload, HttpResponseCallback(
-        [callback = std::move(callback)](QVariant status, QByteArray) mutable {
+        [callback = std::move(callback)](QVariant status, QByteArray response) mutable {
+            bool success = status.toInt() == QNetworkReply::NoError;
+            if (success && !response.trimmed().isEmpty()) {
+                const QJsonDocument responseDocument = QJsonDocument::fromJson(response);
+                if (responseDocument.isObject()) {
+                    const QJsonObject responseObject = responseDocument.object();
+                    success = responseObject.value(QStringLiteral("error")).toString().isEmpty()
+                        && responseObject.value(QStringLiteral("errors")).toObject().isEmpty();
+                }
+            }
             if (callback) {
-                callback(status.toInt() == QNetworkReply::NoError);
+                callback(success);
             }
         }));
 }
