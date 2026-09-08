@@ -14,6 +14,8 @@
 
 #include "ThreadFollowService.h"
 
+#include <utility>
+
 #include <QDateTime>
 #include <QHash>
 #include <QJsonArray>
@@ -203,7 +205,52 @@ void ThreadFollowService::queryFollowing(const QString& teamId,
 
 void ThreadFollowService::queryFollowingThreads(ThreadListCallback callback)
 {
-    queryThreads(false, std::move(callback));
+    // Mattermost keeps the normal Followed list and its Unreads filter as
+    // separate snapshots. Some server versions do not populate unread counters
+    // on the normal threadsOnly response, so overlay the authoritative unread
+    // snapshot instead of trusting those fields. Unread threads outside the
+    // first history page are appended so the view can still promote them.
+    queryThreads(false,
+                 [this, callback = std::move(callback)](QVector<ThreadSummary> followed) mutable {
+        for (ThreadSummary& thread : followed) {
+            thread.unreadReplies = 0;
+            thread.unreadMentions = 0;
+        }
+
+        queryThreads(true,
+                     [callback = std::move(callback), followed = std::move(followed)](
+                         QVector<ThreadSummary> unread) mutable {
+            QHash<QString, int> followedIndex;
+            followedIndex.reserve(followed.size());
+            for (int i = 0; i < followed.size(); ++i) {
+                if (!followed.at(i).id.isEmpty()) {
+                    followedIndex.insert(followed.at(i).id, i);
+                }
+            }
+
+            int appendedUnread = 0;
+            for (ThreadSummary& unreadThread : unread) {
+                const auto it = followedIndex.constFind(unreadThread.id);
+                if (it == followedIndex.cend()) {
+                    followedIndex.insert(unreadThread.id, followed.size());
+                    followed.push_back(std::move(unreadThread));
+                    ++appendedUnread;
+                    continue;
+                }
+                followed[*it] = std::move(unreadThread);
+            }
+
+            qCDebug(lcFollowing).nospace()
+                << "merged mode=following history=" << (followed.size() - appendedUnread)
+                << " unread=" << unread.size()
+                << " appendedUnread=" << appendedUnread
+                << " result=" << followed.size();
+
+            if (callback) {
+                callback(std::move(followed));
+            }
+        });
+    });
 }
 
 void ThreadFollowService::queryUnreadThreads(ThreadListCallback callback)
