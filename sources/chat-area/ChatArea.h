@@ -80,6 +80,14 @@ public:
 	 */
 	void preparePostNavigation () { ++viewportNavigationGeneration; }
 
+	/** Explicitly navigate to the newest edge, superseding any older post target. */
+	void goToNewest ()
+	{
+		++viewportNavigationGeneration;
+		pendingPostId.clear();
+		scheduleNewestPosition();
+	}
+
 	bool ensurePostVisible (const QString& postId);
 	bool ensurePinnedPostVisible(const QString& postId,
 	                             const QStringList& contextPostIds,
