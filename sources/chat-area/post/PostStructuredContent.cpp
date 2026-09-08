@@ -220,12 +220,15 @@ QWidget* createAttachmentWidget(PostWidget& postWidget, const QJsonObject& attac
     auto* bar = new QFrame(card);
     bar->setFixedWidth(3);
     bar->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-    QPalette barPalette = bar->palette();
     const QColor requestedColor(attachment.value(QStringLiteral("color")).toString());
-    barPalette.setColor(QPalette::Window,
-                        visibleAccent(requestedColor, card->palette()));
-    bar->setPalette(barPalette);
-    bar->setAutoFillBackground(true);
+    const QColor accentColor = visibleAccent(requestedColor, card->palette());
+    // Do not rely on QFrame's inherited backgroundRole here. Child frames can
+    // keep NoRole/another role under some styles, making autoFillBackground
+    // ignore the Window colour we placed in a custom palette. A widget-local
+    // stylesheet makes the 3 px attachment accent deterministic on every Qt
+    // style while still using the theme-aware colour calculated above.
+    bar->setStyleSheet(QStringLiteral("border: none; background-color: %1;")
+                           .arg(accentColor.name(QColor::HexArgb)));
     cardLayout->addWidget(bar);
 
     auto* content = new MessageContentWidget(card);
