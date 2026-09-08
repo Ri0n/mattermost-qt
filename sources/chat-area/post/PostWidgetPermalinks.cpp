@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 
+#include "MessageContentWidget.h"
 #include "backend/Backend.h"
 #include "backend/Storage.h"
 #include "backend/types/BackendUser.h"
