@@ -33,27 +33,26 @@ NewPollDialog::NewPollDialog(QWidget *parent, BackendNewPollData initialPollData
 ,ui(new Ui::NewPollDialog)
 {
 	ui->setupUi(this);
+	ui->buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Create"));
 
 	connect (ui->questionValue, &QLineEdit::textChanged, this, &NewPollDialog::validateInput);
 	connect (ui->option1Value, &QLineEdit::textChanged, this, &NewPollDialog::validateInput);
 	connect (ui->option2Value, &QLineEdit::textChanged, this, &NewPollDialog::validateInput);
-
+	connect (ui->option3Value, &QLineEdit::textChanged, this, &NewPollDialog::validateInput);
 
 	ui->questionValue->setText (initialPollData.question);
 
 	QLineEdit* optionsLineEditArr[] = { ui->option1Value, ui->option2Value, ui->option3Value };
-
-	for (int i = 0; i < initialPollData.options.size(); ++i) {
+	const int optionsCount = qMin<int>(initialPollData.options.size(), 3);
+	for (int i = 0; i < optionsCount; ++i) {
 		optionsLineEditArr[i]->setText (initialPollData.options[i]);
 	}
 
-	if (initialPollData.isAnonymous) {
-		ui->checkBoxAnonymous->setChecked(true);
-	}
-
-	if (initialPollData.showProgress) {
-		ui->checkBoxProgress->setChecked(true);
-	}
+	ui->checkBoxAnonymous->setChecked(initialPollData.isAnonymous);
+	ui->checkBoxAnonymousCreator->setChecked(initialPollData.isAnonymousCreator);
+	ui->checkBoxProgress->setChecked(initialPollData.showProgress);
+	ui->checkBoxAllowAdditional->setChecked(initialPollData.allowAddOptions);
+	ui->maxVotesValue->setValue(initialPollData.maxVotes);
 
 	validateInput ();
 	setAttribute(Qt::WA_DeleteOnClose);
@@ -66,16 +65,19 @@ NewPollDialog::~NewPollDialog()
 
 void NewPollDialog::validateInput ()
 {
-	if (ui->questionValue->text().isEmpty()) {
-		return disableSendButton ("'Question' is empty");
+	const bool hasThirdOption = !ui->option3Value->text().trimmed().isEmpty();
+	ui->maxVotesValue->setMaximum(hasThirdOption ? 3 : 2);
+
+	if (ui->questionValue->text().trimmed().isEmpty()) {
+		return disableSendButton (tr("'Question' is empty"));
 	}
 
-	if (ui->option1Value->text().isEmpty()) {
-		return disableSendButton ("'Option 1' is empty");
+	if (ui->option1Value->text().trimmed().isEmpty()) {
+		return disableSendButton (tr("'Option 1' is empty"));
 	}
 
-	if (ui->option2Value->text().isEmpty()) {
-		return disableSendButton ("'Option 2' is empty");
+	if (ui->option2Value->text().trimmed().isEmpty()) {
+		return disableSendButton (tr("'Option 2' is empty"));
 	}
 
 	auto okButton = ui->buttonBox->button(QDialogButtonBox::Ok);
@@ -98,13 +100,15 @@ BackendNewPollData NewPollDialog::getData ()
 	ret.options.push_back (ui->option2Value->text());
 
 	//option 3 is not mandatory
-	if (!ui->option3Value->text().isEmpty()) {
+	if (!ui->option3Value->text().trimmed().isEmpty()) {
 		ret.options.push_back (ui->option3Value->text());
 	}
 
 	ret.isAnonymous = ui->checkBoxAnonymous->isChecked();
+	ret.isAnonymousCreator = ui->checkBoxAnonymousCreator->isChecked();
 	ret.showProgress = ui->checkBoxProgress->isChecked();
 	ret.allowAddOptions = ui->checkBoxAllowAdditional->isChecked();
+	ret.maxVotes = ui->maxVotesValue->value();
 
 	return ret;
 }
