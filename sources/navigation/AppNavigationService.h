@@ -24,6 +24,7 @@ public:
     void openUrl(const QUrl& url);
     void openChannel(const QString& channelId);
     void openPost(const QString& postId);
+    void openThread(const QString& channelId, const QString& rootId);
     void openThreadAtLastViewed(const QString& channelId,
                                 const QString& rootId,
                                 uint64_t lastViewedAt,

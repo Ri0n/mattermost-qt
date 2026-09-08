@@ -74,6 +74,7 @@ BackendPost::BackendPost (const QJsonObject& jsonObject, const Storage& storage)
 	has_thread = reply_count > 0;
 
 	QJsonObject metadata = jsonObject.value("metadata").toObject();
+	embeds = metadata.value(QStringLiteral("embeds")).toArray();
 
 	for (const auto &fileElement: metadata.value("files").toArray()) {
 		files.emplace_back (fileElement.toObject());
@@ -308,6 +309,7 @@ bool BackendPost::updatePostEdits (BackendPost& editedPost)
 		|| pending_post_id != editedPost.pending_post_id
 		|| !sameFiles(files, editedPost.files)
 		|| !sameReactions(reactions, editedPost.reactions)
+		|| embeds != editedPost.embeds
 		|| reply_count != editedPost.reply_count
 		|| last_reply_at != editedPost.last_reply_at
 		|| threadParticipantUserIds != editedPost.threadParticipantUserIds
@@ -343,6 +345,7 @@ bool BackendPost::updatePostEdits (BackendPost& editedPost)
 	pending_post_id = editedPost.pending_post_id;
 	files = std::move(editedPost.files);
 	reactions = std::move(editedPost.reactions);
+	embeds = std::move(editedPost.embeds);
 	reply_count = editedPost.reply_count;
 	last_reply_at = editedPost.last_reply_at;
 	threadParticipantUserIds = std::move(editedPost.threadParticipantUserIds);

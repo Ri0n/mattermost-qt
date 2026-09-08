@@ -105,6 +105,22 @@ void AppNavigationService::openChannel(const QString& channelId)
     }
 }
 
+void AppNavigationService::openThread(const QString& channelId, const QString& rootId)
+{
+    if (channelId.isEmpty() || rootId.isEmpty()
+        || !backend.getStorage().getChannelById(channelId)) {
+        return;
+    }
+
+    // A root-message click means "present this thread", not "reset its
+    // viewport". MainWindow/NavigationUiController decide whether that means
+    // creating a docked thread, revealing an existing docked one, or raising a
+    // detached window. New threads still start at the newest edge.
+    ensureMainWindowConnection();
+    emit channelRequested(channelId, QString(), rootId, QStringList(),
+                          false, true, true);
+}
+
 void AppNavigationService::openUrl(const QUrl& url)
 {
     if (!url.isValid()) {

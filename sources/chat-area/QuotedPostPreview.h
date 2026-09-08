@@ -6,7 +6,8 @@
 class QEvent;
 class QLabel;
 class QMouseEvent;
-class QResizeEvent;
+class QTextBrowser;
+class QUrl;
 
 namespace Mattermost {
 
@@ -22,22 +23,24 @@ public:
                     const QString& message,
                     bool hasAttachments = false);
     void setActivatedCallback(std::function<void()> callback);
+    void setLinkActivatedCallback(std::function<void(const QUrl&)> callback);
 
 protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void changeEvent(QEvent* event) override;
-    void mouseReleaseEvent(QMouseEvent* event) override;
-    void resizeEvent(QResizeEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
 
 private:
     void refreshPalette();
     void refreshText();
 
     QLabel* authorLabel = nullptr;
-    QLabel* messageLabel = nullptr;
+    QTextBrowser* messageBrowser = nullptr;
     QFrame* bar = nullptr;
     QString fullText;
     int maximumLines = 2;
     std::function<void()> activatedCallback;
+    std::function<void(const QUrl&)> linkActivatedCallback;
 };
 
 } // namespace Mattermost
