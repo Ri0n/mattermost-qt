@@ -63,6 +63,13 @@ public:
         return targetIndex;
     }
 
+    void updateIndex(int index)
+    {
+        if (isActive() && index >= 0) {
+            targetIndex = index;
+        }
+    }
+
     bool blocksMaterialization(const QString& postId) const
     {
         return estimated && isActive() && postId == targetPostId;
