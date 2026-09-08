@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -203,6 +203,12 @@ public:
 
 	BackendChannel* getCurrentChannel () const;
 
+	// A DM/GM has no intrinsic team, but actions and slash commands on older
+	// Mattermost servers still require the team from which the conversation was
+	// opened. Keep that UI execution context separate from BackendChannel::team.
+	void setCurrentTeamContextId(const QString& teamId) { currentTeamContextId = teamId; }
+	const QString& getCurrentTeamContextId() const { return currentTeamContextId; }
+
 	Storage& getStorage ();
 
 	ServerDialogsMap& getServerDialogsMap ();
@@ -264,6 +270,7 @@ private:
     QNetworkDiskCache				attachmentsCache;
     RequestTracker					requestTracker;
     BackendChannel*					currentChannel;
+    QString                             currentTeamContextId;
     QTimer 							timeoutTimer;
     bool							isLoggedIn;
     bool							autoLoginEnabledFlag;
