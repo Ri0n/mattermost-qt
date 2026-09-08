@@ -8,7 +8,11 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPalette>
+#include <QScrollBar>
 #include <QSizePolicy>
+#include <QTextBrowser>
+#include <QTextDocument>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include "QuotedReplyFormat.h"
@@ -48,19 +52,26 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     authorLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     authorLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
-    messageLabel = new QLabel(this);
-    messageLabel->setTextFormat(Qt::RichText);
-    messageLabel->setWordWrap(maximumLines > 1);
-    messageLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    messageLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    messageLabel->setMaximumHeight(
-        messageLabel->fontMetrics().lineSpacing() * maximumLines + 2);
-    messageLabel->setTextInteractionFlags(Qt::NoTextInteraction);
-    messageLabel->setOpenExternalLinks(false);
-    messageLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    messageBrowser = new QTextBrowser(this);
+    messageBrowser->setReadOnly(true);
+    messageBrowser->setOpenLinks(false);
+    messageBrowser->setOpenExternalLinks(false);
+    messageBrowser->setFrameShape(QFrame::NoFrame);
+    messageBrowser->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    messageBrowser->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    messageBrowser->setLineWrapMode(QTextEdit::WidgetWidth);
+    messageBrowser->setTextInteractionFlags(Qt::LinksAccessibleByMouse);
+    messageBrowser->setFocusPolicy(Qt::NoFocus);
+    messageBrowser->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    messageBrowser->setMaximumHeight(
+        messageBrowser->fontMetrics().lineSpacing() * maximumLines + 2);
+    messageBrowser->setContentsMargins(0, 0, 0, 0);
+    messageBrowser->document()->setDocumentMargin(0);
+    messageBrowser->viewport()->setAutoFillBackground(false);
+    messageBrowser->viewport()->installEventFilter(this);
 
     textLayout->addWidget(authorLabel);
-    textLayout->addWidget(messageLabel);
+    textLayout->addWidget(messageBrowser);
     layout->addLayout(textLayout, 1);
 
     refreshPalette();
@@ -87,6 +98,9 @@ void QuotedPostPreview::setPreview(const QString& title,
         fullText = visibleMessage;
     }
     setToolTip(visibleMessage);
+    if (messageBrowser) {
+        messageBrowser->setToolTip(visibleMessage);
+    }
     refreshText();
 }
 
@@ -94,6 +108,43 @@ void QuotedPostPreview::setActivatedCallback(std::function<void()> callback)
 {
     activatedCallback = std::move(callback);
     setCursor(activatedCallback ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    if (messageBrowser) {
+        messageBrowser->viewport()->setCursor(
+            activatedCallback ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    }
+}
+
+void QuotedPostPreview::setLinkActivatedCallback(
+    std::function<void(const QUrl&)> callback)
+{
+    linkActivatedCallback = std::move(callback);
+}
+
+bool QuotedPostPreview::eventFilter(QObject* watched, QEvent* event)
+{
+    if (messageBrowser && watched == messageBrowser->viewport() && event
+        && event->type() == QEvent::MouseButtonPress) {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (mouseEvent->button() == Qt::LeftButton) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            const QPoint position = mouseEvent->position().toPoint();
+#else
+            const QPoint position = mouseEvent->pos();
+#endif
+            const QString anchor = messageBrowser->anchorAt(position);
+            if (!anchor.isEmpty() && linkActivatedCallback) {
+                linkActivatedCallback(QUrl(anchor));
+                mouseEvent->accept();
+                return true;
+            }
+            if (activatedCallback) {
+                activatedCallback();
+                mouseEvent->accept();
+                return true;
+            }
+        }
+    }
+    return QFrame::eventFilter(watched, event);
 }
 
 void QuotedPostPreview::changeEvent(QEvent* event)
@@ -103,9 +154,9 @@ void QuotedPostPreview::changeEvent(QEvent* event)
                   || event->type() == QEvent::ApplicationPaletteChange
                   || event->type() == QEvent::StyleChange
                   || event->type() == QEvent::FontChange)) {
-        if (messageLabel) {
-            messageLabel->setMaximumHeight(
-                messageLabel->fontMetrics().lineSpacing() * maximumLines + 2);
+        if (messageBrowser) {
+            messageBrowser->setMaximumHeight(
+                messageBrowser->fontMetrics().lineSpacing() * maximumLines + 2);
         }
         refreshPalette();
         refreshText();
@@ -124,7 +175,7 @@ void QuotedPostPreview::mousePressEvent(QMouseEvent* event)
 
 void QuotedPostPreview::refreshPalette()
 {
-    if (!authorLabel || !messageLabel) {
+    if (!authorLabel || !messageBrowser) {
         return;
     }
 
@@ -137,23 +188,25 @@ void QuotedPostPreview::refreshPalette()
     }
 
     QPalette mutedPalette = palette();
+    mutedPalette.setColor(QPalette::Text, mutedColor);
     mutedPalette.setColor(QPalette::WindowText, mutedColor);
     authorLabel->setForegroundRole(QPalette::WindowText);
-    messageLabel->setForegroundRole(QPalette::WindowText);
     authorLabel->setPalette(mutedPalette);
-    messageLabel->setPalette(mutedPalette);
+    messageBrowser->setPalette(mutedPalette);
+    messageBrowser->viewport()->setAutoFillBackground(false);
 }
 
 void QuotedPostPreview::refreshText()
 {
-    if (!messageLabel || fullText.isEmpty()) {
-        if (messageLabel) {
-            messageLabel->clear();
+    if (!messageBrowser || fullText.isEmpty()) {
+        if (messageBrowser) {
+            messageBrowser->clear();
         }
         return;
     }
 
-    messageLabel->setText(MessageFormatter::formatMessageText(fullText));
+    messageBrowser->setHtml(MessageFormatter::formatMessageText(fullText));
+    messageBrowser->document()->setDocumentMargin(0);
 }
 
 } // namespace Mattermost
