@@ -1,5 +1,6 @@
 #include <QtTest>
 
+#include "chat-area/ThreadTimelineSizing.h"
 #include "widgets/LongListWidget.h"
 
 namespace {
@@ -107,6 +108,17 @@ private slots:
         QVERIFY(list.itemWidget(0) != nullptr);
         QVERIFY2(qAbs(list.itemWidget(0)->y()) <= 2,
                  "Once the server proves leading logical slots are phantom, the oldest real post must occupy the top");
+    }
+
+    void threadTombstoneDoesNotConsumeFollowingReplySlot()
+    {
+        // root + two live replies = 3 visible rows. After deleting one reply,
+        // Mattermost's reply_count drops to one, but the client keeps the
+        // deleted reply as a tombstone. The visible thread must therefore still
+        // have three rows rather than truncating the surviving last reply.
+        QCOMPARE(Mattermost::threadLogicalItemCount(2, 0), 3);
+        QCOMPARE(Mattermost::threadLogicalItemCount(1, 1), 3);
+        QCOMPARE(Mattermost::threadLogicalItemCount(0, 2), 3);
     }
 };
 
