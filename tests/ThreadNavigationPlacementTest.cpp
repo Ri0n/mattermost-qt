@@ -21,6 +21,17 @@ private slots:
         QVERIFY(!placement.blocksMaterialization(QStringLiteral("other")));
     }
 
+    void repeatedLookupKeepsEstimatedTargetBlocked()
+    {
+        ThreadNavigationPlacement placement;
+        placement.trackEstimated(QStringLiteral("target"), 12);
+        placement.trackExistingProvisional(QStringLiteral("target"), 12);
+
+        QVERIFY(placement.isActive());
+        QCOMPARE(placement.index(), 12);
+        QVERIFY(placement.blocksMaterialization(QStringLiteral("target")));
+    }
+
     void differentExactIndexReleasesEstimatedTarget()
     {
         ThreadNavigationPlacement placement;
