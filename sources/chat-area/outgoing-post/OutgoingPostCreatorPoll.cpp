@@ -3,6 +3,7 @@
 #include <QDebug>
 #include <QMessageBox>
 #include <QStringList>
+#include <QVariant>
 
 #include "backend/PostProps.h"
 #include "backend/types/BackendChannel.h"
@@ -85,7 +86,8 @@ void OutgoingPostCreator::armPollRealtimeAcknowledgement(const BackendNewPollDat
                 Qt::UniqueConnection);
     }
 
-    qInfo().noquote() << "Poll send armed: question=" << pollData.question
+    qInfo().noquote() << "Poll send armed: channel="
+                      << (channel ? channel->id : QString())
                       << "root=" << pollData.rootId
                       << "options=" << options.size();
 }
