@@ -8,6 +8,7 @@
 #include <QPointer>
 #include <QTimer>
 
+#include "ThreadTimelineSizing.h"
 #include "backend/Backend.h"
 #include "backend/PostTimelineService.h"
 #include "backend/types/BackendChannel.h"
@@ -430,9 +431,28 @@ int ThreadPostSource::currentLogicalCount() const
     if (!root) {
         return 0;
     }
-    const int64_t boundedReplies = std::min<int64_t>(root->reply_count,
-                                                     std::numeric_limits<int>::max() - 1);
-    return std::max(1, static_cast<int>(boundedReplies) + 1);
+
+    int deletedReplyTombstones = 0;
+    for (const BackendPost& post : channel.posts) {
+        if (post.root_id == rootId && (post.isDeleted || post.delete_at != 0)) {
+            ++deletedReplyTombstones;
+        }
+    }
+
+    int count = threadLogicalItemCount(root->reply_count, deletedReplyTombstones);
+
+    // reply_count is metadata, not authority to destroy an identity that this
+    // source has already mapped. This matters in particular for deleted replies:
+    // Mattermost decrements reply_count while the client keeps the deleted reply
+    // as a tombstone. Preserve the furthest mapped row even if its body is later
+    // evicted from the residency cache.
+    for (int index = static_cast<int>(postIds.size()) - 1; index >= count; --index) {
+        if (!postIds.at(index).isEmpty()) {
+            count = index + 1;
+            break;
+        }
+    }
+    return count;
 }
 
 int ThreadPostSource::nearestEmptyIndex(int preferred) const
