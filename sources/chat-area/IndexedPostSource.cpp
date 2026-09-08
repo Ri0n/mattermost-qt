@@ -14,7 +14,12 @@ IndexedPostSource::IndexedPostSource(BackendChannel& channelInstance, QObject* p
             this, [this](const QString& postId, bool available) {
         const int index = indexOfPost(postId);
         if (index >= 0) {
-            emit bodyAvailabilityChanged(index, index, available);
+            // Concrete sources may impose stronger row-availability rules than
+            // raw body residency. In particular, ThreadPostSource keeps a newly
+            // estimated navigation target non-materializable until a server
+            // window confirms its logical position.
+            emit bodyAvailabilityChanged(index, index,
+                                         available && isAvailable(index));
         }
     });
 }
