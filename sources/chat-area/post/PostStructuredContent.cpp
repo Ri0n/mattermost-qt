@@ -53,6 +53,45 @@ void appendParagraph(QStringList& paragraphs, const QString& value)
     }
 }
 
+qreal lightnessDistance(const QColor& first, const QColor& second)
+{
+    const qreal delta = first.lightnessF() - second.lightnessF();
+    return delta < 0.0 ? -delta : delta;
+}
+
+QColor visibleAccent(QColor accent, const QPalette& palette)
+{
+    if (!accent.isValid()) {
+        accent = palette.color(QPalette::Highlight);
+    }
+
+    const QColor background = palette.color(QPalette::Window);
+    constexpr qreal minimumLightnessDistance = 0.28;
+    if (lightnessDistance(accent, background) >= minimumLightnessDistance) {
+        return accent;
+    }
+
+    // Keep a bot-provided accent whenever possible, but do not allow white on
+    // a light card (or black on a dark one) to become effectively invisible.
+    // Blend toward the current text colour only as far as necessary, which is
+    // naturally theme-aware and preserves most of the original hue.
+    const QColor textColor = palette.color(QPalette::Text);
+    for (int step = 1; step <= 4; ++step) {
+        const qreal amount = static_cast<qreal>(step) / 4.0;
+        const qreal keep = 1.0 - amount;
+        const QColor candidate = QColor::fromRgbF(
+            accent.redF() * keep + textColor.redF() * amount,
+            accent.greenF() * keep + textColor.greenF() * amount,
+            accent.blueF() * keep + textColor.blueF() * amount,
+            accent.alphaF());
+        if (lightnessDistance(candidate, background) >= minimumLightnessDistance) {
+            return candidate;
+        }
+    }
+
+    return textColor;
+}
+
 QString attachmentCardMarkdown(const QJsonObject& attachment)
 {
     QStringList paragraphs;
@@ -184,9 +223,7 @@ QWidget* createAttachmentWidget(PostWidget& postWidget, const QJsonObject& attac
     QPalette barPalette = bar->palette();
     const QColor requestedColor(attachment.value(QStringLiteral("color")).toString());
     barPalette.setColor(QPalette::Window,
-                        requestedColor.isValid()
-                            ? requestedColor
-                            : postWidget.palette().color(QPalette::Mid));
+                        visibleAccent(requestedColor, card->palette()));
     bar->setPalette(barPalette);
     bar->setAutoFillBackground(true);
     cardLayout->addWidget(bar);
@@ -334,13 +371,21 @@ public:
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override
     {
-        if (!event || (event->type() != QEvent::Show
-                       && event->type() != QEvent::LayoutRequest)) {
+        if (!event) {
             return QObject::eventFilter(watched, event);
         }
 
         if (auto* postWidget = qobject_cast<PostWidget*>(watched)) {
-            refreshStructuredContent(*postWidget);
+            if (event->type() == QEvent::PaletteChange
+                || event->type() == QEvent::ApplicationPaletteChange) {
+                // Accent visibility depends on the current palette; force a
+                // rebuild even though the structured JSON itself is unchanged.
+                postWidget->setProperty(structuredSignatureProperty, QByteArray());
+                refreshStructuredContent(*postWidget);
+            } else if (event->type() == QEvent::Show
+                       || event->type() == QEvent::LayoutRequest) {
+                refreshStructuredContent(*postWidget);
+            }
         }
         return QObject::eventFilter(watched, event);
     }
