@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -87,10 +87,19 @@ BackendPost::BackendPost (const QJsonObject& jsonObject, const Storage& storage)
 	}
 
 	/**
-	 * If there are attachments to the post, it is either a poll or a call
+	 * Matterpoll stores its definition in the same props.attachments field used
+	 * by ordinary Slack-compatible message attachments. The old heuristic treated
+	 * any attachment containing actions or fields as a poll, which misclassified
+	 * rich bot posts (Jira/Jenkins/GitLab are common examples). A real Matterpoll
+	 * post carries its explicit poll_id, so use that as the discriminator.
 	 */
+	const QString pollId = props.toObject().value(QStringLiteral("poll_id")).toString();
+	if (pollId.isEmpty()) {
+		return;
+	}
+
 	QJsonValue attachments (props.toObject().value("attachments"));
-	if (attachments.isArray()) {
+	if (attachments.isArray() && !attachments.toArray().isEmpty()) {
 		auto pollObject = attachments.toArray()[0].toObject();
 
 		/**
@@ -100,7 +109,7 @@ BackendPost::BackendPost (const QJsonObject& jsonObject, const Storage& storage)
 			return;
 		}
 
-		poll = std::make_unique<BackendPoll> (props.toObject().value("poll_id").toString(), pollObject);
+		poll = std::make_unique<BackendPoll> (pollId, pollObject);
 	}
 }
 
