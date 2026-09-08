@@ -59,6 +59,7 @@ public:
 	          QPushButton& addEmojiButton,
 	          QPushButton& sendButton);
 	void setRootId(QString id);
+	const QString& rootId() const { return root_id; }
 	void onDragEnterEvent (QDragEnterEvent* event);
 	void onDragMoveEvent (QDragMoveEvent* event);
 	void onDropEvent (QDropEvent* event);
@@ -67,6 +68,7 @@ public:
 
 public slots:
 	void onAttachButtonClick ();
+	void createPoll ();
 	void onPostReceived (BackendPost& post);
 	void sendPostButtonAction ();
 	void postEditInitiated (BackendPost& post);
