@@ -82,6 +82,28 @@ private slots:
         QVERIFY(sizes.at(0) > sizes.at(1));
         QVERIFY(sizes.at(1) >= 320);
     }
+
+    void staleVerticalStateIsNormalizedToRightPane()
+    {
+        QSplitter splitter(Qt::Vertical);
+        splitter.resize(900, 600);
+        splitter.addWidget(new QWidget);
+        splitter.addWidget(new QWidget);
+        splitter.show();
+        QCoreApplication::processEvents();
+
+        splitter.setSizes({400, 200});
+        QCoreApplication::processEvents();
+        QCOMPARE(splitter.orientation(), Qt::Vertical);
+
+        ensureThreadPaneExpanded(splitter);
+        QCoreApplication::processEvents();
+
+        QCOMPARE(splitter.orientation(), Qt::Horizontal);
+        const QList<int> sizes = splitter.sizes();
+        QCOMPARE(sizes.size(), 2);
+        QVERIFY(sizes.at(1) > 0);
+    }
 };
 
 QTEST_MAIN(ThreadPaneLayoutTest)
