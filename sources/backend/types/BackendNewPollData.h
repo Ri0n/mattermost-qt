@@ -31,6 +31,7 @@ namespace Mattermost {
 struct BackendNewPollData {
 	QString 			question;
 	QVector<QString> 	options;
+	QString				rootId;
 	bool				isAnonymous = false;
 	bool				isAnonymousCreator = false;
 	bool				showProgress = false;
