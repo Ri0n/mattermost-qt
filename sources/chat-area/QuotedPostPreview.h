@@ -6,7 +6,6 @@
 class QEvent;
 class QLabel;
 class QMouseEvent;
-class QResizeEvent;
 
 namespace Mattermost {
 
@@ -25,8 +24,7 @@ public:
 
 protected:
     void changeEvent(QEvent* event) override;
-    void mouseReleaseEvent(QMouseEvent* event) override;
-    void resizeEvent(QResizeEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
 
 private:
     void refreshPalette();
