@@ -41,6 +41,7 @@ class QPushButton;
 
 namespace Mattermost {
 
+struct BackendNewPollData;
 struct OutgoingPostData;
 class ChatLogWidget;
 
@@ -60,6 +61,7 @@ public:
 	          QPushButton& sendButton);
 	void setRootId(QString id);
 	const QString& rootId() const { return root_id; }
+	void armPollRealtimeAcknowledgement(const BackendNewPollData& pollData);
 	void onDragEnterEvent (QDragEnterEvent* event);
 	void onDragMoveEvent (QDragMoveEvent* event);
 	void onDropEvent (QDropEvent* event);
@@ -69,6 +71,7 @@ public:
 public slots:
 	void onAttachButtonClick ();
 	void createPoll ();
+	void onPollPostReceived(BackendPost& post);
 	void onPostReceived (BackendPost& post);
 	void sendPostButtonAction ();
 	void postEditInitiated (BackendPost& post);
