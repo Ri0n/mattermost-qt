@@ -104,6 +104,12 @@ public:
 	 */
 	void lockNavigationToPost(const QString& postId, int quietPeriodMs = 2000);
 
+	/**
+	 * Flash a semantic thread target only after its provisional index has been
+	 * replaced or confirmed by an authoritative server window.
+	 */
+	void highlightPostWhenAuthoritative(const QString& postId);
+
 	void onActivate ();
 	void onDeactivate ();
 	void onMainWindowActivate ();
