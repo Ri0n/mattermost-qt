@@ -46,8 +46,8 @@ void PostWidget::refreshPermalinkPreviews()
             continue;
         }
 
-        const QJsonObject data = embed.value(QStringLiteral("data")).toObject();
-        const QJsonObject previewPost = data.value(QStringLiteral("post")).toObject();
+        const QJsonObject embedData = embed.value(QStringLiteral("data")).toObject();
+        const QJsonObject previewPost = embedData.value(QStringLiteral("post")).toObject();
         if (previewPost.isEmpty()) {
             // Mattermost omits the embedded post when the viewer is not allowed
             // to see it. Do not issue a second client-side fetch that could
@@ -55,7 +55,7 @@ void PostWidget::refreshPermalinkPreviews()
             continue;
         }
 
-        QString postId = data.value(QStringLiteral("post_id")).toString();
+        QString postId = embedData.value(QStringLiteral("post_id")).toString();
         if (postId.isEmpty()) {
             postId = previewPost.value(QStringLiteral("id")).toString();
         }
@@ -77,7 +77,7 @@ void PostWidget::refreshPermalinkPreviews()
         }
 
         const QString channelName =
-            data.value(QStringLiteral("channel_display_name")).toString();
+            embedData.value(QStringLiteral("channel_display_name")).toString();
         const QString title = channelName.isEmpty()
             ? authorName
             : authorName + QStringLiteral(" · ") + channelName;
