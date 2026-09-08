@@ -177,7 +177,7 @@ void installSidebarWidthBootstrap()
     qApp->installEventFilter(bootstrap);
 }
 
+Q_COREAPP_STARTUP_FUNCTION(installSidebarWidthBootstrap)
+
 } // namespace
 } // namespace Mattermost
-
-Q_COREAPP_STARTUP_FUNCTION(Mattermost::installSidebarWidthBootstrap)
