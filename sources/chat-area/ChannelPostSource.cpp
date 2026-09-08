@@ -1115,7 +1115,7 @@ bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
 
 void ChannelPostSource::seedCachedPosts()
 {
-    if (!hasRootCountEstimate) {
+    if (!hasRootCountEstimate || postIds.isEmpty()) {
         return;
     }
 
@@ -1124,25 +1124,23 @@ void ChannelPostSource::seedCachedPosts()
         return;
     }
 
-    // Cached channel startup data is useful only when it reaches the real newest
-    // edge. Arbitrary permalink/context cache entries must not be guessed into
-    // absolute logical positions; semantic navigation adopts those on demand.
-    const BackendPost* newest = cached.last();
-    if (postIds.size() > cached.size()
-        && channel.last_root_post_at != 0
-        && newest->create_at < channel.last_root_post_at) {
+    // BackendChannel::posts is a residency cache, not a contiguous timeline.
+    // A permalink load can leave an old context island resident at the same time
+    // as the real newest tail. Treating every cached root as one adjacent suffix
+    // gives those islands false authoritative indices and makes the subsequent
+    // server navigation context conflict with itself. Only the newest identity
+    // is intrinsically placeable here; PostTimelineService::loadCachedChannelTail
+    // hydrates a genuinely contiguous cached suffix on the next event-loop turn.
+    BackendPost* newest = cached.last();
+    if (!newest || (channel.last_root_post_at != 0
+                    && newest->create_at < channel.last_root_post_at)) {
         return;
     }
 
-    if (postIds.size() < cached.size()) {
-        postIds.resize(cached.size());
-    }
-    const int first = std::max(0, static_cast<int>(postIds.size() - cached.size()));
-    for (int offset = 0; offset < cached.size(); ++offset) {
-        postIds[first + offset] = cached.at(offset)->id;
-    }
+    const int index = static_cast<int>(postIds.size()) - 1;
+    postIds[index] = newest->id;
     rebuildIndex();
-    emit rangeAvailable(first, static_cast<int>(postIds.size()) - 1);
+    emit rangeAvailable(index, index);
 }
 
 void ChannelPostSource::seedUnknownNewestPost()
