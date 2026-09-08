@@ -173,12 +173,28 @@ ThreadPostSource::ThreadPostSource(Backend& backendInstance,
     QTimer::singleShot(0, this, [this] { hydrateCachedTail(); });
 }
 
+bool ThreadPostSource::isAvailable(int index) const
+{
+    if (!IndexedPostSource::isAvailable(index)) {
+        return false;
+    }
+
+    // A body fetched for permalink navigation does not make its timestamp-based
+    // estimated slot a renderable row. Keep only the semantic identity/index for
+    // scrolling and range selection; materialize after a server window confirms
+    // or relocates the same post.
+    return !navigationPlacement.blocksMaterialization(postIds.at(index));
+}
+
 int ThreadPostSource::ensurePostIndex(const QString& postId)
 {
     const int existing = indexOfPost(postId);
     if (existing >= 0) {
         if (provisionalPostIds.contains(postId)) {
-            navigationProvisionalPostId = postId;
+            // Cached thread windows may already expose a provisional row. Keep
+            // that row renderable, but protect its semantic identity until a
+            // server window confirms or relocates it.
+            navigationPlacement.trackExistingProvisional(postId, existing);
         }
         return existing;
     }
@@ -191,7 +207,7 @@ int ThreadPostSource::ensurePostIndex(const QString& postId)
     if (post->id == rootId) {
         postIds[0] = rootId;
         rebuildIndex();
-        navigationProvisionalPostId.clear();
+        navigationPlacement.clear();
         emit rangeAvailable(0, 0);
         return 0;
     }
@@ -202,14 +218,18 @@ int ThreadPostSource::ensurePostIndex(const QString& postId)
     }
     postIds[index] = postId;
     provisionalPostIds.insert(postId);
-    navigationProvisionalPostId = postId;
+    navigationPlacement.trackEstimated(postId, index);
     rebuildIndex();
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_PROVISIONAL source=" << static_cast<const void*>(this)
         << " post=" << shortId(postId)
         << " index=" << index
+        << " materializable=false"
         << ' ' << slotSummary(postIds);
-    emit rangeAvailable(index, index);
+
+    // Deliberately do not emit rangeAvailable(). LongListWidget can navigate to
+    // this logical estimate while it remains unavailable and will request the
+    // surrounding server window without constructing a temporary PostWidget.
     return index;
 }
 
@@ -562,6 +582,27 @@ void ThreadPostSource::hydrateCachedTail()
             const QStringList ids = result.postIds.mid(
                 result.postIds.size() - usableCount);
             const int first = static_cast<int>(guard->postIds.size()) - usableCount;
+
+            // Cached-tail hydration deliberately remains renderable while it is
+            // validated, but it must not turn a freshly estimated permalink slot
+            // into a concrete widget merely because the cache overlaps it. The
+            // explicit navigation request will fetch the confirming server page.
+            if (guard->navigationPlacement.isActive()
+                && guard->navigationPlacement.blocksMaterialization(
+                    guard->navigationPlacement.postId())) {
+                const int estimate = guard->indexOfPost(
+                    guard->navigationPlacement.postId());
+                if (estimate >= first && estimate < first + usableCount) {
+                    qCDebug(lcThreadTimelineTrace).nospace()
+                        << "THREAD_CACHE_TAIL_SKIP source="
+                        << static_cast<const void*>(guard.data())
+                        << " reason=navigation-estimate target="
+                        << shortId(guard->navigationPlacement.postId())
+                        << " index=" << estimate;
+                    return;
+                }
+            }
+
             for (int offset = 0; offset < usableCount; ++offset) {
                 const int target = first + offset;
                 const QString& id = ids.at(offset);
@@ -650,9 +691,14 @@ void ThreadPostSource::pruneProvisionalPostIds()
             ++it;
         }
     }
-    if (!navigationProvisionalPostId.isEmpty()
-        && indexOfPost(navigationProvisionalPostId) < 0) {
-        navigationProvisionalPostId.clear();
+
+    if (navigationPlacement.isActive()) {
+        const int index = indexOfPost(navigationPlacement.postId());
+        if (index < 0) {
+            navigationPlacement.clear();
+        } else {
+            navigationPlacement.updateIndex(index);
+        }
     }
 }
 
@@ -665,29 +711,46 @@ void ThreadPostSource::placeExactWindow(int first, const QStringList& ids)
     // A thread jump can seed one cached reply at a timestamp-estimated slot.
     // Preserve that semantic identity until an exact window actually contains
     // it. Numeric overlap alone is not authority to replace the jump target.
-    if (!navigationProvisionalPostId.isEmpty()) {
-        const int currentIndex = indexOfPost(navigationProvisionalPostId);
+    if (navigationPlacement.isActive()) {
+        const QString targetPostId = navigationPlacement.postId();
+        const int currentIndex = indexOfPost(targetPostId);
+        if (currentIndex >= 0) {
+            navigationPlacement.updateIndex(currentIndex);
+        }
         const int last = first + static_cast<int>(ids.size()) - 1;
         if (currentIndex >= first && currentIndex <= last
-            && !ids.contains(navigationProvisionalPostId)) {
+            && !ids.contains(targetPostId)) {
             qCDebug(lcThreadTimelineTrace).nospace()
                 << "THREAD_NAV_WINDOW_DEFER source=" << static_cast<const void*>(this)
-                << " target=" << shortId(navigationProvisionalPostId)
+                << " target=" << shortId(targetPostId)
                 << " targetIndex=" << currentIndex
                 << " incoming=[" << first << ',' << last << ']';
             return;
         }
     }
 
-    const bool confirmsNavigation = !navigationProvisionalPostId.isEmpty()
-        && ids.contains(navigationProvisionalPostId);
+    const ThreadNavigationPlacement::Confirmation confirmation =
+        navigationPlacement.confirmExactWindow(first, ids);
     for (const QString& id : ids) {
         provisionalPostIds.remove(id);
     }
-    publishExactWindow(assignExactWindow(first, ids));
-    if (confirmsNavigation) {
-        navigationProvisionalPostId.clear();
+
+    const ExactWindowMutation mutation = assignExactWindow(first, ids);
+    publishExactWindow(mutation);
+
+    // If the server confirmed the estimated identity at exactly the same slot,
+    // assignExactWindow() has no mapping delta and therefore emits nothing. The
+    // row nevertheless changed from navigation metadata to a materializable
+    // source item, so publish that availability transition explicitly.
+    if (confirmation.isValid() && confirmation.wasEstimated
+        && !mutation.mappingChanged
+        && confirmation.authoritativeIndex >= 0
+        && confirmation.authoritativeIndex < static_cast<int>(postIds.size())
+        && isAvailable(confirmation.authoritativeIndex)) {
+        emit rangeAvailable(confirmation.authoritativeIndex,
+                            confirmation.authoritativeIndex);
     }
+
     pruneProvisionalPostIds();
 }
 
