@@ -6,6 +6,7 @@
 #include <QString>
 
 #include "IndexedPostSource.h"
+#include "ThreadNavigationPlacement.h"
 #include "backend/PostResidencyLease.h"
 
 namespace Mattermost {
@@ -23,6 +24,7 @@ public:
                               QString rootId,
                               QObject* parent = nullptr);
 
+    bool isAvailable(int index) const override;
     int ensurePostIndex(const QString& postId) override;
 
     void requestRange(int first,
@@ -63,10 +65,7 @@ private:
     QString rootId;
     PostResidencyLease rootResidencyLease;
     QSet<QString> provisionalPostIds;
-    // A semantic jump may temporarily place one cached reply by timestamp.
-    // Exact thread windows may move this identity when they contain it, but may
-    // not silently overwrite its estimated slot with an unrelated reply.
-    QString navigationProvisionalPostId;
+    ThreadNavigationPlacement navigationPlacement;
 };
 
 } // namespace Mattermost
