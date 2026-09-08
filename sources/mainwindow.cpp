@@ -270,7 +270,7 @@ void MainWindow::setupChannelTabs()
 	sidebarFilterEdit->setClearButtonEnabled(true);
 	sidebarFilterEdit->setPlaceholderText(tr("Filter channels or contacts…"));
 	sidebarFilterEdit->setAccessibleName(tr("Filter channels or contacts"));
-	sidebarFilterEdit->setContentsMargins(4, 2, 4, 2);
+	sidebarFilterEdit->setContentsMargins(4, 2, 7, 2);
 	sidebarFilterEdit->installEventFilter(this);
 	unreadFilterAction = sidebarFilterEdit->addAction(QIcon(), QLineEdit::TrailingPosition);
 	unreadFilterAction->setCheckable(true);
@@ -641,7 +641,6 @@ void MainWindow::openAttentionThread(const QString& channelId, const QString& ro
 					threadArea = area;
 					break;
 				}
-			}
 
 			if (!threadArea) {
 				threadArea = new ChatArea(guard->backend, *currentChannel, rootPostId, parentArea);
@@ -861,7 +860,7 @@ void MainWindow::messageNotify(BackendChannel& channel, const BackendPost& post)
 					&& threadArea->isActiveWindow()) {
 					return;
 				}
-			}
+		}
 		}
 	}
 
