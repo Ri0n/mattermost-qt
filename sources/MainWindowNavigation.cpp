@@ -1,6 +1,9 @@
 #include "mainwindow.h"
 
+#include <memory>
+
 #include <QLoggingCategory>
+#include <QMetaObject>
 #include <QPointer>
 #include <QTimer>
 
@@ -55,6 +58,42 @@ void MainWindow::openChannelPost(const QString& channelId,
 
     auto& navigationUi = NavigationUiController::instance(*this);
 
+    // openStoredChannel() may have to join a public channel asynchronously.
+    // Preserve the complete semantic navigation request so the eventual channel
+    // admission resumes the original permalink/thread jump rather than merely
+    // leaving the newly joined channel open at its default position.
+    const auto armStoredChannelRetry = [this, channelId, postId, rootId,
+                                        contextPostIds, reachedOldest,
+                                        reachedNewest, preserveIfOpen] {
+        auto connection = std::make_shared<QMetaObject::Connection>();
+        QPointer<MainWindow> guard(this);
+        *connection = connect(ui->channelList, &ChannelTree::storedChannelOpenFinished,
+                              this,
+                              [guard, connection, channelId, postId, rootId,
+                               contextPostIds, reachedOldest, reachedNewest,
+                               preserveIfOpen](const QString& completedChannelId,
+                                              bool opened) {
+            if (completedChannelId != channelId) {
+                return;
+            }
+            QObject::disconnect(*connection);
+            if (!guard || !opened) {
+                return;
+            }
+
+            QTimer::singleShot(0, guard.data(),
+                [guard, channelId, postId, rootId, contextPostIds,
+                 reachedOldest, reachedNewest, preserveIfOpen] {
+                    if (guard) {
+                        guard->openChannelPost(channelId, postId, rootId,
+                                               contextPostIds, reachedOldest,
+                                               reachedNewest, preserveIfOpen);
+                    }
+                });
+        });
+        return connection;
+    };
+
     // Thread presentation is independent from the main-channel surface. A
     // followed thread can therefore open in the right pane without stealing an
     // already visible central channel. A completely empty centre is different:
@@ -63,11 +102,13 @@ void MainWindow::openChannelPost(const QString& channelId,
     if (!rootId.isEmpty()) {
         ChatArea* centralArea = ui->channelList->getCurrentPage();
         if (!centralArea) {
+            const auto retryConnection = armStoredChannelRetry();
             ui->channelList->openStoredChannel(channelId);
             centralArea = ui->channelList->getCurrentPage();
-            if (!centralArea) {
+            if (!centralArea || &centralArea->getChannel() != channel) {
                 return;
             }
+            QObject::disconnect(*retryConnection);
 
             // ChannelTree records the newly activated main-channel location on
             // the next event-loop turn. Let that settle before presenting the
@@ -132,11 +173,13 @@ void MainWindow::openChannelPost(const QString& channelId,
         return;
     }
 
+    const auto retryConnection = armStoredChannelRetry();
     ui->channelList->openStoredChannel(channelId);
     ChatArea* area = ui->channelList->getCurrentPage();
     if (!area || &area->getChannel() != channel) {
         return;
     }
+    QObject::disconnect(*retryConnection);
 
     if (postId.isEmpty()) {
         return;

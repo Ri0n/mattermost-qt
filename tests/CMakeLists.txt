@@ -290,3 +290,38 @@ target_link_libraries(post-cache-service-test
 )
 
 add_test(NAME post-cache-service-test COMMAND post-cache-service-test)
+
+add_executable(thread-navigation-placement-test
+    ThreadNavigationPlacementTest.cpp
+)
+
+target_include_directories(thread-navigation-placement-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(thread-navigation-placement-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME thread-navigation-placement-test COMMAND thread-navigation-placement-test)
+
+add_executable(thread-pane-layout-test
+    ThreadPaneLayoutTest.cpp
+)
+
+target_include_directories(thread-pane-layout-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(thread-pane-layout-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+add_test(NAME thread-pane-layout-test COMMAND thread-pane-layout-test)
+set_tests_properties(thread-pane-layout-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

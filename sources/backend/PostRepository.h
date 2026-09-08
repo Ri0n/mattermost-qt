@@ -88,6 +88,12 @@ public:
     /** Fetch one post by id and quietly merge it into its known channel cache. */
     void loadPost(const QString& postId, PostCallback callback);
 
+    /**
+     * Quietly ingest one authoritative post snapshot that was fetched by a
+     * higher-level resolver after its channel became known.
+     */
+    bool ingestFetchedPost(const QJsonObject& postObject);
+
     /** Fetch the logged-in user's saved/flagged posts, preserving collection order. */
     void loadFlaggedPosts(int page, int perPage, CollectionCallback callback);
 

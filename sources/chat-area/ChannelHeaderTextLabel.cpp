@@ -207,9 +207,7 @@ void ChannelHeaderTextLabel::ensurePopover()
     browser->setReadOnly(true);
     browser->setOpenExternalLinks(false);
     browser->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::TextSelectableByMouse);
-    browser->setFrameShape(QFrame::Box);
-    browser->setFrameShadow(QFrame::Plain);
-    browser->setLineWidth(1);
+    browser->setFrameShape(QFrame::NoFrame);
     browser->setAutoFillBackground(true);
     browser->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     browser->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);

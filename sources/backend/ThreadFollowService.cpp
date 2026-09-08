@@ -477,10 +477,18 @@ void ThreadFollowService::markThreadRead(const QString& teamId,
     NetworkRequest request(threadPath(teamId, threadId)
                            + QStringLiteral("/read/") + QString::number(now));
     _httpConnector.put(request, QByteArrayCreator(QJsonObject {}),
-                       HttpResponseCallback([callback = std::move(callback)](
+                       HttpResponseCallback([this, teamId, threadId, callback = std::move(callback)](
                                                 QVariant status, const QJsonDocument&) mutable {
+        const bool success = status.toInt() == QNetworkReply::NoError;
+        if (success) {
+            // Both Attention and Following treat followingChanged(true) as a
+            // followed-thread state invalidation and reconcile their independent
+            // server snapshots. A successful read changes that state even though
+            // membership itself remains true.
+            emit followingChanged(teamId, threadId, true);
+        }
         if (callback) {
-            callback(status.toInt() == QNetworkReply::NoError);
+            callback(success);
         }
     }));
 }

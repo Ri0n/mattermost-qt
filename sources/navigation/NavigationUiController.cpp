@@ -31,6 +31,7 @@
 #include "chat-area/ChatLogWidget.h"
 #include "mainwindow.h"
 #include "navigation/AppNavigationService.h"
+#include "navigation/ThreadPaneLayout.h"
 
 namespace Mattermost {
 namespace {
@@ -486,34 +487,75 @@ void NavigationUiController::ensureThreadButton(ChatArea* area)
     if (!area || !area->isThread) {
         return;
     }
-    if (area->findChild<QToolButton*>(QStringLiteral("threadPresentationButton"))) {
-        updateThreadButton(area);
-        return;
-    }
 
     auto* layout = area->findChild<QHBoxLayout*>(QStringLiteral("propertieslLayout"));
     if (!layout) {
         return;
     }
 
-    auto* button = new QToolButton(area);
-    button->setObjectName(QStringLiteral("threadPresentationButton"));
-    button->setAutoRaise(true);
-    button->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    button->setIconSize(QSize(16, 16));
-    button->setCursor(Qt::PointingHandCursor);
-    layout->addWidget(button, 0, Qt::AlignVCenter);
+    auto* presentationButton = area->findChild<QToolButton*>(
+        QStringLiteral("threadPresentationButton"));
+    if (!presentationButton) {
+        presentationButton = new QToolButton(area);
+        presentationButton->setObjectName(QStringLiteral("threadPresentationButton"));
+        presentationButton->setAutoRaise(true);
+        presentationButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        presentationButton->setIconSize(QSize(16, 16));
+        presentationButton->setCursor(Qt::PointingHandCursor);
+        layout->addWidget(presentationButton, 0, Qt::AlignVCenter);
 
-    connect(button, &QToolButton::clicked, this, [this, area] {
-        if (!area) {
-            return;
-        }
-        if (area->property("threadDetached").toBool()) {
-            attachThread(area);
-        } else {
-            detachThread(area);
-        }
-    });
+        connect(presentationButton, &QToolButton::clicked, this, [this, area] {
+            if (!area) {
+                return;
+            }
+            if (area->property("threadDetached").toBool()) {
+                attachThread(area);
+            } else {
+                detachThread(area);
+            }
+        });
+    }
+
+    auto* closeButton = area->findChild<QToolButton*>(QStringLiteral("threadCloseButton"));
+    if (!closeButton) {
+        closeButton = new QToolButton(area);
+        closeButton->setObjectName(QStringLiteral("threadCloseButton"));
+        closeButton->setAutoRaise(true);
+        closeButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        closeButton->setIconSize(QSize(16, 16));
+        closeButton->setCursor(Qt::PointingHandCursor);
+        closeButton->setIcon(area->style()->standardIcon(QStyle::SP_TitleBarCloseButton));
+        const QString label = tr("Close thread");
+        closeButton->setToolTip(label);
+        closeButton->setAccessibleName(label);
+        layout->addWidget(closeButton, 0, Qt::AlignVCenter);
+
+        connect(closeButton, &QToolButton::clicked, this, [this, area] {
+            if (!area) {
+                return;
+            }
+
+            const bool wasActive = activeArea == area;
+            if (threadStack && threadStack->indexOf(area) >= 0) {
+                const bool wasCurrent = threadStack->currentWidget() == area;
+                area->hide();
+                threadStack->removeWidget(area);
+                if (wasCurrent) {
+                    threadStack->hide();
+                }
+            }
+
+            area->close();
+            if (wasActive) {
+                QTimer::singleShot(0, this, [this] {
+                    if (channelTree) {
+                        recordArea(channelTree->getCurrentPage());
+                    }
+                });
+            }
+        });
+    }
+
     updateThreadButton(area);
 }
 
@@ -549,13 +591,14 @@ void NavigationUiController::attachThread(ChatArea* area)
     }
     area->setProperty("threadDetached", false);
     threadStack->setCurrentWidget(area);
+
+    // A hidden splitter child is reported as size 0 regardless of the width
+    // encoded in restoreState(). Make the pane visible first, then decide
+    // whether the restored/current geometry is actually usable.
     threadStack->show();
     area->show();
 
-    if (!threadSplitterStateRestored) {
-        const int width = std::max(900, contentSplitter->width());
-        contentSplitter->setSizes({std::max(480, width * 2 / 3),
-                                   std::max(320, width / 3)});
+    if (ensureThreadPaneExpanded(*contentSplitter, !threadSplitterStateRestored)) {
         threadSplitterStateRestored = true;
     }
     updateThreadButton(area);

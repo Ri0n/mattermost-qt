@@ -5,10 +5,16 @@
 
 #include <QApplication>
 #include <QDesktopServices>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLoggingCategory>
 #include <QMap>
+#include <QNetworkReply>
 #include <QPointer>
 
 #include "backend/Backend.h"
+#include "backend/HTTPConnector.h"
+#include "backend/HttpResponseCallback.h"
 #include "backend/NetworkRequest.h"
 #include "backend/PostRepository.h"
 #include "backend/Storage.h"
@@ -19,6 +25,251 @@
 #include "mainwindow.h"
 
 namespace Mattermost {
+namespace {
+
+Q_LOGGING_CATEGORY(lcNavigationResolve, "mattermost.navigation.resolve", QtWarningMsg)
+
+/**
+ * Resolve a cold permalink without assuming that its channel is already in
+ * Storage. PostRepository deliberately cannot materialize a post until its
+ * BackendChannel exists, so navigation first resolves the post identity, then
+ * lazily fetches the missing channel, and finally hands the authoritative post
+ * snapshot back to PostRepository for normal resident/cache ingestion.
+ */
+class NavigationPostResolver final : public QObject
+{
+public:
+    using Callback = std::function<void(BackendChannel*)>;
+
+    NavigationPostResolver(Backend& sourceBackend,
+                           QString targetPostId,
+                           Callback completed,
+                           QObject* parent)
+        : QObject(parent)
+        , backend(sourceBackend)
+        , postId(std::move(targetPostId))
+        , callback(std::move(completed))
+    {
+        connect(&httpConnector, &HTTPConnector::onNetworkError,
+                &backend, &Backend::onNetworkError);
+        connect(&httpConnector, &HTTPConnector::onHttpError,
+                &backend, &Backend::onHttpError);
+    }
+
+    void start()
+    {
+        if (postId.isEmpty()) {
+            qCWarning(lcNavigationResolve) << "Cannot resolve an empty post id";
+            finish(nullptr);
+            return;
+        }
+
+        qCDebug(lcNavigationResolve) << "Resolving post" << postId;
+        QPointer<NavigationPostResolver> guard(this);
+        NetworkRequest request(QStringLiteral("posts/") + postId);
+        httpConnector.get(request, HttpResponseCallback(
+            [guard](QVariant status, const QJsonDocument& doc) {
+                if (guard) {
+                    guard->handlePost(status, doc);
+                }
+            }));
+    }
+
+private:
+    void handlePost(QVariant status, const QJsonDocument& doc)
+    {
+        if (status.toInt() != QNetworkReply::NoError || !doc.isObject()) {
+            qCWarning(lcNavigationResolve)
+                << "Failed to resolve post" << postId
+                << "network status" << status.toInt();
+            finish(nullptr);
+            return;
+        }
+
+        postObject = doc.object();
+        channelId = postObject.value(QStringLiteral("channel_id")).toString();
+        if (channelId.isEmpty()) {
+            qCWarning(lcNavigationResolve)
+                << "Resolved post has no channel id" << postId;
+            finish(nullptr);
+            return;
+        }
+
+        if (BackendChannel* channel = backend.getStorage().getChannelById(channelId)) {
+            finishWithChannel(channel);
+            return;
+        }
+
+        qCDebug(lcNavigationResolve)
+            << "Post" << postId << "requires missing channel" << channelId;
+        requestChannel();
+    }
+
+    void requestChannel()
+    {
+        QPointer<NavigationPostResolver> guard(this);
+        NetworkRequest request(QStringLiteral("channels/") + channelId);
+        httpConnector.get(request, HttpResponseCallback(
+            [guard](QVariant status, const QJsonDocument& doc) {
+                if (guard) {
+                    guard->handleChannel(status, doc);
+                }
+            }));
+    }
+
+    void handleChannel(QVariant status, const QJsonDocument& doc)
+    {
+        if (status.toInt() != QNetworkReply::NoError || !doc.isObject()) {
+            qCWarning(lcNavigationResolve)
+                << "Failed to load channel" << channelId
+                << "for post" << postId
+                << "network status" << status.toInt();
+            finish(nullptr);
+            return;
+        }
+
+        channelObject = doc.object();
+        const QString returnedId = channelObject.value(QStringLiteral("id")).toString();
+        if (returnedId != channelId) {
+            qCWarning(lcNavigationResolve)
+                << "Channel lookup returned unexpected id" << returnedId
+                << "while resolving" << channelId;
+            finish(nullptr);
+            return;
+        }
+
+        if (BackendChannel* existing = backend.getStorage().getChannelById(channelId)) {
+            finishWithChannel(existing);
+            return;
+        }
+
+        const QString type = channelObject.value(QStringLiteral("type")).toString();
+        if (type == QLatin1String("D") || type == QLatin1String("G")) {
+            finishWithChannel(materializeChannel());
+            return;
+        }
+
+        const QString teamId = channelObject.value(QStringLiteral("team_id")).toString();
+        if (teamId.isEmpty()) {
+            qCWarning(lcNavigationResolve)
+                << "Channel" << channelId << "has no team id";
+            finish(nullptr);
+            return;
+        }
+
+        if (backend.getStorage().getTeamById(teamId)) {
+            finishWithChannel(materializeChannel());
+            return;
+        }
+
+        requestTeam(teamId);
+    }
+
+    void requestTeam(const QString& teamId)
+    {
+        qCDebug(lcNavigationResolve)
+            << "Channel" << channelId << "requires missing team" << teamId;
+        QPointer<NavigationPostResolver> guard(this);
+        NetworkRequest request(QStringLiteral("teams/") + teamId);
+        httpConnector.get(request, HttpResponseCallback(
+            [guard, teamId](QVariant status, const QJsonDocument& doc) {
+                if (guard) {
+                    guard->handleTeam(teamId, status, doc);
+                }
+            }));
+    }
+
+    void handleTeam(const QString& teamId, QVariant status, const QJsonDocument& doc)
+    {
+        if (status.toInt() != QNetworkReply::NoError || !doc.isObject()) {
+            qCWarning(lcNavigationResolve)
+                << "Failed to load team" << teamId
+                << "for channel" << channelId
+                << "network status" << status.toInt();
+            finish(nullptr);
+            return;
+        }
+
+        Storage& storage = backend.getStorage();
+        BackendTeam* team = storage.getTeamById(teamId);
+        if (!team) {
+            storage.addTeam(doc.object());
+            team = storage.getTeamById(teamId);
+        }
+        if (!team) {
+            qCWarning(lcNavigationResolve)
+                << "Could not materialize team" << teamId
+                << "for channel" << channelId;
+            finish(nullptr);
+            return;
+        }
+
+        finishWithChannel(materializeChannel());
+    }
+
+    BackendChannel* materializeChannel()
+    {
+        Storage& storage = backend.getStorage();
+        if (BackendChannel* existing = storage.getChannelById(channelId)) {
+            return existing;
+        }
+
+        const QString type = channelObject.value(QStringLiteral("type")).toString();
+        if (type == QLatin1String("D")) {
+            return storage.addDirectChannel(channelObject);
+        }
+        if (type == QLatin1String("G")) {
+            return storage.addGroupChannel(channelObject);
+        }
+
+        const QString teamId = channelObject.value(QStringLiteral("team_id")).toString();
+        BackendTeam* team = storage.getTeamById(teamId);
+        if (!team) {
+            return nullptr;
+        }
+        return storage.addTeamChannel(*team, channelObject);
+    }
+
+    void finishWithChannel(BackendChannel* channel)
+    {
+        if (!channel) {
+            qCWarning(lcNavigationResolve)
+                << "Could not materialize channel" << channelId
+                << "for post" << postId;
+            finish(nullptr);
+            return;
+        }
+
+        if (!PostRepository::instance(backend).ingestFetchedPost(postObject)) {
+            qCWarning(lcNavigationResolve)
+                << "Could not ingest resolved post" << postId
+                << "into channel" << channel->id;
+        }
+
+        qCDebug(lcNavigationResolve)
+            << "Resolved post" << postId << "to channel" << channel->id;
+        finish(channel);
+    }
+
+    void finish(BackendChannel* channel)
+    {
+        Callback completed = std::move(callback);
+        deleteLater();
+        if (completed) {
+            completed(channel);
+        }
+    }
+
+    Backend& backend;
+    QString postId;
+    QString channelId;
+    QJsonObject postObject;
+    QJsonObject channelObject;
+    Callback callback;
+    HTTPConnector httpConnector;
+};
+
+} // namespace
 
 AppNavigationService& AppNavigationService::instance(Backend& backend)
 {
@@ -171,23 +422,33 @@ void AppNavigationService::openUrl(const QUrl& url)
 
 void AppNavigationService::openPost(const QString& postId)
 {
+    if (postId.isEmpty()) {
+        qCWarning(lcNavigationResolve) << "Ignoring navigation to an empty post id";
+        return;
+    }
+
     if (BackendChannel* channel = findPostChannel(postId)) {
         openPostInChannel(*channel, postId);
         return;
     }
 
     QPointer<AppNavigationService> guard(this);
-    PostRepository::instance(backend).loadPost(
+    auto* resolver = new NavigationPostResolver(
+        backend,
         postId,
-        [guard, postId](const PostRepository::PostResult& result) {
-            if (!guard || !result.success) {
+        [guard, postId](BackendChannel* channel) {
+            if (!guard) {
                 return;
             }
-            BackendChannel* channel = guard->backend.getStorage().getChannelById(result.channelId);
-            if (channel) {
-                guard->openPostInChannel(*channel, postId);
+            if (!channel) {
+                qCWarning(lcNavigationResolve)
+                    << "Navigation target could not be resolved" << postId;
+                return;
             }
-        });
+            guard->openPostInChannel(*channel, postId);
+        },
+        this);
+    resolver->start();
 }
 
 void AppNavigationService::openThreadAtLastViewed(const QString& channelId,

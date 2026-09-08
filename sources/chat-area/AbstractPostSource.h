@@ -41,7 +41,9 @@ public:
      * Return a logical index for an already cached semantic target. Sources may
      * temporarily place a target into an estimated empty slot when the server
      * has not yet supplied an authoritative page boundary. Later page loads are
-     * allowed to replace that estimate by identity.
+     * allowed to replace that estimate by identity. An estimated identity should
+     * remain unavailable until the source is willing to let the view materialize
+     * a concrete widget at that logical position.
      */
     virtual int ensurePostIndex(const QString& postId)
     {
@@ -75,7 +77,7 @@ signals:
 
     void rangeAvailable(int first, int last);
 
-    /** Resident body availability changed without changing logical identity. */
+    /** Body residency changed and therefore may change effective row availability. */
     void bodyAvailabilityChanged(int first, int last, bool available);
 
     void itemsChanged(int first, int last);
