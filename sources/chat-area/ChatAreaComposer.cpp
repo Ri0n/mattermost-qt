@@ -62,6 +62,24 @@ void ChatArea::setupComposerUi()
     ui->attachButton->setIconSize(QSize(ActionIconExtent, ActionIconExtent));
     configureActionButton(*ui->attachButton);
 
+    auto* pollButton = new ThemeIconButton(this);
+    pollButton->setObjectName(QStringLiteral("pollButton"));
+    pollButton->setText(QStringLiteral("☑"));
+    pollButton->setToolTip(tr("Create Poll"));
+    pollButton->setAccessibleName(tr("Create Poll"));
+    configureActionButton(*pollButton);
+    QFont pollFont = pollButton->font();
+    if (pollFont.pointSizeF() > 0.0) {
+        pollFont.setPointSizeF(pollFont.pointSizeF() + 2.0);
+    } else if (pollFont.pixelSize() > 0) {
+        pollFont.setPixelSize(pollFont.pixelSize() + 3);
+    }
+    pollButton->setFont(pollFont);
+    const int sendButtonIndex = ui->composerLayout->indexOf(ui->sendButton);
+    ui->composerLayout->insertWidget(sendButtonIndex, pollButton, 0, Qt::AlignBottom);
+    connect(pollButton, &QPushButton::clicked,
+            ui->outgoingPostCreator, &OutgoingPostCreator::createPoll);
+
     configureActionButton(*ui->sendButton);
     QFont sendFont = ui->sendButton->font();
     if (sendFont.pointSizeF() > 0.0) {
