@@ -1,16 +1,38 @@
 #include "ChannelTree.h"
 
 #include <QDebug>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkReply>
+#include <QPointer>
 #include <QTreeWidgetItem>
 
 #include "backend/Backend.h"
+#include "backend/HTTPConnector.h"
+#include "backend/HttpResponseCallback.h"
+#include "backend/NetworkRequest.h"
+#include "backend/QByteArrayCreator.h"
 #include "backend/SidebarService.h"
 #include "backend/Storage.h"
 #include "backend/types/BackendChannel.h"
+#include "backend/types/BackendTeam.h"
 #include "channel-tree/ChannelItem.h"
 #include "channel-tree/team-item/TeamItem.h"
 
 namespace Mattermost {
+namespace {
+
+bool containsChannel(const SidebarTeamState& state, const QString& channelId)
+{
+    for (auto it = state.categories.cbegin(); it != state.categories.cend(); ++it) {
+        if (it->channelIds.contains(channelId)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 void ChannelTree::openStoredChannel(QString channelID)
 {
@@ -98,7 +120,97 @@ void ChannelTree::openStoredChannel(QString channelID)
     }
 
     if (!fallback.teamItem || !fallback.categoryItem) {
-        qDebug() << "openStoredChannel" << channelID << ": no sidebar category contains channel";
+        // A permalink can resolve a public channel that is visible to the user
+        // but not yet joined. First refresh categories in case only our local
+        // snapshot is stale; if the channel is still absent, join it and retry
+        // only after the server category snapshot confirms membership.
+        if (channel->type != BackendChannel::publicChannel || !channel->team) {
+            qDebug() << "openStoredChannel" << channelID
+                     << ": no sidebar category contains channel";
+            return;
+        }
+        if (pendingChannelJoins.contains(channelID)) {
+            return;
+        }
+
+        pendingChannelJoins.insert(channelID);
+        const QString teamId = channel->team->id;
+        QPointer<ChannelTree> guard(this);
+        sidebar.retrieveCategories(*channel->team,
+            [guard, channelID, teamId](const SidebarTeamState& refreshedState) {
+                if (!guard || !guard->backendForSidebar) {
+                    return;
+                }
+
+                if (containsChannel(refreshedState, channelID)) {
+                    guard->pendingChannelJoins.remove(channelID);
+                    guard->openStoredChannel(channelID);
+                    return;
+                }
+
+                BackendChannel* currentChannel =
+                    guard->backendForSidebar->getStorage().getChannelById(channelID);
+                if (!currentChannel || currentChannel->type != BackendChannel::publicChannel) {
+                    guard->pendingChannelJoins.remove(channelID);
+                    qWarning() << "Cannot auto-join non-public channel" << channelID;
+                    return;
+                }
+
+                auto* connector = new HTTPConnector;
+                connector->setParent(guard);
+                QObject::connect(connector, &HTTPConnector::onNetworkError,
+                                 guard->backendForSidebar, &Backend::onNetworkError);
+                QObject::connect(connector, &HTTPConnector::onHttpError,
+                                 guard->backendForSidebar, &Backend::onHttpError);
+
+                NetworkRequest request(QStringLiteral("channels/") + channelID
+                                       + QStringLiteral("/members"));
+                const QJsonObject payload {
+                    {QStringLiteral("user_id"), guard->backendForSidebar->getLoginUser().id},
+                };
+                QPointer<HTTPConnector> connectorGuard(connector);
+                connector->post(request, QByteArrayCreator(payload), HttpResponseCallback(
+                    [guard, connectorGuard, channelID, teamId](
+                        QVariant status, const QJsonDocument&) {
+                        if (connectorGuard) {
+                            connectorGuard->deleteLater();
+                        }
+                        if (!guard || !guard->backendForSidebar) {
+                            return;
+                        }
+
+                        if (status.toInt() != QNetworkReply::NoError) {
+                            guard->pendingChannelJoins.remove(channelID);
+                            qWarning() << "Failed to auto-join public channel" << channelID
+                                       << "network status" << status.toInt();
+                            return;
+                        }
+
+                        BackendTeam* team =
+                            guard->backendForSidebar->getStorage().getTeamById(teamId);
+                        if (!team) {
+                            guard->pendingChannelJoins.remove(channelID);
+                            qWarning() << "Joined channel" << channelID
+                                       << "but team disappeared" << teamId;
+                            return;
+                        }
+
+                        SidebarService::instance(*guard->backendForSidebar).retrieveCategories(
+                            *team,
+                            [guard, channelID](const SidebarTeamState& joinedState) {
+                                if (!guard) {
+                                    return;
+                                }
+                                guard->pendingChannelJoins.remove(channelID);
+                                if (!containsChannel(joinedState, channelID)) {
+                                    qWarning() << "Joined channel" << channelID
+                                               << "but it is still absent from sidebar categories";
+                                    return;
+                                }
+                                guard->openStoredChannel(channelID);
+                            });
+                    }));
+            });
         return;
     }
 
