@@ -171,6 +171,7 @@ private:
 	QMap<QString, QList<QTreeWidgetItem*>>	channelToItemMap;
 	QMap<QString, TeamItem*>			teamToItemMap;
 	QSet<QString>						connectedSidebarUsers;
+    QSet<QString>                        pendingChannelJoins;
 	Backend*							backendForSidebar;
 	bool							renderingSidebar;
     bool                                personalUserConnected = false;
