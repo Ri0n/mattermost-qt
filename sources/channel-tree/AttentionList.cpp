@@ -29,6 +29,7 @@
 #include <QFont>
 #include <QHeaderView>
 #include <QIcon>
+#include <QMouseEvent>
 #include <QPointer>
 #include <QSet>
 #include <QSignalBlocker>
@@ -99,51 +100,96 @@ AttentionList::AttentionList(QWidget* parent)
         // selected row; the previous read row is then removed on refresh.
         retainSelection(current);
         QTimer::singleShot(0, this, &AttentionList::refresh);
+        activateItem(current);
+    });
+}
 
-        const auto type = static_cast<EntryType>(current->data(0, EntryTypeRole).toInt());
-        const QString channelId = current->data(0, ChannelIdRole).toString();
-        if (type == ChannelEntry) {
-            if (channelId.isEmpty() || !backend) {
-                return;
-            }
+void AttentionList::mousePressEvent(QMouseEvent* event)
+{
+    QTreeWidgetItem* pressedItem = nullptr;
+    if (event && event->button() == Qt::LeftButton) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        pressedItem = itemAt(event->position().toPoint());
+#else
+        pressedItem = itemAt(event->pos());
+#endif
+    }
 
-            BackendChannel* channel = backend->getStorage().getChannelById(channelId);
-            if (!channel) {
-                emit channelSelected(channelId);
-                return;
-            }
+    // currentItemChanged handles the first click. A click on the already
+    // selected row has no selection transition, so explicitly reactivate that
+    // semantic destination after QTreeWidget processes the press.
+    const bool repeatActivation = pressedItem && pressedItem == currentItem();
+    QTreeWidget::mousePressEvent(event);
+    if (repeatActivation && pressedItem == currentItem()) {
+        activateItem(pressedItem);
+    }
+}
 
-            // Direct/group messages are implicitly followed. Like Following,
-            // Attention opens the first unread post rather than the newest edge.
-            QPointer<AttentionList> guard(this);
-            backend->retrieveChannelUnreadPost(*channel,
-                [guard, channelId](const QString& postId) {
-                    if (!guard || !guard->backend) {
-                        return;
-                    }
-                    if (!postId.isEmpty()) {
-                        AppNavigationService::instance(*guard->backend).openPost(postId);
-                    } else {
-                        emit guard->channelSelected(channelId);
-                    }
-                });
+void AttentionList::activateItem(QTreeWidgetItem* current)
+{
+    if (refreshing || !current || !backend) {
+        return;
+    }
+
+    const auto type = static_cast<EntryType>(current->data(0, EntryTypeRole).toInt());
+    const QString channelId = current->data(0, ChannelIdRole).toString();
+    if (type == ChannelEntry) {
+        if (channelId.isEmpty()) {
             return;
         }
 
-        if (type == ThreadEntryType) {
-            const QString threadId = current->data(0, ThreadIdRole).toString();
-            const QString teamId = current->data(0, TeamIdRole).toString();
-            if (!channelId.isEmpty() && !threadId.isEmpty()) {
-                openThread(channelId, threadId, teamId);
-            }
+        // Once the first unread DM/GM post has been resolved, keep that exact
+        // semantic target with the retained Attention row. Opening the channel
+        // marks it read, so asking the server again on a repeat click would no
+        // longer tell us which post the row originally represented.
+        if (retainedThreadId.isEmpty()
+            && retainedChannelId == channelId
+            && !retainedPostId.isEmpty()) {
+            AppNavigationService::instance(*backend).openPost(retainedPostId);
+            return;
         }
-    });
+
+        BackendChannel* channel = backend->getStorage().getChannelById(channelId);
+        if (!channel) {
+            emit channelSelected(channelId);
+            return;
+        }
+
+        // Direct/group messages are implicitly followed. Like Following,
+        // Attention opens the first unread post rather than the newest edge.
+        QPointer<AttentionList> guard(this);
+        backend->retrieveChannelUnreadPost(*channel,
+            [guard, channelId](const QString& postId) {
+                if (!guard || !guard->backend) {
+                    return;
+                }
+                if (!postId.isEmpty()) {
+                    if (guard->retainedChannelId == channelId
+                        && guard->retainedThreadId.isEmpty()) {
+                        guard->retainedPostId = postId;
+                    }
+                    AppNavigationService::instance(*guard->backend).openPost(postId);
+                } else {
+                    emit guard->channelSelected(channelId);
+                }
+            });
+        return;
+    }
+
+    if (type == ThreadEntryType) {
+        const QString threadId = current->data(0, ThreadIdRole).toString();
+        const QString teamId = current->data(0, TeamIdRole).toString();
+        if (!channelId.isEmpty() && !threadId.isEmpty()) {
+            openThread(channelId, threadId, teamId);
+        }
+    }
 }
 
 void AttentionList::retainSelection(QTreeWidgetItem* item)
 {
     retainedChannelId.clear();
     retainedThreadId.clear();
+    retainedPostId.clear();
     hasRetainedThread = false;
 
     if (!item) {
@@ -180,6 +226,7 @@ void AttentionList::releaseSelectionRetention()
 {
     retainedChannelId.clear();
     retainedThreadId.clear();
+    retainedPostId.clear();
     hasRetainedThread = false;
 
     // Attention is a queue rather than a navigation history. Leaving the tab
@@ -233,6 +280,7 @@ void AttentionList::initialize(Backend& sourceBackend)
             if (retainedThreadId == threadId) {
                 retainedChannelId.clear();
                 retainedThreadId.clear();
+                retainedPostId.clear();
                 hasRetainedThread = false;
                 const QSignalBlocker blocker(this);
                 setCurrentItem(nullptr);
@@ -620,13 +668,19 @@ void AttentionList::openThread(const QString& channelId,
     }
 
     // A root mention intentionally behaves like a one-message tracked thread,
-    // but there is no actual thread until somebody replies. Navigate to the
-    // canonical root post in the channel so the normal jump/highlight behavior
-    // is used instead of opening an empty thread window.
-    if (syntheticMentions.contains(threadId)) {
-        syntheticMentions.remove(threadId);
-        pendingSince.remove(threadKey(threadId));
-        refresh();
+    // but there is no actual thread until somebody replies. Keep that semantic
+    // identity after the synthetic server-side queue entry has been consumed so
+    // repeated clicks continue to jump/highlight the same root message.
+    const bool queuedSynthetic = syntheticMentions.contains(threadId);
+    const bool retainedSynthetic = hasRetainedThread
+        && retainedThread.id == threadId
+        && retainedThread.synthetic;
+    if (queuedSynthetic || retainedSynthetic) {
+        if (queuedSynthetic) {
+            syntheticMentions.remove(threadId);
+            pendingSince.remove(threadKey(threadId));
+            refresh();
+        }
         AppNavigationService::instance(*backend).openPost(threadId);
         return;
     }
@@ -646,7 +700,8 @@ void AttentionList::openThread(const QString& channelId,
     // The unread ThreadResponse already gave us the exact server read boundary.
     // Fetch only a compact window beginning there, navigate to the first reply
     // after last_viewed_at, and acknowledge the thread only after that semantic
-    // navigation has actually been dispatched.
+    // navigation has actually been dispatched. Attention is explicitly a jump
+    // target, so an already-open thread must be repositioned/highlighted again.
     QPointer<AttentionList> guard(this);
     AppNavigationService::instance(*backend).openThreadAtLastViewed(
         channelId, threadId, lastViewedAt, QString(),
@@ -655,7 +710,8 @@ void AttentionList::openThread(const QString& channelId,
                 return;
             }
             guard->markThreadRead(teamId, threadId);
-        });
+        },
+        false);
 }
 
 void AttentionList::markThreadRead(const QString& teamId, const QString& threadId)
