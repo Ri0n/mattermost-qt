@@ -32,6 +32,9 @@ struct BackendNewPollData {
 	QString 			question;
 	QVector<QString> 	options;
 	QString				rootId;
+	// Slash commands executed in a DM/GM still require a team execution context.
+	// This is the team from which the conversation was opened, not channel.team.
+	QString				commandTeamId;
 	bool				isAnonymous = false;
 	bool				isAnonymousCreator = false;
 	bool				showProgress = false;
