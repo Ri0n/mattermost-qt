@@ -43,6 +43,14 @@ public:
 
     void trackExistingProvisional(const QString& postId, int index)
     {
+        // lockNavigationToPost() and ensurePostVisible() may resolve the same
+        // semantic target back-to-back. The second lookup must not downgrade a
+        // fresh estimated target into an ordinary cached provisional row.
+        if (isActive() && targetPostId == postId) {
+            targetIndex = index;
+            return;
+        }
+
         targetPostId = postId;
         targetIndex = index;
         estimated = false;
