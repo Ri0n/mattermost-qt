@@ -6,9 +6,13 @@
 #include <QCoreApplication>
 #include <QEvent>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QKeySequence>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPalette>
+#include <QPixmap>
 #include <QSettings>
 #include <QShortcut>
 #include <QSplitter>
@@ -38,6 +42,25 @@ void trimHistory(QVector<NavigationUiController::Location>& history)
     if (history.size() > MaxNavigationHistory) {
         history.remove(0, history.size() - MaxNavigationHistory);
     }
+}
+
+QIcon threadPresentationIcon(const QPalette& palette)
+{
+    QPixmap pixmap(16, 16);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    QPen pen(palette.color(QPalette::ButtonText));
+    pen.setWidth(1);
+    painter.setPen(pen);
+    painter.setBrush(Qt::NoBrush);
+
+    // Deliberately use the literal "two overlapping squares" detach glyph
+    // rather than SP_TitleBarNormalButton: desktop styles are free to render
+    // that standard pixmap as a platform-specific window-management symbol.
+    painter.drawRect(QRect(2, 5, 9, 8));
+    painter.drawRect(QRect(5, 2, 9, 8));
+    return QIcon(pixmap);
 }
 
 } // namespace
@@ -509,9 +532,7 @@ void NavigationUiController::updateThreadButton(ChatArea* area)
     const QString label = detached ? tr("Attach thread") : tr("Detach thread");
     button->setToolTip(label);
     button->setAccessibleName(label);
-    // The platform's normal-window glyph is the conventional two overlapping
-    // squares and remains legible in both light and dark palettes.
-    button->setIcon(window.style()->standardIcon(QStyle::SP_TitleBarNormalButton));
+    button->setIcon(threadPresentationIcon(button->palette()));
 }
 
 void NavigationUiController::attachThread(ChatArea* area)
