@@ -1,5 +1,6 @@
 #include "PostCreateService.h"
 
+#include <QDebug>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -150,6 +151,10 @@ void PostCreateService::submitPoll(BackendChannel& channel,
     }
     json.insert(QStringLiteral("submission"), submission);
 
+    qInfo().noquote() << "Poll HTTP submit: channel=" << channel.id
+                      << "root=" << pollData.rootId
+                      << "options=" << pollData.options.size();
+
     const QByteArrayCreator payload(json);
     httpConnector.post(request, payload, HttpResponseCallback(
         [callback = std::move(callback)](QVariant status, QByteArray response) mutable {
@@ -162,6 +167,16 @@ void PostCreateService::submitPoll(BackendChannel& channel,
                         && responseObject.value(QStringLiteral("errors")).toObject().isEmpty();
                 }
             }
+
+            qInfo().noquote() << "Poll HTTP submit finished: networkError="
+                              << status.toInt()
+                              << "bytes=" << response.size()
+                              << "success=" << success;
+            if (!success && !response.trimmed().isEmpty()) {
+                qWarning().noquote() << "Poll HTTP submit response:"
+                                     << QString::fromUtf8(response.left(1024));
+            }
+
             if (callback) {
                 callback(success);
             }
