@@ -13,6 +13,7 @@
 #include <QHeaderView>
 #include <QIcon>
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QPointer>
 #include <QShowEvent>
 #include <QTabWidget>
@@ -83,7 +84,8 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
 
     // Selection is UI state, not a navigation command. In particular keyboard
     // arrows must be usable for inspecting the list without opening every row.
-    // Explicit activation is handled by itemClicked and Enter/Return below.
+    // Explicit mouse activation is handled by mousePressEvent below; Enter and
+    // Return use the selected row through keyPressEvent().
     connect(this, &QTreeWidget::currentItemChanged, this,
             [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
         if (refreshing || retainedKey.isEmpty()) {
@@ -94,11 +96,6 @@ ChannelQuickList::ChannelQuickList(QWidget* parent)
         if (currentKey != retainedKey) {
             releaseSelectionRetention();
         }
-    });
-
-    connect(this, &QTreeWidget::itemClicked, this,
-            [this](QTreeWidgetItem* item, int) {
-        activateItem(item);
     });
 
     connect(this, &QTreeWidget::customContextMenuRequested, this,
@@ -233,6 +230,26 @@ void ChannelQuickList::keyPressEvent(QKeyEvent* event)
         return;
     }
     QTreeWidget::keyPressEvent(event);
+}
+
+void ChannelQuickList::mousePressEvent(QMouseEvent* event)
+{
+    QTreeWidgetItem* pressedItem = nullptr;
+    if (event && event->button() == Qt::LeftButton) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        pressedItem = itemAt(event->position().toPoint());
+#else
+        pressedItem = itemAt(event->pos());
+#endif
+    }
+
+    // Let QTreeWidget update selection/focus first. Navigation is deliberately
+    // tied to the physical click, not to currentItemChanged, so one click opens
+    // the row while keyboard arrows remain selection-only.
+    QTreeWidget::mousePressEvent(event);
+    if (pressedItem) {
+        activateItem(pressedItem);
+    }
 }
 
 void ChannelQuickList::showEvent(QShowEvent* event)
@@ -388,7 +405,29 @@ void ChannelQuickList::refreshThreads()
             if (!guard) {
                 return;
             }
-            guard->serverThreads = std::move(threads);
+
+            // CRT pagination may overlap at the before=<thread-id> boundary.
+            // Normalize the server snapshot by semantic thread identity before
+            // any row-building code sees it; the newest copy wins while the
+            // first occurrence keeps its stable list position.
+            QVector<ThreadSummary> uniqueThreads;
+            uniqueThreads.reserve(threads.size());
+            QHash<QString, int> indexById;
+            indexById.reserve(threads.size());
+            for (ThreadSummary& thread : threads) {
+                if (thread.id.isEmpty()) {
+                    continue;
+                }
+                const auto existing = indexById.constFind(thread.id);
+                if (existing == indexById.cend()) {
+                    indexById.insert(thread.id, uniqueThreads.size());
+                    uniqueThreads.push_back(std::move(thread));
+                } else {
+                    uniqueThreads[*existing] = std::move(thread);
+                }
+            }
+
+            guard->serverThreads = std::move(uniqueThreads);
             guard->threadRefreshInFlight = false;
             guard->refresh();
             if (guard->threadRefreshRequested) {
