@@ -28,12 +28,12 @@ QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
-class QAction;
 class QEvent;
 class QLineEdit;
 class QSplitter;
 class QSystemTrayIcon;
 class QTabWidget;
+class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -103,7 +103,7 @@ private:
 	QTabWidget*							channelTabs = nullptr;
 	QWidget*							channelsPage = nullptr;
 	QLineEdit*							sidebarFilterEdit = nullptr;
-	QAction*							unreadFilterAction = nullptr;
+	QToolButton*						unreadFilterButton = nullptr;
 	ChannelQuickList*					recentChannels = nullptr;
 	AttentionList*						attentionList = nullptr;
     PostCollectionView*                 savedMessagesPage = nullptr;
