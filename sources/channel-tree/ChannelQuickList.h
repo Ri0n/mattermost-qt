@@ -16,6 +16,7 @@
 
 #include "backend/ThreadFollowService.h"
 
+class QKeyEvent;
 class QShowEvent;
 
 namespace Mattermost {
@@ -38,17 +39,20 @@ public:
     void initialize(Backend& backend, Mode mode = Following);
     void refresh();
     void refreshThreads();
+    void releaseSelectionRetention();
 
 signals:
     void channelSelected(const QString& channelId);
     void channelContextMenuRequested(const QString& channelId, const QPoint& globalPos);
 
 protected:
+    void keyPressEvent(QKeyEvent* event) override;
     void showEvent(QShowEvent* event) override;
 
 private:
     using ThreadSummary = ThreadFollowService::ThreadSummary;
 
+    void activateItem(QTreeWidgetItem* item);
     void notePost(BackendChannel& channel, const BackendPost& post);
     void clearSyntheticMentions(const QString& channelId);
     void scheduleThreadRefresh();
@@ -68,6 +72,10 @@ private:
     QHash<QString, uint64_t> pendingSince;
     QMap<QString, QTreeWidgetItem*> channelItems;
     QSet<QString> connectedUsers;
+
+    QString retainedKey;
+    uint64_t retainedSortTime = 0;
+    bool retainedUnreadPosition = false;
 };
 
 } // namespace Mattermost
