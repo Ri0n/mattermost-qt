@@ -1,10 +1,32 @@
 #include "OutgoingPostCreator.h"
 
+#include <QDebug>
 #include <QMessageBox>
+#include <QStringList>
 
 #include "backend/PostProps.h"
+#include "backend/types/BackendChannel.h"
+#include "backend/types/BackendNewPollData.h"
+#include "backend/types/BackendPoll.h"
+#include "backend/types/BackendPost.h"
 
 namespace Mattermost {
+namespace {
+
+constexpr char PendingPollQuestionProperty[] = "_mmqt_pending_poll_question";
+constexpr char PendingPollOptionsProperty[] = "_mmqt_pending_poll_options";
+constexpr char PendingPollRootIdProperty[] = "_mmqt_pending_poll_root_id";
+constexpr char PendingPollProgressProperty[] = "_mmqt_pending_poll_progress";
+
+void clearPendingPollProperties(OutgoingPostCreator& creator)
+{
+    creator.setProperty(PendingPollQuestionProperty, QVariant());
+    creator.setProperty(PendingPollOptionsProperty, QVariant());
+    creator.setProperty(PendingPollRootIdProperty, QVariant());
+    creator.setProperty(PendingPollProgressProperty, QVariant());
+}
+
+} // namespace
 
 void OutgoingPostCreator::createPoll()
 {
@@ -42,6 +64,75 @@ void OutgoingPostCreator::createPoll()
     if (toPlainText() == QStringLiteral("/poll")) {
         clear();
     }
+}
+
+void OutgoingPostCreator::armPollRealtimeAcknowledgement(const BackendNewPollData& pollData)
+{
+    QStringList options;
+    options.reserve(pollData.options.size());
+    for (const QString& option : pollData.options) {
+        options.push_back(option);
+    }
+
+    setProperty(PendingPollQuestionProperty, pollData.question);
+    setProperty(PendingPollOptionsProperty, options);
+    setProperty(PendingPollRootIdProperty, pollData.rootId);
+    setProperty(PendingPollProgressProperty, pollData.showProgress);
+
+    if (channel) {
+        connect(channel, &BackendChannel::onNewPost,
+                this, &OutgoingPostCreator::onPollPostReceived,
+                Qt::UniqueConnection);
+    }
+
+    qInfo().noquote() << "Poll send armed: question=" << pollData.question
+                      << "root=" << pollData.rootId
+                      << "options=" << options.size();
+}
+
+void OutgoingPostCreator::onPollPostReceived(BackendPost& post)
+{
+    const QString expectedQuestion = property(PendingPollQuestionProperty).toString();
+    if (expectedQuestion.isEmpty()) {
+        return;
+    }
+
+    // The HTTP acknowledgement may have won the race. Drop the stale realtime
+    // correlation key when there is no longer a composer operation to finish.
+    if (!isWaitingForPostServerResponse()) {
+        clearPendingPollProperties(*this);
+        return;
+    }
+
+    if (!channel || post.channel_id != channel->id || !post.poll) {
+        return;
+    }
+
+    const QString expectedRootId = property(PendingPollRootIdProperty).toString();
+    if (post.root_id != expectedRootId || post.poll->title != expectedQuestion) {
+        return;
+    }
+
+    const QStringList expectedOptions = property(PendingPollOptionsProperty).toStringList();
+    if (post.poll->options.size() < expectedOptions.size()) {
+        return;
+    }
+
+    const bool showProgress = property(PendingPollProgressProperty).toBool();
+    for (int i = 0; i < expectedOptions.size(); ++i) {
+        QString expectedName = expectedOptions.at(i);
+        if (showProgress) {
+            expectedName += QStringLiteral(" (0)");
+        }
+        if (post.poll->options.at(i).name != expectedName) {
+            return;
+        }
+    }
+
+    qInfo().noquote() << "Poll send acknowledged by realtime post: post=" << post.id
+                      << "poll=" << post.poll->id;
+    clearPendingPollProperties(*this);
+    finishSend(post.id);
 }
 
 } // namespace Mattermost
