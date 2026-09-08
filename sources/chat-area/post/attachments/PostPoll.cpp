@@ -27,6 +27,7 @@
 #include "backend/Backend.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPoll.h"
+#include "backend/types/BackendPost.h"
 #include "chat-area/ChatArea.h"
 #include "channel-tree/SidebarItem.h"
 
