@@ -194,7 +194,8 @@ void AppNavigationService::openThreadAtLastViewed(const QString& channelId,
                                                   const QString& rootId,
                                                   uint64_t lastViewedAt,
                                                   const QString& fallbackPostId,
-                                                  NavigationCallback callback)
+                                                  NavigationCallback callback,
+                                                  bool preserveIfOpen)
 {
     BackendChannel* channel = backend.getStorage().getChannelById(channelId);
     if (!channel || rootId.isEmpty()) {
@@ -207,7 +208,7 @@ void AppNavigationService::openThreadAtLastViewed(const QString& channelId,
     QPointer<AppNavigationService> guard(this);
     PostRepository::instance(backend).loadThreadFromTime(
         *channel, rootId, 30, lastViewedAt,
-        [guard, channelId, rootId, lastViewedAt, fallbackPostId,
+        [guard, channelId, rootId, lastViewedAt, fallbackPostId, preserveIfOpen,
          callback = std::move(callback)](const PostRepository::Page& page) mutable {
             if (!guard) {
                 return;
@@ -231,16 +232,15 @@ void AppNavigationService::openThreadAtLastViewed(const QString& channelId,
 
             guard->ensureMainWindowConnection();
             if (!targetPostId.isEmpty()) {
-                // Following is an activation request, not a demand to reposition
-                // a thread that the user already has open. MainWindow uses the
-                // preserve flag to reveal/raise the existing surface unchanged.
+                // Callers choose whether an already-open thread should preserve
+                // its viewport (Following) or jump/highlight again (Attention).
                 emit guard->channelRequested(channelId,
                                              targetPostId,
                                              rootId,
                                              QStringList(),
                                              false,
                                              false,
-                                             true);
+                                             preserveIfOpen);
                 if (callback) {
                     callback(true);
                 }
@@ -251,15 +251,15 @@ void AppNavigationService::openThreadAtLastViewed(const QString& channelId,
                 // Nothing exists after last_viewed_at. This is the normal path
                 // for a previously read followed thread, and can also happen if
                 // server unread metadata races the thread page. Open the thread
-                // without an explicit post target so ChatArea keeps its native
-                // newest-edge positioning instead of jumping back to the root.
+                // without an explicit post target; callers still decide whether
+                // an existing viewport is preserved or repositioned.
                 emit guard->channelRequested(channelId,
                                              QString(),
                                              rootId,
                                              QStringList(),
                                              false,
                                              true,
-                                             true);
+                                             preserveIfOpen);
                 if (callback) {
                     callback(true);
                 }
