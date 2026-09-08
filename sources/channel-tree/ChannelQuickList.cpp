@@ -162,11 +162,14 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
             return;
         }
 
-        // The server owns followed-thread membership/read state. Reconcile it
-        // only while Following is visible; the full snapshot can be large, and
-        // showEvent refreshes it before the user can interact with the list.
-        if (isVisible() && (!post.root_id.isEmpty() || post.currentUserMentioned)) {
-            scheduleThreadRefresh();
+        // The server owns followed-thread membership/read state. Mark the
+        // snapshot stale while hidden and reconcile it only when the tab is
+        // visible. Merely switching tabs must not refetch an unchanged list.
+        if (!post.root_id.isEmpty() || post.currentUserMentioned) {
+            _threadSnapshotDirty = true;
+            if (isVisible()) {
+                scheduleThreadRefresh();
+            }
         } else if (isVisible()) {
             refresh();
         }
@@ -176,12 +179,14 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
             [this](const BackendChannel& channel) {
         clearSyntheticMentions(channel.id);
         refresh();
+        _threadSnapshotDirty = true;
         if (isVisible()) {
             scheduleThreadRefresh();
         }
     });
 
     connect(backend, &Backend::onWebSocketConnect, this, [this] {
+        _threadSnapshotDirty = true;
         if (isVisible()) {
             scheduleThreadRefresh();
         }
@@ -189,9 +194,9 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
 
     // Team/channel population is the first point at which the complete set of
     // team ids required by the CRT endpoint is authoritative. Always seed the
-    // Following snapshot here, even if the tab is hidden; relying on a later
-    // showEvent made initial contents dependent on widget visibility timing.
+    // Following snapshot here, even if the tab is hidden.
     connect(backend, &Backend::onAllTeamChannelsPopulated, this, [this] {
+        _threadSnapshotDirty = true;
         scheduleThreadRefresh();
     });
 
@@ -210,6 +215,7 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
             pendingSince.remove(threadKey(threadId));
             refresh();
         }
+        _threadSnapshotDirty = true;
         if (isVisible()) {
             scheduleThreadRefresh();
         }
@@ -235,8 +241,9 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
 void ChannelQuickList::showEvent(QShowEvent* event)
 {
     QTreeWidget::showEvent(event);
-    refresh();
-    scheduleThreadRefresh();
+    if (_threadSnapshotDirty) {
+        scheduleThreadRefresh();
+    }
 }
 
 void ChannelQuickList::notePost(BackendChannel& channel, const BackendPost& post)
@@ -287,11 +294,16 @@ void ChannelQuickList::refreshThreads()
     }
     if (threadRefreshInFlight) {
         threadRefreshRequested = true;
+        _threadSnapshotDirty = true;
         return;
     }
 
     threadRefreshInFlight = true;
     threadRefreshRequested = false;
+    // Clear before starting the request. Any relevant event arriving while the
+    // request is in flight marks the snapshot dirty again, so the callback can
+    // distinguish a clean response from one that already needs reconciliation.
+    _threadSnapshotDirty = false;
     QPointer<ChannelQuickList> guard(this);
     ThreadFollowService::instance(*backend).queryFollowingThreads(
         [guard](QVector<ThreadSummary> threads) {
@@ -303,6 +315,8 @@ void ChannelQuickList::refreshThreads()
             guard->refresh();
             if (guard->threadRefreshRequested) {
                 guard->threadRefreshRequested = false;
+                guard->scheduleThreadRefresh();
+            } else if (guard->_threadSnapshotDirty && guard->isVisible()) {
                 guard->scheduleThreadRefresh();
             }
         });
