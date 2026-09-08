@@ -131,6 +131,8 @@ public:
 
 signals:
     void virtualDestinationRequested(int destination, const QString& teamId);
+    /** Completion of a stored-channel open that required asynchronous admission/join. */
+    void storedChannelOpenFinished(const QString& channelId, bool opened);
 
 protected:
 	void currentChanged(const QModelIndex& current, const QModelIndex& previous) override;
