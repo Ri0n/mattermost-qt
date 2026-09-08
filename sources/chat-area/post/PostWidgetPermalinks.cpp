@@ -13,6 +13,7 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QUrl>
 
 #include "MessageContentWidget.h"
 #include "backend/Backend.h"
@@ -93,6 +94,9 @@ void PostWidget::refreshPermalinkPreviews()
                             hasAttachments);
         preview->setActivatedCallback([this, postId] {
             AppNavigationService::instance(backend).openPost(postId);
+        });
+        preview->setLinkActivatedCallback([this](const QUrl& url) {
+            AppNavigationService::instance(backend).openUrl(url);
         });
 
         ui->verticalLayout->insertWidget(insertIndex++, preview.get());
