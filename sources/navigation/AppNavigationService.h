@@ -29,7 +29,8 @@ public:
                                 const QString& rootId,
                                 uint64_t lastViewedAt,
                                 const QString& fallbackPostId = QString(),
-                                NavigationCallback callback = {});
+                                NavigationCallback callback = {},
+                                bool preserveIfOpen = true);
 
 signals:
     void channelRequested(const QString& channelId,

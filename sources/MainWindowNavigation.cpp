@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 
+#include <QLoggingCategory>
 #include <QPointer>
 #include <QTimer>
 
@@ -11,6 +12,11 @@
 #include "ui_mainwindow.h"
 
 namespace Mattermost {
+namespace {
+
+Q_LOGGING_CATEGORY(lcNavigationJump, "mattermost.navigation.jump", QtWarningMsg)
+
+} // namespace
 
 void MainWindow::openChannelPost(const QString& channelId,
                                  const QString& postId,
@@ -27,6 +33,24 @@ void MainWindow::openChannelPost(const QString& channelId,
     BackendChannel* channel = backend.getStorage().getChannelById(channelId);
     if (!channel) {
         return;
+    }
+
+    if (!postId.isEmpty()) {
+        QStringList indexedContext;
+        indexedContext.reserve(contextPostIds.size());
+        for (int index = 0; index < contextPostIds.size(); ++index) {
+            indexedContext.push_back(QString::number(index) + QLatin1Char(':')
+                                     + contextPostIds.at(index));
+        }
+        qCDebug(lcNavigationJump).nospace()
+            << "JUMP_OPEN channel=" << channelId
+            << " post=" << postId
+            << " root=" << rootId
+            << " contextCount=" << contextPostIds.size()
+            << " reachedOldest=" << reachedOldest
+            << " reachedNewest=" << reachedNewest
+            << " preserveIfOpen=" << preserveIfOpen
+            << " context=[" << indexedContext.join(QLatin1Char(',')) << ']';
     }
 
     auto& navigationUi = NavigationUiController::instance(*this);
@@ -103,7 +127,7 @@ void MainWindow::openChannelPost(const QString& channelId,
             }
             threadGuard->lockNavigationToPost(postId, 0);
             threadGuard->ensurePostVisible(postId);
-            threadGuard->goToPost(postId);
+            threadGuard->highlightPostWhenAuthoritative(postId);
         });
         return;
     }
@@ -141,6 +165,9 @@ void MainWindow::openChannelPost(const QString& channelId,
             } else {
                 contextReady = areaGuard->ensurePostVisible(postId);
             }
+            qCDebug(lcNavigationJump).nospace()
+                << "JUMP_APPLY post=" << postId
+                << " contextReady=" << contextReady;
             if (!contextReady) {
                 return;
             }

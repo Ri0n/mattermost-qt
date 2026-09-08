@@ -1,7 +1,12 @@
 #include "ChatArea.h"
 
+#include <memory>
+
+#include <QPointer>
+
 #include "ChannelPostSource.h"
 #include "ChatLogWidget.h"
+#include "ThreadPostSource.h"
 #include "ui_ChatArea.h"
 
 namespace Mattermost {
@@ -49,6 +54,44 @@ void ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
     ui->listWidget->lockNavigationToPost(postId,
                                          LongListWidget::Alignment::Center,
                                          quietPeriodMs);
+}
+
+void ChatArea::highlightPostWhenAuthoritative(const QString& postId)
+{
+    if (postId.isEmpty() || !ui || !ui->listWidget) {
+        return;
+    }
+
+    auto* source = qobject_cast<ThreadPostSource*>(ui->listWidget->source());
+    if (!source || source->isPostPositionAuthoritative(postId)) {
+        ui->listWidget->highlightPost(postId);
+        return;
+    }
+
+    // A cold permalink can know the reply body before its exact logical thread
+    // position. Flashing that provisional widget races the authoritative page:
+    // the widget is immediately rematerialized and the animation disappears.
+    // Every range request completes after any exact-window placement, so wait
+    // for that semantic confirmation rather than using an arbitrary timer.
+    const std::uint64_t generation = viewportNavigationGeneration;
+    QPointer<ChatArea> guard(this);
+    auto connection = std::make_shared<QMetaObject::Connection>();
+    *connection = connect(source, &AbstractPostSource::rangeRequestFinished,
+                          this,
+                          [guard, source, postId, generation, connection](int, int) {
+        if (!guard || generation != guard->viewportNavigationGeneration) {
+            QObject::disconnect(*connection);
+            return;
+        }
+        if (!source->isPostPositionAuthoritative(postId)) {
+            return;
+        }
+
+        QObject::disconnect(*connection);
+        if (guard->ui && guard->ui->listWidget) {
+            guard->ui->listWidget->highlightPost(postId);
+        }
+    });
 }
 
 } // namespace Mattermost

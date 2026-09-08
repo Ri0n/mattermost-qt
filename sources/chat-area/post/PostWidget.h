@@ -74,6 +74,7 @@ public:
     void clearMessageText ();
 
     void addThreadButton();
+    Backend& getBackend() const { return backend; }
 
     BackendPost&						post;
     QString								hoveredLink;
