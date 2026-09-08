@@ -21,6 +21,7 @@
 
 #include <QPushButton>
 #include <memory>
+#include <vector>
 
 #include "backend/PostResidencyLease.h"
 #include "backend/types/BackendPost.h"
@@ -95,6 +96,7 @@ private:
     void connectReactionActions();
     void connectMessageLinks();
     void refreshMentionLinks();
+    void refreshPermalinkPreviews();
     void openUserProfile(const QString& username);
     void openGroupMention(const QString& groupId);
     QString mentionTeamId() const;
@@ -104,6 +106,7 @@ private:
     Ui::PostWidget*						ui;
     std::unique_ptr<PostQuoteFrame>		quoteFrame;
     std::unique_ptr<QuotedPostPreview>    quotedReplyPreview;
+    std::vector<std::unique_ptr<QuotedPostPreview>> permalinkPreviews;
     std::unique_ptr<PostAttachmentList>	attachments;
     std::unique_ptr<PostPoll>			poll;
     std::unique_ptr<PostReactionList>	reactions;
