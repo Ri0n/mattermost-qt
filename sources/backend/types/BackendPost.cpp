@@ -321,11 +321,11 @@ bool BackendPost::updatePostEdits (BackendPost& editedPost)
 		return false;
 	}
 
-	// Poll vote/admin metadata is fetched through a separate endpoint. Preserve
-	// that local enrichment while rebuilding the post-backed poll definition.
-	if (poll && editedPost.poll) {
-		editedPost.poll->metadata = poll->metadata;
-	}
+	// The poll metadata endpoint is asynchronous and PostPoll connects directly
+	// to this QObject. Keep the model identity stable while refreshing the same
+	// poll definition; transferring metadata into a replacement object leaves
+	// in-flight callbacks and existing signal connections pointing at the old one.
+	const bool samePoll = poll && editedPost.poll && poll->id == editedPost.poll->id;
 
 	update_at = editedPost.update_at;
 	edit_at = editedPost.edit_at;
@@ -346,7 +346,11 @@ bool BackendPost::updatePostEdits (BackendPost& editedPost)
 	reply_count = editedPost.reply_count;
 	last_reply_at = editedPost.last_reply_at;
 	threadParticipantUserIds = std::move(editedPost.threadParticipantUserIds);
-	poll = std::move(editedPost.poll);
+	if (samePoll) {
+		poll->updateDefinition(*editedPost.poll);
+	} else {
+		poll = std::move(editedPost.poll);
+	}
 	currentUserMentioned = nextCurrentUserMentioned;
 	has_thread = editedPost.has_thread;
 	isDeleted = nextDeleted;
