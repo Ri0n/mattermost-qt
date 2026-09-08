@@ -17,6 +17,7 @@
 #include "backend/ThreadFollowService.h"
 
 class QKeyEvent;
+class QMouseEvent;
 class QShowEvent;
 
 namespace Mattermost {
@@ -47,6 +48,7 @@ signals:
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
     void showEvent(QShowEvent* event) override;
 
 private:
