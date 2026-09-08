@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPointer>
 #include <QStringList>
 
@@ -159,7 +160,19 @@ void PostCreateService::submitPoll(BackendChannel& channel,
     // create handler is hard-coded to option1..option3. The slash-command path
     // accepts an arbitrary option list and supports the same poll settings.
     const QString channelId = channel.id;
-    const QString teamId = channel.team ? channel.team->id : QString();
+    QString teamId = pollData.commandTeamId;
+    if (teamId.isEmpty() && channel.team) {
+        teamId = channel.team->id;
+    }
+    if (teamId.isEmpty()) {
+        qWarning().noquote() << "Poll command has no team execution context: channel="
+                             << channelId;
+        if (callback) {
+            callback(false);
+        }
+        return;
+    }
+
     const BackendNewPollData commandPollData = pollData;
     QPointer<PostCreateService> guard(this);
 
@@ -199,23 +212,26 @@ void PostCreateService::submitPoll(BackendChannel& channel,
                 {QStringLiteral("channel_id"), channelId},
                 {QStringLiteral("command"), buildMatterpollCommand(trigger, commandPollData)},
                 {QStringLiteral("root_id"), commandPollData.rootId},
+                {QStringLiteral("team_id"), teamId},
             };
-            if (!teamId.isEmpty()) {
-                json.insert(QStringLiteral("team_id"), teamId);
-            }
 
             qInfo().noquote() << "Poll command submit: channel=" << channelId
                               << "root=" << commandPollData.rootId
+                              << "team=" << teamId
                               << "trigger=/" << trigger
                               << "options=" << commandPollData.options.size();
 
             const QByteArrayCreator payload(json);
             guard->httpConnector.post(request, payload, HttpResponseCallback(
                 [callback = std::move(callback)](QVariant status,
-                                                 QByteArray response) mutable {
+                                                 QByteArray response,
+                                                 const QNetworkReply& reply) mutable {
                     const bool transportSuccess = status.toInt() == QNetworkReply::NoError;
+                    const int httpStatus = reply.attribute(
+                        QNetworkRequest::HttpStatusCodeAttribute).toInt();
                     qInfo().noquote() << "Poll command submit finished: networkError="
                                       << status.toInt()
+                                      << "httpStatus=" << httpStatus
                                       << "bytes=" << response.size()
                                       << "transportSuccess=" << transportSuccess;
                     if (!transportSuccess && !response.trimmed().isEmpty()) {
