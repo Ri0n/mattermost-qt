@@ -267,7 +267,7 @@ void Backend::logout (std::function<void ()> callback)
 	NetworkRequest request ("users/logout");
 	isLoggedIn = false;
 
-	/* when logging out manually, disable the autologin */
+	//when logging out manually, disable the autologin
 	autoLoginEnabledFlag = false;
 
 	timeoutTimer.setSingleShot (true);
@@ -1307,7 +1307,40 @@ void Backend::sendSubmitDialog (const QJsonDocument& json)
 
 void Backend::retrieveCustomEmojis ()
 {
-	retrieveCustomEmojis ();
+	NetworkRequest request ("emoji");
+	httpConnector.get (request, HttpResponseCallback ([this] (QVariant, QJsonDocument data) {
+
+#if 0
+		QString jsonString = data.toJson(QJsonDocument::Indented);
+		qDebug() << "retrieveCustomEmojis reply: " << jsonString.toStdString().c_str();
+#endif
+
+		for (const auto& it: data.array()) {
+			QString emojiID = it.toObject().value("id").toString();
+			QString emojiName = it.toObject().value("name").toString();
+			retrieveCustomEmojiImage (emojiID, [emojiID, emojiName] (QByteArray data) {
+
+				QDir cacheDir (QStandardPaths::writableLocation(QStandardPaths::CacheLocation));
+				QDir emojiDir (cacheDir.filePath ("custom-emoji"));
+
+				if (!emojiDir.exists()) {
+					emojiDir.mkpath(".");
+				}
+
+				QString filePath (emojiDir.filePath (emojiID + ".gif"));
+				QFile file (filePath);
+
+				if (!file.open (QIODevice::WriteOnly)) {
+					qDebug() << "retrieveCustomEmojiImage: Cannot open " << filePath << ":" << file.errorString();
+					return;
+				}
+
+				file.write (data);
+				file.close ();
+				EmojiInfo::addCustomEmoji (emojiName, filePath);
+			});
+		}
+	}));
 }
 
 void Mattermost::Backend::retrieveCustomEmojiImage (const QString& emojiID, std::function <void (QByteArray)> callback)
