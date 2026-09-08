@@ -8,12 +8,12 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPalette>
-#include <QResizeEvent>
 #include <QSizePolicy>
 #include <QVBoxLayout>
 
 #include "QuotedReplyFormat.h"
 #include "backend/types/BackendPost.h"
+#include "post/MessageFormatter.h"
 
 namespace Mattermost {
 
@@ -49,11 +49,14 @@ QuotedPostPreview::QuotedPostPreview(QWidget* parent, int maximumLinesValue)
     authorLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
     messageLabel = new QLabel(this);
-    messageLabel->setTextFormat(Qt::PlainText);
+    messageLabel->setTextFormat(Qt::RichText);
     messageLabel->setWordWrap(maximumLines > 1);
+    messageLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     messageLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     messageLabel->setMaximumHeight(
         messageLabel->fontMetrics().lineSpacing() * maximumLines + 2);
+    messageLabel->setTextInteractionFlags(Qt::NoTextInteraction);
+    messageLabel->setOpenExternalLinks(false);
     messageLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
 
     textLayout->addWidget(authorLabel);
@@ -76,7 +79,13 @@ void QuotedPostPreview::setPreview(const QString& title,
 {
     authorLabel->setText(title);
     const QString visibleMessage = QuotedReplyFormat::stripFallback(message);
-    fullText = QuotedReplyFormat::compactText(visibleMessage, hasAttachments, 500);
+    if (visibleMessage.trimmed().isEmpty()) {
+        fullText = hasAttachments
+            ? QStringLiteral("[attachment]")
+            : QStringLiteral("[empty message]");
+    } else {
+        fullText = visibleMessage;
+    }
     setToolTip(visibleMessage);
     refreshText();
 }
@@ -92,25 +101,25 @@ void QuotedPostPreview::changeEvent(QEvent* event)
     QFrame::changeEvent(event);
     if (event && (event->type() == QEvent::PaletteChange
                   || event->type() == QEvent::ApplicationPaletteChange
-                  || event->type() == QEvent::StyleChange)) {
+                  || event->type() == QEvent::StyleChange
+                  || event->type() == QEvent::FontChange)) {
+        if (messageLabel) {
+            messageLabel->setMaximumHeight(
+                messageLabel->fontMetrics().lineSpacing() * maximumLines + 2);
+        }
         refreshPalette();
+        refreshText();
     }
 }
 
-void QuotedPostPreview::mouseReleaseEvent(QMouseEvent* event)
+void QuotedPostPreview::mousePressEvent(QMouseEvent* event)
 {
     if (event && event->button() == Qt::LeftButton && activatedCallback) {
         activatedCallback();
         event->accept();
         return;
     }
-    QFrame::mouseReleaseEvent(event);
-}
-
-void QuotedPostPreview::resizeEvent(QResizeEvent* event)
-{
-    QFrame::resizeEvent(event);
-    refreshText();
+    QFrame::mousePressEvent(event);
 }
 
 void QuotedPostPreview::refreshPalette()
@@ -144,17 +153,7 @@ void QuotedPostPreview::refreshText()
         return;
     }
 
-    const int availableWidth = std::max(80, messageLabel->width());
-    const int averageCharWidth = std::max(1, messageLabel->fontMetrics().averageCharWidth());
-    const int estimatedCharacters = std::max(
-        24, maximumLines * availableWidth / averageCharWidth);
-
-    QString text = fullText;
-    if (text.size() > estimatedCharacters) {
-        text.truncate(std::max(1, estimatedCharacters - 1));
-        text += QChar(0x2026);
-    }
-    messageLabel->setText(text);
+    messageLabel->setText(MessageFormatter::formatMessageText(fullText));
 }
 
 } // namespace Mattermost
