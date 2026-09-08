@@ -61,6 +61,7 @@ public:
 	          QPushButton& sendButton);
 	void setRootId(QString id);
 	const QString& rootId() const { return root_id; }
+	QString pollCommandTeamId() const;
 	void armPollRealtimeAcknowledgement(const BackendNewPollData& pollData);
 	void onDragEnterEvent (QDragEnterEvent* event);
 	void onDragMoveEvent (QDragMoveEvent* event);
