@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QObject>
 #include <QPointer>
 #include <QString>
 #include <QVector>
@@ -26,18 +27,6 @@ class NavigationUiController final : public QObject
 {
     Q_OBJECT
 public:
-    static NavigationUiController& instance(MainWindow& window);
-
-    explicit NavigationUiController(MainWindow& window);
-    ~NavigationUiController() override;
-
-    ChatArea* findThread(const QString& channelId, const QString& rootId) const;
-    void presentThread(ChatArea* area);
-
-protected:
-    bool eventFilter(QObject* watched, QEvent* event) override;
-
-private:
     struct Location {
         QString channelId;
         QString rootId;
@@ -50,6 +39,18 @@ private:
         }
     };
 
+    static NavigationUiController& instance(MainWindow& window);
+
+    explicit NavigationUiController(MainWindow& window);
+    ~NavigationUiController() override;
+
+    ChatArea* findThread(const QString& channelId, const QString& rootId) const;
+    void presentThread(ChatArea* area);
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
     void setupMainWindow();
     void setupSidebarHeader();
     void setupThreadPane();
