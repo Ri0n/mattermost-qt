@@ -95,21 +95,23 @@ void ServerDialogsMap::sendEvent (const OpenDialogEvent& event)
 	BackendChannel* currentChannel = backend.getCurrentChannel();
 
 	if (!currentChannel) {
-		LOG_DEBUG ("WebSocketEventHandler::handleEvent (OpenDialogEvent): no current channel set");
+		LOG_DEBUG ("ServerDialogsMap::sendEvent: no current channel set");
 		return;
 	}
 
-	if (!currentChannel->team) {
-		LOG_DEBUG ("WebSocketEventHandler::handleEvent (OpenDialogEvent): no current channel's team set");
-		return;
-	}
+	// Interactive-dialog submissions are channel scoped. Direct and group
+	// message channels intentionally have no team, so Mattermost expects an
+	// empty team_id for them instead of rejecting the submission locally.
+	const QString teamId = currentChannel->team
+		? currentChannel->team->id
+		: QString();
 
 	QJsonObject json {
 		{"channel_id", 	currentChannel->id},
 		{"callback_id", event.callbackID},
 		{"state", 		""},
 		{"submission", 	QJsonObject()},
-		{"team_id", 	currentChannel->team->id},
+		{"team_id", 	teamId},
 		{"url", 		event.url}
 	};
 
