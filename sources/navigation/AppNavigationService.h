@@ -36,7 +36,8 @@ signals:
                           const QString& rootId,
                           const QStringList& contextPostIds,
                           bool reachedOldest,
-                          bool reachedNewest);
+                          bool reachedNewest,
+                          bool preserveIfOpen);
 
 private:
     explicit AppNavigationService(Backend& backend);
