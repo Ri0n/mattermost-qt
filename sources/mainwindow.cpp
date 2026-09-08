@@ -641,6 +641,7 @@ void MainWindow::openAttentionThread(const QString& channelId, const QString& ro
 					threadArea = area;
 					break;
 				}
+			}
 
 			if (!threadArea) {
 				threadArea = new ChatArea(guard->backend, *currentChannel, rootPostId, parentArea);
@@ -860,7 +861,7 @@ void MainWindow::messageNotify(BackendChannel& channel, const BackendPost& post)
 					&& threadArea->isActiveWindow()) {
 					return;
 				}
-		}
+			}
 		}
 	}
 
