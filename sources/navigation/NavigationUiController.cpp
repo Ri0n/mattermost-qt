@@ -89,6 +89,9 @@ void NavigationUiController::setupMainWindow()
             });
         });
         channelTree->installEventFilter(this);
+        if (channelTree->viewport()) {
+            channelTree->viewport()->installEventFilter(this);
+        }
         recordArea(channelTree->getCurrentPage());
     }
 
@@ -532,6 +535,7 @@ void NavigationUiController::attachThread(ChatArea* area)
         const int width = std::max(900, contentSplitter->width());
         contentSplitter->setSizes({std::max(480, width * 2 / 3),
                                    std::max(320, width / 3)});
+        threadSplitterStateRestored = true;
     }
     updateThreadButton(area);
     recordArea(area);
@@ -581,7 +585,10 @@ void NavigationUiController::presentThread(ChatArea* area)
 
 bool NavigationUiController::eventFilter(QObject* watched, QEvent* event)
 {
-    if (watched == channelTree && event && event->type() == QEvent::MouseButtonRelease) {
+    const bool channelPointerSurface = channelTree
+        && (watched == channelTree || watched == channelTree->viewport());
+    if (channelPointerSurface && event
+        && event->type() == QEvent::MouseButtonRelease) {
         QTimer::singleShot(0, this, [this] {
             if (channelTree) {
                 recordArea(channelTree->getCurrentPage());
@@ -622,7 +629,15 @@ protected:
     {
         if (event && event->type() == QEvent::Show) {
             if (auto* window = qobject_cast<Mattermost::MainWindow*>(watched)) {
-                Mattermost::NavigationUiController::instance(*window);
+                if (!window->property("navigationUiSetupScheduled").toBool()) {
+                    window->setProperty("navigationUiSetupScheduled", true);
+                    QPointer<Mattermost::MainWindow> guard(window);
+                    QTimer::singleShot(0, window, [guard] {
+                        if (guard) {
+                            Mattermost::NavigationUiController::instance(*guard);
+                        }
+                    });
+                }
             }
         }
         return QObject::eventFilter(watched, event);
