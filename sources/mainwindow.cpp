@@ -21,6 +21,7 @@
 
 #include <algorithm>
 
+#include <QAction>
 #include <QCloseEvent>
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
@@ -149,7 +150,7 @@ MainWindow::MainWindow(QWidget* parent, QSystemTrayIcon& trayIcon, Backend& _bac
 
 		const bool channelsTabVisible = channelTabs && channelsPage
 			&& channelTabs->currentWidget() == channelsPage;
-		if (channelsTabVisible && unreadFilterButton && unreadFilterButton->isChecked()) {
+		if (channelsTabVisible && unreadFilterAction && unreadFilterAction->isChecked()) {
 			retainedUnreadFilterChannelId = channelId;
 			QTimer::singleShot(0, this, &MainWindow::refreshChannelUnreadFilter);
 		} else if (channelsTabVisible) {
@@ -249,24 +250,6 @@ void MainWindow::setupChannelTabs()
 	auto* channelsLayout = new QVBoxLayout(channelsPage);
 	channelsLayout->setContentsMargins(0, 0, 0, 0);
 	channelsLayout->setSpacing(0);
-
-	auto* channelsTools = new QWidget(channelsPage);
-	auto* channelsToolsLayout = new QHBoxLayout(channelsTools);
-	channelsToolsLayout->setContentsMargins(4, 2, 4, 2);
-	channelsToolsLayout->setSpacing(0);
-	channelsToolsLayout->addStretch(1);
-
-	unreadFilterButton = new QToolButton(channelsTools);
-	unreadFilterButton->setCheckable(true);
-	unreadFilterButton->setAutoRaise(true);
-	unreadFilterButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
-	unreadFilterButton->setToolTip(tr("Show unread channels only"));
-	unreadFilterButton->setAccessibleName(tr("Show unread channels only"));
-	unreadFilterButton->installEventFilter(this);
-	refreshUnreadFilterIcon();
-	channelsToolsLayout->addWidget(unreadFilterButton);
-
-	channelsLayout->addWidget(channelsTools);
 	channelsLayout->addWidget(ui->channelList, 1);
 
 	recentChannels = new ChannelQuickList(channelTabs);
@@ -288,6 +271,12 @@ void MainWindow::setupChannelTabs()
 	sidebarFilterEdit->setPlaceholderText(tr("Filter channels or contacts…"));
 	sidebarFilterEdit->setAccessibleName(tr("Filter channels or contacts"));
 	sidebarFilterEdit->setContentsMargins(4, 2, 4, 2);
+	sidebarFilterEdit->installEventFilter(this);
+	unreadFilterAction = sidebarFilterEdit->addAction(QIcon(), QLineEdit::TrailingPosition);
+	unreadFilterAction->setCheckable(true);
+	unreadFilterAction->setText(tr("Show unread only"));
+	unreadFilterAction->setToolTip(tr("Show unread only"));
+	refreshUnreadFilterIcon();
 	leftLayout->addWidget(sidebarFilterEdit);
 	leftLayout->addWidget(channelTabs, 1);
 
@@ -306,8 +295,10 @@ void MainWindow::setupChannelTabs()
 
 	connect(sidebarFilterEdit, &QLineEdit::textChanged,
 	        this, &MainWindow::refreshSidebarViews);
-	connect(unreadFilterButton, &QToolButton::toggled,
-	        this, &MainWindow::refreshChannelUnreadFilter);
+	connect(unreadFilterAction, &QAction::toggled, this, [this] {
+		refreshUnreadFilterIcon();
+		refreshChannelUnreadFilter();
+	});
 
 	connect(ui->channelList, &QTreeWidget::itemClicked, this,
 	        [this](QTreeWidgetItem* item, int column) {
@@ -414,11 +405,20 @@ void MainWindow::applySidebarTextFilter(QTreeWidget* tree) const
 
 void MainWindow::refreshChannelUnreadFilter()
 {
-	if (!ui || !ui->channelList || !unreadFilterButton) {
+	if (!ui || !ui->channelList || !unreadFilterAction) {
 		return;
 	}
 
-	const bool unreadOnly = unreadFilterButton->isChecked();
+	const bool unreadOnly = unreadFilterAction->isChecked();
+	if (channelTabs && recentChannels) {
+		const int followingIndex = channelTabs->indexOf(recentChannels);
+		if (unreadOnly && followingIndex >= 0) {
+			channelTabs->removeTab(followingIndex);
+		} else if (!unreadOnly && followingIndex < 0) {
+			channelTabs->insertTab(1, recentChannels, tr("Following"));
+		}
+	}
+
 	const QString filterText = sidebarFilterEdit
 		? sidebarFilterEdit->text().trimmed() : QString();
 	const bool textFilterActive = !filterText.isEmpty();
@@ -708,7 +708,7 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 			refreshMenuButtonIcon();
         } else if (watched == ui->searchButton) {
             refreshSearchButtonIcon();
-		} else if (watched == unreadFilterButton) {
+		} else if (watched == sidebarFilterEdit) {
 			refreshUnreadFilterIcon();
 		}
 	}
@@ -737,7 +737,7 @@ void MainWindow::refreshSearchButtonIcon()
 
 void MainWindow::refreshUnreadFilterIcon()
 {
-	if (!unreadFilterButton) {
+	if (!unreadFilterAction || !sidebarFilterEdit) {
 		return;
 	}
 
@@ -748,8 +748,15 @@ void MainWindow::refreshUnreadFilterIcon()
 	if (icon.isNull()) {
 		icon = style()->standardIcon(QStyle::SP_MessageBoxInformation);
 	}
-	unreadFilterButton->setIcon(IconUtils::tintedIcon(
-		icon, unreadFilterButton->palette().color(QPalette::ButtonText)));
+
+	const QPalette palette = sidebarFilterEdit->palette();
+	const QColor color = unreadFilterAction->isChecked()
+		? palette.color(QPalette::Highlight)
+		: palette.color(QPalette::Text);
+	unreadFilterAction->setIcon(IconUtils::tintedIcon(icon, color));
+	unreadFilterAction->setToolTip(unreadFilterAction->isChecked()
+		? tr("Show all channels and Following")
+		: tr("Show unread only"));
 }
 
 void MainWindow::moveEvent(QMoveEvent*)
