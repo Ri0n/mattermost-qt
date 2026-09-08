@@ -29,7 +29,37 @@ void MainWindow::openChannelPost(const QString& channelId,
 
     ui->channelList->openStoredChannel(channelId);
     ChatArea* area = ui->channelList->getCurrentPage();
-    if (!area || &area->getChannel() != channel || postId.isEmpty()) {
+    if (!area || &area->getChannel() != channel) {
+        return;
+    }
+
+    auto ensureThreadArea = [this, area, channel, &rootId]() -> ChatArea* {
+        if (rootId.isEmpty()) {
+            return nullptr;
+        }
+
+        for (ChatArea* existing : area->threadsAreas) {
+            if (existing && existing->root_id == rootId) {
+                return existing;
+            }
+        }
+
+        auto* threadArea = new ChatArea(backend, *channel, rootId, area);
+        area->threadsAreas.insert(threadArea);
+        return threadArea;
+    };
+
+    // A thread request without a concrete post target means "open at newest".
+    // This is used when a followed thread is already fully read: there is no
+    // first unread reply to target, and returning to the root would be the wrong
+    // end of the conversation.
+    if (postId.isEmpty()) {
+        if (ChatArea* threadArea = ensureThreadArea()) {
+            threadArea->show();
+            threadArea->raise();
+            threadArea->activateWindow();
+            threadArea->goToNewest();
+        }
         return;
     }
 
@@ -42,17 +72,9 @@ void MainWindow::openChannelPost(const QString& channelId,
     // not have rows in the main channel timeline, so route those links to the
     // thread window instead of searching the channel root timeline.
     if (!rootId.isEmpty()) {
-        ChatArea* threadArea = nullptr;
-        for (ChatArea* existing : area->threadsAreas) {
-            if (existing && existing->root_id == rootId) {
-                threadArea = existing;
-                break;
-            }
-        }
-
+        ChatArea* threadArea = ensureThreadArea();
         if (!threadArea) {
-            threadArea = new ChatArea(backend, *channel, rootId, area);
-            area->threadsAreas.insert(threadArea);
+            return;
         }
 
         // The thread constructor/init path also queues its default newest
