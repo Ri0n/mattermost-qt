@@ -41,6 +41,26 @@ void MainWindow::openChannelPost(const QString& channelId,
         if (!centralArea) {
             ui->channelList->openStoredChannel(channelId);
             centralArea = ui->channelList->getCurrentPage();
+            if (!centralArea) {
+                return;
+            }
+
+            // ChannelTree records the newly activated main-channel location on
+            // the next event-loop turn. Let that settle before presenting the
+            // thread, otherwise its delayed history update can arrive after the
+            // thread record and make the parent channel look like the active
+            // semantic destination.
+            QPointer<MainWindow> guard(this);
+            QTimer::singleShot(0, this,
+                [guard, channelId, postId, rootId, contextPostIds,
+                 reachedOldest, reachedNewest, preserveIfOpen] {
+                    if (guard) {
+                        guard->openChannelPost(channelId, postId, rootId,
+                                               contextPostIds, reachedOldest,
+                                               reachedNewest, preserveIfOpen);
+                    }
+                });
+            return;
         }
 
         ChatArea* threadArea = navigationUi.findThread(channelId, rootId);
