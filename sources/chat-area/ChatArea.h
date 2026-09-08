@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -66,6 +66,7 @@ public:
 	Ui::ChatArea* getUi ();
 	Backend& getBackend ();
 	BackendChannel& getChannel ();
+    ChatArea* parentChatArea() const { return parentArea.data(); }
     /** Last semantic centre captured when an inactive channel view was detached. */
     QString storedNavigationBookmark() const { return storedViewportPostId; }
 	void handleUserTyping (const BackendUser& user);
