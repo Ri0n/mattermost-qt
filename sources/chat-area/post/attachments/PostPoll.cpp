@@ -29,6 +29,7 @@
 #include "backend/types/BackendPoll.h"
 #include "backend/types/BackendPost.h"
 #include "chat-area/ChatArea.h"
+#include "channel-tree/ChannelItem.h"
 #include "channel-tree/SidebarItem.h"
 
 namespace Mattermost {
