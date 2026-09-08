@@ -277,14 +277,55 @@ void AppNavigationService::openPostInChannel(BackendChannel& channel,
 {
     if (BackendPost* cached = channel.postIdToPost.value(postId, nullptr)) {
         if (!cached->root_id.isEmpty()) {
-            ensureMainWindowConnection();
-            emit channelRequested(channel.id,
-                                  postId,
-                                  cached->root_id,
-                                  QStringList(),
-                                  false,
-                                  false,
-                                  false);
+            const QString channelId = channel.id;
+            const QString rootId = cached->root_id;
+            const auto presentReply = [this, channelId, postId, rootId] {
+                ensureMainWindowConnection();
+                emit channelRequested(channelId,
+                                      postId,
+                                      rootId,
+                                      QStringList(),
+                                      false,
+                                      false,
+                                      false);
+            };
+
+            // ThreadPostSource derives its logical length and time anchors from
+            // the root's reply_count/last_reply_at metadata. A direct permalink
+            // can make the reply resident before its root is present, in which
+            // case creating the thread immediately yields a zero-row source.
+            if (channel.postIdToPost.contains(rootId)) {
+                presentReply();
+                return;
+            }
+
+            QPointer<AppNavigationService> guard(this);
+            PostRepository::instance(backend).loadPost(
+                rootId,
+                [guard, channelId, postId, rootId](const PostRepository::PostResult& result) {
+                    if (!guard || !result.success || result.channelId != channelId) {
+                        return;
+                    }
+
+                    BackendChannel* currentChannel =
+                        guard->backend.getStorage().getChannelById(channelId);
+                    BackendPost* root = currentChannel
+                        ? currentChannel->postIdToPost.value(rootId, nullptr) : nullptr;
+                    BackendPost* target = currentChannel
+                        ? currentChannel->postIdToPost.value(postId, nullptr) : nullptr;
+                    if (!root || !target || target->root_id != rootId) {
+                        return;
+                    }
+
+                    guard->ensureMainWindowConnection();
+                    emit guard->channelRequested(channelId,
+                                                 postId,
+                                                 rootId,
+                                                 QStringList(),
+                                                 false,
+                                                 false,
+                                                 false);
+                });
             return;
         }
     }
