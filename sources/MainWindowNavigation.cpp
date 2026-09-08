@@ -32,9 +32,17 @@ void MainWindow::openChannelPost(const QString& channelId,
     auto& navigationUi = NavigationUiController::instance(*this);
 
     // Thread presentation is independent from the main-channel surface. A
-    // followed thread can therefore open in the right pane without stealing the
-    // central channel, and an already detached thread can simply be raised.
+    // followed thread can therefore open in the right pane without stealing an
+    // already visible central channel. A completely empty centre is different:
+    // showing a thread beside blank space looks broken, so establish its parent
+    // channel as the central context first.
     if (!rootId.isEmpty()) {
+        ChatArea* centralArea = ui->channelList->getCurrentPage();
+        if (!centralArea) {
+            ui->channelList->openStoredChannel(channelId);
+            centralArea = ui->channelList->getCurrentPage();
+        }
+
         ChatArea* threadArea = navigationUi.findThread(channelId, rootId);
         if (threadArea && preserveIfOpen) {
             navigationUi.presentThread(threadArea);
@@ -43,7 +51,7 @@ void MainWindow::openChannelPost(const QString& channelId,
 
         const bool created = !threadArea;
         if (!threadArea) {
-            ChatArea* parentArea = ui->channelList->getCurrentPage();
+            ChatArea* parentArea = centralArea;
             if (!parentArea || &parentArea->getChannel() != channel) {
                 parentArea = nullptr;
             }
