@@ -32,6 +32,8 @@
 #include "SidebarItem.h"
 #include "backend/ThreadFollowService.h"
 
+class QMouseEvent;
+
 namespace Mattermost {
 
 class Backend;
@@ -60,6 +62,9 @@ signals:
     void threadSelected(const QString& channelId, const QString& rootPostId);
     void attentionCountChanged(uint32_t count);
 
+protected:
+    void mousePressEvent(QMouseEvent* event) override;
+
 private:
     using ThreadEntry = ThreadFollowService::ThreadSummary;
     using EntryType = SidebarItem::Kind;
@@ -77,6 +82,7 @@ private:
         TeamIdRole = SidebarItem::TeamIdRole,
     };
 
+    void activateItem(QTreeWidgetItem* item);
     void retainSelection(QTreeWidgetItem* item);
     void notePost(BackendChannel& channel, const BackendPost& post);
     void clearSyntheticMentions(const QString& channelId);
@@ -92,6 +98,7 @@ private:
     QTimer threadRefreshTimer;
     QString retainedChannelId;
     QString retainedThreadId;
+    QString retainedPostId;
     ThreadEntry retainedThread;
     bool hasRetainedThread = false;
     bool refreshing = false;
