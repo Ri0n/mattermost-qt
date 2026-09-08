@@ -211,12 +211,17 @@ void AppNavigationService::openThreadAtLastViewed(const QString& channelId,
             }
 
             if (page.success && currentChannel) {
+                // Nothing exists after last_viewed_at. This is the normal path
+                // for a previously read followed thread, and can also happen if
+                // server unread metadata races the thread page. Open the thread
+                // without an explicit post target so ChatArea keeps its native
+                // newest-edge positioning instead of jumping back to the root.
                 emit guard->channelRequested(channelId,
-                                             rootId,
+                                             QString(),
                                              rootId,
                                              QStringList(),
                                              false,
-                                             false);
+                                             true);
                 if (callback) {
                     callback(true);
                 }
