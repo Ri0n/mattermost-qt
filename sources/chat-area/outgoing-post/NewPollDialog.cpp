@@ -122,6 +122,10 @@ BackendNewPollData NewPollDialog::getData ()
 	ret.allowAddOptions = ui->checkBoxAllowAdditional->isChecked();
 	ret.maxVotes = ui->maxVotesValue->value();
 
+	if (auto* creator = qobject_cast<OutgoingPostCreator*>(parentWidget())) {
+		creator->armPollRealtimeAcknowledgement(ret);
+	}
+
 	return ret;
 }
 
