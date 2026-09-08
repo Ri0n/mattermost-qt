@@ -24,6 +24,7 @@
 #include <utility>
 #include <vector>
 
+#include <QPointer>
 #include <QSet>
 #include <QStringList>
 #include <QTreeWidgetItem>
@@ -138,7 +139,7 @@ private:
 	void scheduleStoredPosition();
 	void finishPendingNavigation();
 
-	ChatArea* parentArea;
+	QPointer<ChatArea> parentArea;
 	QString parentPostId;
 	QString pendingPostId;
 	QString storedViewportPostId;
