@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QNetworkReply>
 #include <QPointer>
+#include <QStringList>
 
 #include "Backend.h"
 #include "NetworkRequest.h"
@@ -16,6 +17,40 @@
 #include "backend/types/BackendPost.h"
 
 namespace Mattermost {
+namespace {
+
+QString quoteMatterpollArgument(QString value)
+{
+    value.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    return QLatin1Char('"') + value + QLatin1Char('"');
+}
+
+QString buildMatterpollCommand(const BackendNewPollData& pollData)
+{
+    QStringList parts;
+    parts.push_back(QStringLiteral("/poll"));
+    parts.push_back(quoteMatterpollArgument(pollData.question));
+    for (const QString& option : pollData.options) {
+        parts.push_back(quoteMatterpollArgument(option));
+    }
+
+    if (pollData.isAnonymous) {
+        parts.push_back(QStringLiteral("--anonymous"));
+    }
+    if (pollData.isAnonymousCreator) {
+        parts.push_back(QStringLiteral("--anonymous-creator"));
+    }
+    if (pollData.showProgress) {
+        parts.push_back(QStringLiteral("--progress"));
+    }
+    if (pollData.allowAddOptions) {
+        parts.push_back(QStringLiteral("--public-add-option"));
+    }
+    parts.push_back(QStringLiteral("--votes=%1").arg(pollData.maxVotes));
+    return parts.join(QLatin1Char(' '));
+}
+
+} // namespace
 
 PostCreateService& PostCreateService::instance(Backend& backend)
 {
@@ -120,6 +155,44 @@ void PostCreateService::submitPoll(BackendChannel& channel,
                                    const BackendNewPollData& pollData,
                                    ResultCallback callback)
 {
+    // Matterpoll's interactive-dialog endpoint is hard-coded upstream to read
+    // only option1, option2 and option3. Its slash-command implementation has
+    // no such limit, so use Mattermost's command execution endpoint whenever a
+    // native dialog contains more than three answer options.
+    if (pollData.options.size() > 3) {
+        NetworkRequest request(QStringLiteral("commands/execute"));
+        QJsonObject json {
+            {QStringLiteral("channel_id"), channel.id},
+            {QStringLiteral("command"), buildMatterpollCommand(pollData)},
+            {QStringLiteral("root_id"), pollData.rootId},
+        };
+        if (channel.team) {
+            json.insert(QStringLiteral("team_id"), channel.team->id);
+        }
+
+        qInfo().noquote() << "Poll command submit: channel=" << channel.id
+                          << "root=" << pollData.rootId
+                          << "options=" << pollData.options.size();
+
+        const QByteArrayCreator payload(json);
+        httpConnector.post(request, payload, HttpResponseCallback(
+            [callback = std::move(callback)](QVariant status, QByteArray response) mutable {
+                const bool success = status.toInt() == QNetworkReply::NoError;
+                qInfo().noquote() << "Poll command submit finished: networkError="
+                                  << status.toInt()
+                                  << "bytes=" << response.size()
+                                  << "success=" << success;
+                if (!success && !response.trimmed().isEmpty()) {
+                    qWarning().noquote() << "Poll command submit response:"
+                                         << QString::fromUtf8(response.left(1024));
+                }
+                if (callback) {
+                    callback(success);
+                }
+            }));
+        return;
+    }
+
     NetworkRequest request(QStringLiteral("actions/dialogs/submit"));
     QJsonObject json {
         {QStringLiteral("callback_id"), pollData.rootId},
