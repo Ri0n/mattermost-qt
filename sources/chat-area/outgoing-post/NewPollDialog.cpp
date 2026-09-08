@@ -23,6 +23,7 @@
  */
 
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSet>
 
 #include "NewPollDialog.h"
@@ -45,6 +46,14 @@ QStringList pollOptionsFromText(const QString& text)
     return options;
 }
 
+bool hasPollFlag(const QString& command, const QString& flag)
+{
+    const QRegularExpression expression(
+        QStringLiteral("(?:^|\\s)--%1(?:\\s|$)")
+            .arg(QRegularExpression::escape(flag)));
+    return expression.match(command).hasMatch();
+}
+
 } // namespace
 
 NewPollDialog::NewPollDialog(QWidget* parent, BackendNewPollData initialPollData)
@@ -57,10 +66,29 @@ NewPollDialog::NewPollDialog(QWidget* parent, BackendNewPollData initialPollData
 
     // The legacy /poll path constructs BackendNewPollData inside the composer.
     // Preserve the thread root from that composer so Matterpoll can create the
-    // generated post as a real thread reply.
-    if (rootId.isEmpty()) {
-        if (const auto* creator = qobject_cast<const OutgoingPostCreator*>(parent)) {
+    // generated post as a real thread reply. Also normalize settings here so
+    // older substring-based command parsing cannot confuse --anonymous with
+    // --anonymous-creator and can prefill newer Matterpoll settings.
+    if (const auto* creator = qobject_cast<const OutgoingPostCreator*>(parent)) {
+        if (rootId.isEmpty()) {
             rootId = creator->rootId();
+        }
+
+        const QString command = creator->toPlainText();
+        if (command.startsWith(QStringLiteral("/poll"))) {
+            initialPollData.isAnonymous = hasPollFlag(command, QStringLiteral("anonymous"));
+            initialPollData.isAnonymousCreator =
+                hasPollFlag(command, QStringLiteral("anonymous-creator"));
+            initialPollData.showProgress = hasPollFlag(command, QStringLiteral("progress"));
+            initialPollData.allowAddOptions =
+                hasPollFlag(command, QStringLiteral("public-add-option"));
+
+            const QRegularExpression votesExpression(
+                QStringLiteral("(?:^|\\s)--votes=(\\d+)(?:\\s|$)"));
+            const QRegularExpressionMatch votesMatch = votesExpression.match(command);
+            if (votesMatch.hasMatch()) {
+                initialPollData.maxVotes = votesMatch.captured(1).toInt();
+            }
         }
     }
 
