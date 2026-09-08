@@ -61,6 +61,7 @@ private:
     bool refreshing = false;
     bool threadRefreshInFlight = false;
     bool threadRefreshRequested = false;
+    bool _threadSnapshotDirty = true;
     QTimer threadRefreshTimer;
     QVector<ThreadSummary> serverThreads;
     QHash<QString, ThreadSummary> syntheticMentions;
