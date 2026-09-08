@@ -10,6 +10,10 @@
 #include "backend/types/BackendNewPollData.h"
 #include "backend/types/BackendPoll.h"
 #include "backend/types/BackendPost.h"
+#include "backend/types/BackendTeam.h"
+#include "channel-tree/ChannelItem.h"
+#include "channel-tree/SidebarItem.h"
+#include "chat-area/ChatArea.h"
 
 namespace Mattermost {
 namespace {
@@ -28,6 +32,42 @@ void clearPendingPollProperties(OutgoingPostCreator& creator)
 }
 
 } // namespace
+
+QString OutgoingPostCreator::pollCommandTeamId() const
+{
+    if (channel && channel->team) {
+        return channel->team->id;
+    }
+
+    // DM/GM channels do not belong to a team, but Mattermost slash commands
+    // still execute in a team context. The sidebar row is the authoritative
+    // source for that context. A thread inherits it from its parent ChatArea.
+    for (QWidget* widget = parentWidget(); widget; widget = widget->parentWidget()) {
+        auto* area = qobject_cast<ChatArea*>(widget);
+        if (!area) {
+            continue;
+        }
+
+        for (ChatArea* contextArea = area; contextArea;
+             contextArea = contextArea->parentChatArea()) {
+            if (contextArea->channel.team) {
+                return contextArea->channel.team->id;
+            }
+            if (!contextArea->treeItem) {
+                continue;
+            }
+
+            const QString teamId = contextArea->treeItem
+                ->data(0, SidebarItem::TeamIdRole).toString();
+            if (!teamId.isEmpty()) {
+                return teamId;
+            }
+        }
+        break;
+    }
+
+    return QString();
+}
 
 void OutgoingPostCreator::createPoll()
 {
@@ -59,9 +99,9 @@ void OutgoingPostCreator::createPoll()
     setPlainText(QStringLiteral("/poll"));
     sendPostButtonAction();
 
-    // /poll opens the modal dialog synchronously and returns without consuming
-    // the editor. Do not leave the synthetic command behind when the dialog is
-    // cancelled; accepted poll data is already captured independently.
+    // sendPostButtonAction() only opens the modeless QDialog and returns. The
+    // synthetic command is no longer needed; accepted poll data is captured
+    // independently by the dialog's accepted signal.
     if (toPlainText() == QStringLiteral("/poll")) {
         clear();
     }
@@ -89,6 +129,7 @@ void OutgoingPostCreator::armPollRealtimeAcknowledgement(const BackendNewPollDat
     qInfo().noquote() << "Poll send armed: channel="
                       << (channel ? channel->id : QString())
                       << "root=" << pollData.rootId
+                      << "team=" << pollData.commandTeamId
                       << "options=" << options.size();
 }
 
