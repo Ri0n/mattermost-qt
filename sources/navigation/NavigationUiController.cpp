@@ -549,10 +549,16 @@ void NavigationUiController::attachThread(ChatArea* area)
     }
     area->setProperty("threadDetached", false);
     threadStack->setCurrentWidget(area);
+
+    // A hidden splitter child is reported as size 0 regardless of the width
+    // encoded in restoreState(). Make the pane visible first, then decide
+    // whether the restored/current geometry is actually usable.
     threadStack->show();
     area->show();
 
-    if (!threadSplitterStateRestored) {
+    const QList<int> sizes = contentSplitter->sizes();
+    const bool threadPaneCollapsed = sizes.size() < 2 || sizes.at(1) <= 0;
+    if (!threadSplitterStateRestored || threadPaneCollapsed) {
         const int width = std::max(900, contentSplitter->width());
         contentSplitter->setSizes({std::max(480, width * 2 / 3),
                                    std::max(320, width / 3)});
