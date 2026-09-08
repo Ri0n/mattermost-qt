@@ -26,6 +26,7 @@
 
 #include <memory>
 #include <QBoxLayout>
+#include <QTemporaryDir>
 
 #include "MessageTextEditWidget.h"
 #include "backend/PostResidencyLease.h"
@@ -35,6 +36,7 @@ class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
 class QLabel;
+class QMimeData;
 class QPushButton;
 
 namespace Mattermost {
@@ -85,6 +87,9 @@ public slots:
 signals:
 	void postEditFinished ();
 
+protected:
+	void insertFromMimeData(const QMimeData* source) override;
+
 private:
 	void createAttachmentList (QStringList& files);
 	void updateSendButtonState ();
@@ -112,6 +117,7 @@ private:
 	PostResidencyLease					editResidencyLease;
 	OutgoingAttachmentList*				attachmentList;
 	std::unique_ptr<OutgoingPostData> 	outgoingPostData;
+	std::unique_ptr<QTemporaryDir>		clipboardAttachmentDir;
 	bool								sendFailed = false;
 	QBoxLayout* 						attachmentParent = nullptr;
 	QString						root_id;
