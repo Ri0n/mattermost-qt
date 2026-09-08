@@ -121,7 +121,7 @@ void PostCreateService::submitPoll(BackendChannel& channel,
 {
     NetworkRequest request(QStringLiteral("actions/dialogs/submit"));
     QJsonObject json {
-        {QStringLiteral("callback_id"), QString()},
+        {QStringLiteral("callback_id"), pollData.rootId},
         {QStringLiteral("channel_id"), channel.id},
         {QStringLiteral("state"), QString()},
         {QStringLiteral("url"), QStringLiteral("/plugins/com.github.matterpoll.matterpoll/api/v1/polls/create")},
