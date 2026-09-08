@@ -75,6 +75,11 @@ public:
                         std::function<void(bool)> callback = {});
 
 signals:
+    /**
+     * A followed thread's server-owned state changed. `following` is the current
+     * membership state and may therefore be emitted as true again when read
+     * metadata changes without changing follow membership.
+     */
     void followingChanged(const QString& teamId, const QString& threadId, bool following);
 
 private:
