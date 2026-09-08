@@ -15,8 +15,8 @@
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU Lesser General Public License for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser
+ * General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
  * along with Mattermost-QT. if not, see https://www.gnu.org/licenses/.
@@ -56,7 +56,11 @@ BackendPost::BackendPost (const QJsonObject& jsonObject, const Storage& storage)
 	props = jsonObject.value("props");
 	hashtags = jsonObject.value("hashtags").toString();
 	pending_post_id = jsonObject.value("pending_post_id").toString();
-	hidden = jsonObject.value("type").toString().startsWith("system_");
+	// `hidden` is a timeline-topology flag: replies belong to their thread and
+	// must not be treated as main-channel rows. System events are ordinary root
+	// rows returned by Mattermost's channel history and must stay in the same
+	// coordinate system as /posts paging and permalink contexts.
+	hidden = !root_id.isEmpty();
 
 	// Mattermost adds these transient fields to root posts. They are exactly the
 	// metadata used by the web client to render the thread footer without first
