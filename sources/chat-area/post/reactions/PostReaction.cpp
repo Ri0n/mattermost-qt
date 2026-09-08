@@ -21,8 +21,9 @@
 
 #include <QMouseEvent>
 
-#include "chat-area/post/ReactionChipStyle.h"
 #include "backend/types/BackendPost.h"
+#include "chat-area/post/ReactionChipStyle.h"
+#include "ui/EmojiPresentation.h"
 #include "ui_PostReaction.h"
 
 namespace Mattermost {
@@ -34,12 +35,17 @@ PostReaction::PostReaction (const QString& emojiName, const QString& emojiValue,
 {
     ui->setupUi (this);
 
-    QString emojiWidgetValue (emojiValue);
-    emojiWidgetValue.replace("width=32 height=32", "width=20 height=20");
+    const QFont reactionFont = EmojiPresentation::fontForMode(
+        ui->emoji->font(), EmojiPresentation::Mode::Reaction);
+    ui->emoji->setFont(reactionFont);
+    const QString emojiWidgetValue = EmojiPresentation::normalizeHtml(
+        emojiValue,
+        reactionFont,
+        EmojiPresentation::Mode::Reaction);
     ui->emoji->setText (emojiWidgetValue);
     ui->count->setText (QString::number (reactionData.size()));
 
-    QString tooltip (emojiName + "  " + emojiValue + "\n");
+    QString tooltip (emojiName + "  " + emojiWidgetValue + "\n");
 
     for (auto& it: reactionData) {
     	tooltip += it + "\n";

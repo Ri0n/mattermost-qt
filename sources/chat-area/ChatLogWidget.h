@@ -4,7 +4,7 @@
 #include <QString>
 
 #include "AbstractPostSource.h"
-#include "widgets/LongListWidget.h"
+#include "PostListWidget.h"
 
 namespace Mattermost {
 
@@ -13,8 +13,8 @@ class BackendPost;
 class ChatArea;
 class PostWidget;
 
-/** Mattermost post presentation layered on the generic LongListWidget. */
-class ChatLogWidget : public LongListWidget
+/** Mattermost timeline behavior layered on the shared post-list presentation. */
+class ChatLogWidget : public PostListWidget
 {
     Q_OBJECT
 public:
@@ -83,6 +83,7 @@ private:
     int navigationQuietPeriodMs = 2000;
     bool navigationLockPending = false;
     bool navigationRecenterPending = false;
+    bool _initialScrollBarPulsePending = true;
 };
 
 } // namespace Mattermost

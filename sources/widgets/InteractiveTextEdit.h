@@ -51,6 +51,9 @@ public:
     void addCompletionRule(CompletionRule rule);
     void clearCompletionRules();
 
+    /** Re-query the active completion provider after its data changes asynchronously. */
+    void refreshCompletions() { refreshCompletion(); }
+
     void setSubmitOnEnter(bool enabled) { submitOnEnter = enabled; }
     void setSubmitHandler(std::function<void()> handler)
     {

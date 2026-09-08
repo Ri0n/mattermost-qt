@@ -8,7 +8,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  */
 
@@ -20,7 +20,7 @@ namespace Mattermost {
 namespace SidebarItem {
 
 /**
- * Logical row kind shared by Channels, Recent and Attention.
+ * Logical row kind shared by Channels, Following and Attention.
  *
  * The concrete widget is deliberately not part of this contract. Delegates and
  * alternate views should be able to reason about a row solely from model data.

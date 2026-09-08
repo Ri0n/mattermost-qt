@@ -23,7 +23,6 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
 
 #include <QHash>
 #include <QTimer>
@@ -31,7 +30,7 @@
 #include <QVector>
 
 #include "SidebarItem.h"
-#include "backend/HTTPConnector.h"
+#include "backend/ThreadFollowService.h"
 
 namespace Mattermost {
 
@@ -62,20 +61,7 @@ signals:
     void attentionCountChanged(uint32_t count);
 
 private:
-    struct ThreadEntry {
-        QString id;
-        QString channelId;
-        QString teamId;
-        QString authorId;
-        QString message;
-        uint64_t lastViewedAt = 0;
-        uint64_t lastReplyAt = 0;
-        int unreadReplies = 0;
-        int unreadMentions = 0;
-        bool urgent = false;
-        bool synthetic = false;
-    };
-
+    using ThreadEntry = ThreadFollowService::ThreadSummary;
     using EntryType = SidebarItem::Kind;
 
     // Transitional names keep the implementation readable without introducing
@@ -95,21 +81,14 @@ private:
     void notePost(BackendChannel& channel, const BackendPost& post);
     void clearSyntheticMentions(const QString& channelId);
     void scheduleThreadRefresh();
-    void fetchTeamPage(const std::shared_ptr<QStringList>& teamIds,
-                       int teamIndex,
-                       const QString& before,
-                       const std::shared_ptr<QVector<ThreadEntry>>& collected,
-                       quint64 generation);
-    void finishThreadRefresh(const std::shared_ptr<QVector<ThreadEntry>>& collected,
-                             quint64 generation);
     void openThread(const QString& channelId, const QString& threadId, const QString& teamId);
     void markThreadRead(const QString& teamId, const QString& threadId);
     QString threadLabel(const ThreadEntry& thread) const;
 
     Backend* backend = nullptr;
-    HTTPConnector httpConnector;
     QVector<ThreadEntry> serverThreads;
     QHash<QString, ThreadEntry> syntheticMentions;
+    QHash<QString, uint64_t> pendingSince;
     QTimer threadRefreshTimer;
     QString retainedChannelId;
     QString retainedThreadId;
@@ -118,7 +97,6 @@ private:
     bool refreshing = false;
     bool threadRefreshInFlight = false;
     bool threadRefreshRequested = false;
-    quint64 threadRefreshGeneration = 0;
     int lastAttentionCount = -1;
 };
 

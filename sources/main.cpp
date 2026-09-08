@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -25,7 +25,10 @@
 #include "login/LoginDialog.h"
 #include "mainwindow.h"
 #include "backend/Backend.h"
+#include "backend/CustomEmojiService.h"
 #include "config/Config.h"
+#include "ui/OverlayScrollBarManager.h"
+#include "ui/SplitterHandleManager.h"
 
 namespace Mattermost {
 
@@ -52,6 +55,10 @@ inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 ,trayIconMenu (std::make_unique<QMenu> (nullptr))
 ,currentWindow (nullptr)
 {
+    OverlayScrollBarManager::install(*this);
+    SplitterHandleManager::install(*this);
+    (void)CustomEmojiService::instance(backend);
+
     Config::init ();
 	trayIcon->setToolTip(tr("Mattermost Qt"));
 	trayIcon->setContextMenu (trayIconMenu.get());
@@ -80,6 +87,7 @@ void MattermostApplication::openLoginWindow ()
 		//create Main Window and open it, after successful login
 		loginDialog = nullptr;
 		mainWindow = std::make_unique<MainWindow> (nullptr, *trayIcon, backend);
+        mainWindow->installRealtimeUiSync();
 		mainWindow->show();
 		currentWindow = mainWindow.get();
 	});

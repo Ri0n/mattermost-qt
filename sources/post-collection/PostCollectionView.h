@@ -11,6 +11,7 @@
 
 #include "backend/HTTPConnector.h"
 
+class QAbstractButton;
 class QComboBox;
 class QLabel;
 class QToolButton;
@@ -21,6 +22,7 @@ class Backend;
 class BackendChannel;
 class BackendPost;
 class InteractiveTextEdit;
+class ThemeIconButton;
 
 /**
  * Virtualized post collection used by Saved, Search, and an in-channel Pinned view.
@@ -47,6 +49,13 @@ public:
     void activateSearch(const QString& preferredTeamId = QString());
     void activatePinned(BackendChannel& channel);
 
+    // Feed the logged-in user's realtime flagged_post preference changes into
+    // an already open Saved collection. Other collection modes ignore them.
+    void syncFlaggedPost(const QString& postId, bool flagged)
+    {
+        handleFlaggedPostChanged(postId, flagged);
+    }
+
 signals:
     void postActivated(const QString& postId);
 
@@ -67,7 +76,9 @@ private:
     int indexOfPost(const QString& postId) const;
     QString originLabel(const BackendPost& post) const;
     void removeSavedPost(const QString& postId);
-    void unpinPost(const QString& postId, QToolButton* button);
+    void removeSavedPostLocally(const QString& postId);
+    void handleFlaggedPostChanged(const QString& postId, bool flagged);
+    void unpinPost(const QString& postId, QAbstractButton* button);
     void updateStatus();
 
     Backend& backend;
@@ -79,6 +90,9 @@ private:
     QToolButton* searchAction = nullptr;
     BackendChannel* pinnedChannel = nullptr;
     HTTPConnector actionConnector;
+
+    QLabel* _titleLabel = nullptr;
+    ThemeIconButton* _refreshButton = nullptr;
 
     std::vector<std::unique_ptr<BackendPost>> ownedPosts;
     std::vector<BackendPost*> posts;

@@ -146,6 +146,9 @@ const QMap<QString, void(*)(WebSocketConnector&, const QJsonObject&, const QJson
 	{"channel_created",		handler<ChannelCreatedEvent>},
 	{"channel_updated",		handler<ChannelUpdatedEvent>},
 	{"open_dialog",			handler<OpenDialogEvent>},
+    {"preference_changed",  handler<PreferenceChangedEvent>},
+    {"preferences_changed", handler<PreferencesChangedEvent>},
+    {"preferences_deleted", handler<PreferencesDeletedEvent>},
 };
 
 bool printEvent (const QString& name)
@@ -158,7 +161,10 @@ bool printEvent (const QString& name)
 			name == "reaction_removed"	||
 			name == "user_removed"		||
 			name == "user_updated"		||
-			name == "leave_team"
+			name == "leave_team"      ||
+            name == "preference_changed" ||
+            name == "preferences_changed" ||
+            name == "preferences_deleted"
 	) {
 		return false;
 	}

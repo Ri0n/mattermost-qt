@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -51,6 +51,8 @@ public:
 	~BackendPoll ();
 public:
 	void fillMetadata (const QJsonObject& jsonObject);
+	/** Refresh post-backed poll fields without replacing this QObject or metadata. */
+	void updateDefinition (const BackendPoll& other);
 signals:
 	void onMetadataUpdated ();
 private:

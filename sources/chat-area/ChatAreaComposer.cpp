@@ -24,10 +24,17 @@
 #include <QEvent>
 #include <QFont>
 #include <QPushButton>
+#include <QSet>
 #include <QTimer>
 
 #include "ChatLogWidget.h"
 #include "QuotedReplyController.h"
+#include "backend/Backend.h"
+#include "backend/MentionGroupService.h"
+#include "backend/Storage.h"
+#include "backend/types/BackendChannel.h"
+#include "backend/types/BackendTeam.h"
+#include "backend/types/BackendUser.h"
 #include "ui/ThemeIconWidgets.h"
 #include "ui_ChatArea.h"
 
@@ -79,6 +86,122 @@ void ChatArea::setupComposerUi()
     const int verticalPadding = std::max(
         2, ui->outgoingPostCreator->fontMetrics().lineSpacing() * 2 / 5);
     ui->composerLayout->setContentsMargins(0, verticalPadding, 0, verticalPadding);
+
+    InteractiveTextEdit::CompletionRule mentionRule;
+    mentionRule.prefix = QStringLiteral("@");
+    mentionRule.provider = [this] {
+        using Candidate = InteractiveTextEdit::CompletionCandidate;
+        QVector<Candidate> candidates;
+        QSet<QString> seen;
+
+        const auto appendCandidate = [&candidates, &seen](Candidate candidate) {
+            const QString key = candidate.insertText.toCaseFolded();
+            if (key.isEmpty() || seen.contains(key)) {
+                return;
+            }
+            seen.insert(key);
+            candidates.push_back(std::move(candidate));
+        };
+
+        const auto appendSpecial = [&appendCandidate, this](const QString& name,
+                                                             const QString& detail) {
+            Candidate candidate;
+            candidate.displayText = QStringLiteral("@") + name;
+            candidate.insertText = name;
+            candidate.detailText = detail;
+            appendCandidate(std::move(candidate));
+        };
+        appendSpecial(QStringLiteral("channel"), tr("Notify everyone in this channel"));
+        appendSpecial(QStringLiteral("all"), tr("Notify everyone in this channel"));
+        appendSpecial(QStringLiteral("here"), tr("Notify online members in this channel"));
+
+        const QString teamId = channel.team ? channel.team->id : QString();
+        if (!teamId.isEmpty()) {
+            auto& groupService = MentionGroupService::instance(backend);
+            QVector<const MentionGroup*> groups;
+            const QHash<QString, QString> groupIds = groupService.mentionIds(teamId);
+            groups.reserve(groupIds.size());
+            for (auto it = groupIds.cbegin(); it != groupIds.cend(); ++it) {
+                if (const MentionGroup* group = groupService.groupById(teamId, it.value())) {
+                    groups.push_back(group);
+                }
+            }
+            std::sort(groups.begin(), groups.end(),
+                      [](const MentionGroup* lhs, const MentionGroup* rhs) {
+                return QString::localeAwareCompare(lhs->name, rhs->name) < 0;
+            });
+            for (const MentionGroup* group : groups) {
+                if (!group || group->name.isEmpty()) {
+                    continue;
+                }
+                Candidate candidate;
+                candidate.displayText = QStringLiteral("@") + group->name;
+                candidate.insertText = group->name;
+                candidate.detailText = group->displayName;
+                if (group->memberCount > 0) {
+                    const QString countText = tr("%n member(s)", nullptr, group->memberCount);
+                    candidate.detailText = candidate.detailText.isEmpty()
+                        ? countText : candidate.detailText + QStringLiteral(" · ") + countText;
+                }
+                candidate.filterKeys.push_back(group->displayName);
+                appendCandidate(std::move(candidate));
+            }
+        }
+
+        QVector<const BackendUser*> users;
+        const auto& storedUsers = backend.getStorage().getAllUsers();
+        users.reserve(static_cast<int>(storedUsers.size()));
+        for (const auto& entry : storedUsers) {
+            if (!entry.second.username.isEmpty()) {
+                users.push_back(&entry.second);
+            }
+        }
+        std::sort(users.begin(), users.end(), [](const BackendUser* lhs, const BackendUser* rhs) {
+            const QString lhsName = lhs->getDisplayName().isEmpty()
+                ? lhs->username : lhs->getDisplayName();
+            const QString rhsName = rhs->getDisplayName().isEmpty()
+                ? rhs->username : rhs->getDisplayName();
+            return QString::localeAwareCompare(lhsName, rhsName) < 0;
+        });
+        for (const BackendUser* user : users) {
+            if (!user) {
+                continue;
+            }
+            Candidate candidate;
+            candidate.displayText = user->getDisplayName();
+            if (candidate.displayText.isEmpty()) {
+                candidate.displayText = user->username;
+            }
+            candidate.insertText = user->username;
+            candidate.detailText = QStringLiteral("@") + user->username;
+            if (!user->nickname.isEmpty()) {
+                candidate.filterKeys.push_back(user->nickname);
+            }
+            if (!user->first_name.isEmpty()) {
+                candidate.filterKeys.push_back(user->first_name);
+            }
+            if (!user->last_name.isEmpty()) {
+                candidate.filterKeys.push_back(user->last_name);
+            }
+            appendCandidate(std::move(candidate));
+        }
+
+        return candidates;
+    };
+    ui->outgoingPostCreator->setCompletionRules({std::move(mentionRule)});
+
+    const QString teamId = channel.team ? channel.team->id : QString();
+    if (!teamId.isEmpty()) {
+        auto& groupService = MentionGroupService::instance(backend);
+        auto* editor = ui->outgoingPostCreator;
+        connect(&groupService, &MentionGroupService::groupsChanged, editor,
+                [editor, teamId](const QString& changedTeamId) {
+            if (changedTeamId == teamId) {
+                editor->refreshCompletions();
+            }
+        });
+        groupService.ensureTeamGroups(teamId);
+    }
 
     // Install the context controller eagerly so it also observes edit mode,
     // which can be entered without first using quoted replies.

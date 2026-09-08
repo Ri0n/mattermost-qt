@@ -29,6 +29,7 @@
 #include <QtWebSockets/QWebSocket>
 #include <QNetworkCookie>
 #include <QNetworkReply>
+#include <QPointer>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -941,14 +942,14 @@ void Backend::retrievePollMetadata (BackendPoll& poll)
 
 	LOG_DEBUG ("retrievePollMetadata request");
 
-	httpConnector.get (request, HttpResponseCallback ([this, &poll](const QJsonDocument& doc) {
+	QPointer<BackendPoll> pollGuard(&poll);
+	httpConnector.get (request, HttpResponseCallback ([pollGuard](const QJsonDocument& doc) {
+		if (!pollGuard) {
+			return;
+		}
 
 		LOG_DEBUG ("retrievePollMetadata reply");
-
-		QString jsonString = doc.toJson(QJsonDocument::Indented);
-		std::cout << jsonString.toStdString() << std::endl;
-
-		poll.fillMetadata (doc.object());
+		pollGuard->fillMetadata (doc.object());
 	}));
 }
 

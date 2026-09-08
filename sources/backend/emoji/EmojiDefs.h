@@ -108,6 +108,11 @@ using EmojiSeq = uint16_t;
  */
 struct EmojiID {
 
+	explicit operator bool () const
+	{
+		return seq != 0;
+	}
+
 	bool operator ! () const
 	{
 		return !seq;

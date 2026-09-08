@@ -55,6 +55,19 @@ BackendPoll::BackendPoll (const QString& pollID, const QJsonObject& jsonObject)
 
 BackendPoll::~BackendPoll () = default;
 
+void BackendPoll::updateDefinition (const BackendPoll& other)
+{
+	if (id != other.id) {
+		return;
+	}
+
+	authorName = other.authorName;
+	title = other.title;
+	text = other.text;
+	options = other.options;
+	hasEnded = other.hasEnded;
+}
+
 void Mattermost::BackendPoll::fillMetadata (const QJsonObject& jsonObject)
 {
 	metadata.ownVoteOptions.clear();

@@ -10,6 +10,7 @@
 #include "backend/types/BackendPost.h"
 #include "post/InteractivePostWidget.h"
 #include "post/PostWidget.h"
+#include "ui/OverlayScrollBarManager.h"
 
 namespace Mattermost {
 
@@ -40,13 +41,9 @@ const char* sourceName(const AbstractPostSource* source)
 } // namespace
 
 ChatLogWidget::ChatLogWidget(QWidget* parent)
-    : LongListWidget(parent)
+    : PostListWidget(parent)
 {
     setDefaultItemHeight(96);
-    setMaterializationLimit(200);
-    setRequestBlockSize(10);
-    setPrefetchScreens(1);
-    setSeekDebounceMs(100);
 
     connect(this, &LongListWidget::rangeRequested, this,
             [this](int first, int last, RequestReason reason, quint64 generation) {
@@ -92,6 +89,10 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
             << " source=" << sourceName(postSource)
             << " range=[" << first << ',' << last << ']'
             << " count=" << materializedCount();
+        if (_initialScrollBarPulsePending && first >= 0 && last >= first
+            && OverlayScrollBarManager::pulse(*this)) {
+            _initialScrollBarPulsePending = false;
+        }
         scheduleNavigationFinalize();
     });
 

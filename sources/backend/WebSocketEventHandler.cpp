@@ -27,6 +27,7 @@
 #include <algorithm>
 
 #include <QJsonDocument>
+#include <QTimer>
 #include "Backend.h"
 #include "PostRepository.h"
 #include "Storage.h"
@@ -39,6 +40,18 @@ WebSocketEventHandler::WebSocketEventHandler (Backend& backend)
 :backend (backend)
 ,storage (backend.getStorage())
 {
+    // direct_added identifies a channel before retrieveDirectChannel() has
+    // necessarily completed. Drain any posted events that arrived in that
+    // narrow asynchronous window as soon as Storage publishes the channel.
+    auto drainNewConversation = [this](BackendChannel& channel) {
+        drainPendingDirectPosts(channel);
+    };
+    QObject::connect(&storage.directChannels,
+                     &BackendDirectChannelsTeam::onNewChannel,
+                     &backend, drainNewConversation);
+    QObject::connect(&storage.groupChannels,
+                     &BackendDirectChannelsTeam::onNewChannel,
+                     &backend, drainNewConversation);
 }
 
 
@@ -65,27 +78,59 @@ void WebSocketEventHandler::handleEvent (const PostEvent& event)
 	// independently and persists only recently opened channels.
 	repository.cachePostObject(event.postObject);
 
-	BackendChannel* channel = storage.getChannelById (event.channelId);
-	if (!channel) {
-		return;
-	}
+    BackendChannel* channel = storage.getChannelById(event.channelId);
+    if (!channel) {
+        // Unknown arbitrary channels remain ignored as before. Only direct_added
+        // opens a bounded race window in which we know a channel model is
+        // actively being resolved and a following posted event is legitimate.
+        if (!resolvingDirectChannels.contains(event.channelId)) {
+            return;
+        }
+
+        auto& pending = pendingDirectPosts[event.channelId];
+        const QString postId = event.postObject.value(QStringLiteral("id")).toString();
+        const bool duplicate = !postId.isEmpty()
+            && std::any_of(pending.cbegin(), pending.cend(), [&postId](const QJsonObject& object) {
+                return object.value(QStringLiteral("id")).toString() == postId;
+            });
+        if (!duplicate) {
+            if (pending.size() >= MaxPendingPostsPerChannel) {
+                pending.removeFirst();
+            }
+            pending.push_back(event.postObject);
+        }
+        return;
+    }
+
+    deliverPost(event.channelId, event.postObject);
+}
+
+void WebSocketEventHandler::deliverPost(const QString& channelId,
+                                        const QJsonObject& postObject)
+{
+    BackendChannel* channel = storage.getChannelById(channelId);
+    if (!channel) {
+        return;
+    }
+
+    auto& repository = PostRepository::instance(backend);
 
 	// Timeline edge metadata must advance even when the channel is outside the
 	// resident-body admission horizon. last_post_at includes replies, while the
 	// root-only chat timeline uses last_root_post_at as its freshness marker.
-	const uint64_t createAt = event.postObject.value(QStringLiteral("create_at"))
+	const uint64_t createAt = postObject.value(QStringLiteral("create_at"))
 		.toVariant().toULongLong();
 	channel->last_post_at = std::max(channel->last_post_at, createAt);
-	if (event.postObject.value(QStringLiteral("root_id")).toString().isEmpty()) {
+	if (postObject.value(QStringLiteral("root_id")).toString().isEmpty()) {
 		channel->last_root_post_at = std::max(channel->last_root_post_at, createAt);
 	}
 
-	if (!repository.shouldRetainChannelInMemory(event.channelId)) {
+	if (!repository.shouldRetainChannelInMemory(channelId)) {
 		// Global unread/mention/desktop-notification consumers still need the
 		// event, but an inactive cold channel must not gain a durable BackendPost.
 		// Backend::onNewPost is currently a same-thread direct signal, so this
 		// transient object is valid for the complete synchronous fan-out.
-		BackendPost transientPost(event.postObject, storage);
+		BackendPost transientPost(postObject, storage);
 		LOG_DEBUG ("Transient post in cold channel '" << channel->getTeamAndChannelName()
 		           << "' by " << transientPost.getDisplayAuthorName() << ": "
 		           << transientPost.message);
@@ -93,12 +138,29 @@ void WebSocketEventHandler::handleEvent (const PostEvent& event)
 		return;
 	}
 
-	BackendPost* post = channel->addPost (event.postObject);
+	BackendPost* post = channel->addPost(postObject);
+    if (!post) {
+        return;
+    }
 
 	LOG_DEBUG ("Post in '" << channel->getTeamAndChannelName() << "' by " << post->getDisplayAuthorName() << ": " << post->message);
 
 	emit channel->onNewPost (*post);
 	emit backend.onNewPost (*channel, *post);
+}
+
+void WebSocketEventHandler::drainPendingDirectPosts(BackendChannel& channel)
+{
+    resolvingDirectChannels.remove(channel.id);
+    QVector<QJsonObject> pending = pendingDirectPosts.take(channel.id);
+    std::stable_sort(pending.begin(), pending.end(), [](const QJsonObject& lhs,
+                                                        const QJsonObject& rhs) {
+        return lhs.value(QStringLiteral("create_at")).toVariant().toULongLong()
+            < rhs.value(QStringLiteral("create_at")).toVariant().toULongLong();
+    });
+    for (const QJsonObject& postObject : std::as_const(pending)) {
+        deliverPost(channel.id, postObject);
+    }
 }
 
 void WebSocketEventHandler::handleEvent (const PostEditedEvent& event)
@@ -220,7 +282,32 @@ void WebSocketEventHandler::handleEvent (const StatusChangeEvent& event)
 void WebSocketEventHandler::handleEvent (const NewDirectChannelEvent& event)
 {
 	LOG_DEBUG ("New Direct channel " << event.channelId << " created by: " << event.userId);
+    if (event.channelId.isEmpty()) {
+        return;
+    }
+
+    if (BackendChannel* existing = storage.getChannelById(event.channelId)) {
+        drainPendingDirectPosts(*existing);
+        return;
+    }
+
+    resolvingDirectChannels.insert(event.channelId);
 	backend.retrieveDirectChannel (event.channelId);
+
+    // Do not retain a failed resolution forever. Normal channel discovery or a
+    // later websocket event can still recover it, while this narrow queue stays
+    // bounded in both time and memory.
+    const QString channelId = event.channelId;
+    QTimer::singleShot(15000, &backend, [this, channelId] {
+        if (storage.getChannelById(channelId)) {
+            if (BackendChannel* channel = storage.getChannelById(channelId)) {
+                drainPendingDirectPosts(*channel);
+            }
+            return;
+        }
+        resolvingDirectChannels.remove(channelId);
+        pendingDirectPosts.remove(channelId);
+    });
 }
 
 void WebSocketEventHandler::handleEvent (const NewUserEvent& event)

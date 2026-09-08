@@ -33,7 +33,9 @@ int channelType(const QModelIndex& index)
 bool isConversationRow(const QModelIndex& index)
 {
     const int kind = index.data(SidebarItem::KindRole).toInt();
-    return kind == SidebarItem::Channel || kind == SidebarItem::VirtualDestination;
+    return kind == SidebarItem::Channel
+        || kind == SidebarItem::Thread
+        || kind == SidebarItem::VirtualDestination;
 }
 
 bool isSavedDestination(const QModelIndex& index)

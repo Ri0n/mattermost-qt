@@ -97,14 +97,11 @@ public:
 	//get a team (/teams/teamID)
 	void retrieveTeam (QString teamID);
 
-	//get all public channels for a team (/teams/teamID/channels)
+	//get all public channels for a team (/teams)
 	void retrieveTeamPublicChannels (QString teamID, std::function<void(std::list<BackendChannel>&)> callback);
 
 	//get own channel memberships (/users/me/teams/teamID/channels)
 	void retrieveOwnChannelMembershipsForTeam (BackendTeam& team, std::function<void(BackendChannel&)> callback);
-
-	//get own channel memberships from all teams (/users/me/channel_members)
-	//void retrieveOwnAllChannelMemberships (std::function<void()> callback);
 
 	//get multiple team members (/teams/{teamID}/members)
 	void retrieveTeamMembers (BackendTeam& team, int page = 0);
@@ -220,7 +217,6 @@ signals:
 	 */
 	void onUnreadPostsAtStartup (const BackendChannel&);
 
-
 	/**
 	 * Called when a channel is being viewed, either from this or from another Mattermost instance
 	 * @param channel channel
@@ -246,6 +242,9 @@ signals:
      * @param team
      */
 	void onAddedToTeam (BackendTeam&);
+
+    /** Emitted when the logged-in user's flagged_post preference changes. */
+    void onFlaggedPostChanged (const QString& postId, bool flagged);
 
     void onNetworkError (uint32_t errorNumber, const QString& errorText);
     void onHttpError (uint32_t errorNumber, const QString& errorText);
@@ -274,4 +273,3 @@ private:
 };
 
 } /* namespace Mattermost */
-

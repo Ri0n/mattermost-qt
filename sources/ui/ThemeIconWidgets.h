@@ -19,19 +19,18 @@ namespace Mattermost {
 
 inline constexpr char ComposerBusyTextProperty[] = "_mmqt_composer_busy_text";
 inline constexpr char ComposerMessageLoadingProperty[] = "_mmqt_composer_message_loading";
+inline constexpr char ThemeIconResourceProperty[] = "_mmqt_theme_icon_resource";
+inline constexpr char ThemeIconBusyProperty[] = "_mmqt_theme_icon_busy";
 
 /**
- * Borderless composer action button. The normal QPushButton style is not
- * painted at all, so desktop styles cannot reintroduce a hover frame and a
- * QStyleSheetStyle wrapper is unnecessary. Both symbolic icons and the textual
- * send glyph are drawn from the same current application palette.
+ * Borderless palette-aware action button.
  *
- * The attach action also owns the composer's transient busy presentation. A
- * send/upload operation uses ComposerBusyTextProperty while chat-history
- * loading uses ComposerMessageLoadingProperty. Either state replaces the
- * paperclip in-place with the same centered compact spinner, keeping composer
- * geometry stable. Independent properties allow overlapping operations to end
- * without clearing each other's busy presentation.
+ * A symbolic resource supplied through ThemeIconResourceProperty is tinted from
+ * the current application palette every time the theme changes. Setting
+ * ThemeIconBusyProperty replaces the icon in-place with the shared compact
+ * spinner. Composer buttons retain their historical object-name behavior, so
+ * callers can opt into the generic properties without changing existing UI
+ * files.
  */
 class ThemeIconButton final : public QPushButton
 {
@@ -46,12 +45,14 @@ private:
     QString symbolicResource() const;
     bool isBusy() const;
     void syncBusyAnimation();
+    void invalidateRenderedIcon();
 
-    QString renderedTint;
-    QSize renderedSize;
-    QPixmap renderedPixmap;
-    QTimer busyAnimationTimer;
-    int busyPhase = 0;
+    QString _renderedTint;
+    QString _renderedResource;
+    QSize _renderedSize;
+    QPixmap _renderedPixmap;
+    QTimer _busyAnimationTimer;
+    int _busyPhase = 0;
 };
 
 } // namespace Mattermost

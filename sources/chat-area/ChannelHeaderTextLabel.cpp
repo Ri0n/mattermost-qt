@@ -30,8 +30,10 @@
 #include <QTextDocument>
 
 #include "ChatArea.h"
+#include "backend/emoji/EmojiRegistryNotifier.h"
 #include "navigation/AppNavigationService.h"
 #include "post/MessageFormatter.h"
+#include "ui/EmojiPresentation.h"
 #include "ui/PresenceAvatarLabel.h"
 
 namespace Mattermost {
@@ -49,6 +51,19 @@ ChannelHeaderTextLabel::ChannelHeaderTextLabel(QWidget* parent)
 
     connect(this, &QLabel::linkActivated, this, [this](const QString& href) {
         openLink(QUrl(href));
+    });
+    connect(&EmojiRegistryNotifier::instance(),
+            &EmojiRegistryNotifier::customEmojiAdded,
+            this,
+            [this](const QString& name) {
+        const QString token = QLatin1Char(':') + name + QLatin1Char(':');
+        if (!sourceText.contains(token)) {
+            return;
+        }
+        // Topics are often rendered before the asynchronous custom-emoji
+        // download finishes. Reformat the original source once the referenced
+        // emoji enters EmojiInfo rather than leaving the literal :name: text.
+        setText(sourceText);
     });
 
     hideTimer.setSingleShot(true);
@@ -100,7 +115,10 @@ void ChannelHeaderTextLabel::setText(const QString& text)
     }
 
     show();
-    formattedText = MessageFormatter::formatMessageText(text);
+    formattedText = EmojiPresentation::normalizeHtml(
+        MessageFormatter::formatMessageText(text),
+        font(),
+        EmojiPresentation::Mode::Inline);
     QLabel::setText(formattedText);
     updateCollapsedHeight();
 
@@ -333,6 +351,9 @@ bool ChannelHeaderTextLabel::eventFilter(QObject* watched, QEvent* event)
         case QEvent::FontChange:
             if (isLabel) {
                 updateCollapsedHeight();
+                if (!sourceText.isEmpty()) {
+                    setText(sourceText);
+                }
             }
             break;
         case QEvent::PaletteChange:
