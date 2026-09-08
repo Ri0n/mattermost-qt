@@ -37,6 +37,7 @@
 
 #include "MessageContentWidget.h"
 #include "MessageFormatter.h"
+#include "PostPermalinkUtils.h"
 #include "PostQuoteFrame.h"
 #include "ThreadSummaryWidget.h"
 #include "UserMentionLinkifier.h"
@@ -123,6 +124,7 @@ PostWidget::PostWidget(Backend& backend,
 	        this, &PostWidget::dimensionsChanged);
 	messageContent->setMessage(displayMessage(post, post.message));
 	connectMessageLinks();
+	refreshPermalinkPreviews();
 	ui->time->setText(getMessageTimeString(post.create_at));
 
 	connect(messageContent, &MessageContentWidget::linkHovered,
@@ -318,6 +320,14 @@ void PostWidget::showPostContextMenu(const QPoint& globalPos)
         });
     }
 
+    QAction* copyMessageLinkAction = menu.addAction(tr("Copy message link"));
+    connect(copyMessageLinkAction, &QAction::triggered, this, [this] {
+        const QString link = messagePermalink(post);
+        if (!link.isEmpty()) {
+            QApplication::clipboard()->setText(link);
+        }
+    });
+
     const QString selectedText = getSelectedText();
     if (!selectedText.isEmpty()) {
         QAction* copySelectedAction = menu.addAction(tr("Copy selected text"));
@@ -396,7 +406,6 @@ void PostWidget::setAuthor(Backend& backendInstance, const BackendUser* user)
 			QStringList {user->id}, [guard] {
 				if (guard) {
 					guard->updateAuthorAvatar();
-				}
 			});
 	}
 }
@@ -417,6 +426,7 @@ void PostWidget::setEdited(const QString& message)
 {
 	messageContent->setMessage(displayMessage(post, message));
 	connectMessageLinks();
+	refreshPermalinkPreviews();
 
 	if (post.poll) {
 		clearMessageText();
@@ -682,6 +692,7 @@ void PostWidget::markAsDeleted()
 	post.isDeleted = true;
 	quoteFrame.reset();
 	quotedReplyPreview.reset();
+	permalinkPreviews.clear();
 	attachments.reset();
 	reactions.reset();
 	if (poll) {
