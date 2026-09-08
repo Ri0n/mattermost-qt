@@ -31,6 +31,7 @@
 #include "chat-area/ChatLogWidget.h"
 #include "mainwindow.h"
 #include "navigation/AppNavigationService.h"
+#include "navigation/ThreadPaneLayout.h"
 
 namespace Mattermost {
 namespace {
@@ -556,12 +557,7 @@ void NavigationUiController::attachThread(ChatArea* area)
     threadStack->show();
     area->show();
 
-    const QList<int> sizes = contentSplitter->sizes();
-    const bool threadPaneCollapsed = sizes.size() < 2 || sizes.at(1) <= 0;
-    if (!threadSplitterStateRestored || threadPaneCollapsed) {
-        const int width = std::max(900, contentSplitter->width());
-        contentSplitter->setSizes({std::max(480, width * 2 / 3),
-                                   std::max(320, width / 3)});
+    if (ensureThreadPaneExpanded(*contentSplitter, !threadSplitterStateRestored)) {
         threadSplitterStateRestored = true;
     }
     updateThreadButton(area);
