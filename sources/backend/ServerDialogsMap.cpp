@@ -99,12 +99,17 @@ void ServerDialogsMap::sendEvent (const OpenDialogEvent& event)
 		return;
 	}
 
-	// Interactive-dialog submissions are channel scoped. Direct and group
-	// message channels intentionally have no team, so Mattermost expects an
-	// empty team_id for them instead of rejecting the submission locally.
+	// Team channels carry their own team. DM/GM channels do not, but older
+	// Mattermost servers still validate SubmitDialogRequest::team_id. Use the
+	// exact UI team context from which the action was invoked in that case.
 	const QString teamId = currentChannel->team
 		? currentChannel->team->id
-		: QString();
+		: backend.getCurrentTeamContextId();
+
+	if (teamId.isEmpty()) {
+		LOG_DEBUG ("ServerDialogsMap::sendEvent: no team context for channel "
+		           << currentChannel->id);
+	}
 
 	QJsonObject json {
 		{"channel_id", 	currentChannel->id},
