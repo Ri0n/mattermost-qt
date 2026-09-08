@@ -656,36 +656,12 @@ void PostWidget::addThreadButton()
 
 void PostWidget::openThreadWindow()
 {
-	ChatArea* area;
-	if (parentChatArea->threadsAreas.empty()) {
-		area = new ChatArea(parentChatArea->backend, parentChatArea->channel,
-		                    post.id, parentChatArea);
-		area->root_id = post.id;
-        area->setWindowTitle(threadWindowTitle(parentChatArea->channel, post));
-		parentChatArea->threadsAreas.insert(area);
-		area->show();
-	} else {
-		auto it = parentChatArea->threadsAreas.begin();
-		const auto end = parentChatArea->threadsAreas.end();
-		for (; it != end; ++it) {
-			if ((*it)->root_id == post.id) {
-                (*it)->setWindowTitle(threadWindowTitle(parentChatArea->channel, post));
-				(*it)->activateWindow();
-				qDebug() << "exists";
-				break;
-			}
-		}
-		if (it == parentChatArea->threadsAreas.end()) {
-			area = new ChatArea(parentChatArea->backend, parentChatArea->channel,
-			                    post.id, parentChatArea);
-			area->root_id = post.id;
-            area->setWindowTitle(threadWindowTitle(parentChatArea->channel, post));
-			parentChatArea->threadsAreas.insert(area);
-			area->show();
-		}
-	}
+    if (!parentChatArea || post.id.isEmpty()) {
+        return;
+    }
 
-	qDebug() << post.id << post.has_thread << post.hidden << post.root_id;
+    AppNavigationService::instance(backend).openThread(
+        parentChatArea->getChannel().id, post.id);
 }
 
 void PostWidget::markAsDeleted()
