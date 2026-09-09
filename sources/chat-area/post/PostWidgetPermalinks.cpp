@@ -65,7 +65,7 @@ void PostWidget::refreshPermalinkPreviews()
 
         const QString userId = previewPost.value(QStringLiteral("user_id")).toString();
         QString authorName;
-        if (const BackendUser* author = backend.getStorage().getUserById(userId)) {
+        if (const BackendUser* author = backend_.getStorage().getUserById(userId)) {
             authorName = author->getDisplayName();
         }
         if (authorName.isEmpty()) {
@@ -93,10 +93,10 @@ void PostWidget::refreshPermalinkPreviews()
                             previewPost.value(QStringLiteral("message")).toString(),
                             hasAttachments);
         preview->setActivatedCallback([this, postId] {
-            AppNavigationService::instance(backend).openPost(postId);
+            AppNavigationService::instance(backend_).openPost(postId);
         });
         preview->setLinkActivatedCallback([this](const QUrl& url) {
-            AppNavigationService::instance(backend).openUrl(url);
+            AppNavigationService::instance(backend_).openUrl(url);
         });
 
         ui->verticalLayout->insertWidget(insertIndex++, preview.get());
