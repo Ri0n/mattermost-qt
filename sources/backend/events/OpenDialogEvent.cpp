@@ -30,12 +30,16 @@ namespace Mattermost {
 
 OpenDialogEvent::OpenDialogEvent (const QJsonObject& data, const QJsonObject&)
 {
-	//the dialog object is a JSON string inside the data object, with escaped json elements
-	QJsonObject dialogObject = QJsonDocument::fromJson (data.value ("dialog").toString().toUtf8()).object();
+	// The open-dialog payload is itself a JSON string inside data. Preserve the
+	// complete dialog definition; the UI must render its elements instead of
+	// blindly submitting an empty object.
+	const QJsonObject dialogObject = QJsonDocument::fromJson(
+		data.value("dialog").toString().toUtf8()).object();
 
-	url = dialogObject.value ("url").toString();
-	triggerID = dialogObject.value ("trigger_id").toString();
-	callbackID = dialogObject.value ("dialog").toObject().value ("callback_id").toString();
+	url = dialogObject.value("url").toString();
+	triggerID = dialogObject.value("trigger_id").toString();
+	dialog = dialogObject.value("dialog").toObject();
+	callbackID = dialog.value("callback_id").toString();
 }
 
 OpenDialogEvent::OpenDialogEvent (const QString& triggerID)

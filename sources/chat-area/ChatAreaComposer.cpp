@@ -23,6 +23,7 @@
 
 #include <QEvent>
 #include <QFont>
+#include <QMenu>
 #include <QPushButton>
 #include <QSet>
 #include <QTimer>
@@ -60,7 +61,22 @@ void ChatArea::setupComposerUi()
 
     ui->attachButton->setText(QString());
     ui->attachButton->setIconSize(QSize(ActionIconExtent, ActionIconExtent));
+    ui->attachButton->setToolTip(tr("Add"));
+    ui->attachButton->setAccessibleName(tr("Add"));
     configureActionButton(*ui->attachButton);
+
+    // Keep the composer surface compact: the paperclip is the single entry
+    // point for things added to a message. QPushButton::setMenu() opens the
+    // menu from the button's pressed path using QMenu::popup(), so this does not
+    // introduce a nested event loop.
+    auto* attachMenu = new QMenu(ui->attachButton);
+    QAction* fileAction = attachMenu->addAction(tr("File…"));
+    QAction* pollAction = attachMenu->addAction(tr("Poll…"));
+    connect(fileAction, &QAction::triggered,
+            ui->outgoingPostCreator, &OutgoingPostCreator::onAttachButtonClick);
+    connect(pollAction, &QAction::triggered,
+            ui->outgoingPostCreator, &OutgoingPostCreator::createPoll);
+    ui->attachButton->setMenu(attachMenu);
 
     configureActionButton(*ui->sendButton);
     QFont sendFont = ui->sendButton->font();

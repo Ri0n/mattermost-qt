@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -20,23 +20,86 @@
 #include "PostPoll.h"
 #include "ui_PostPoll.h"
 
-#include <QMessageBox>
 #include <QPushButton>
 #include <QSizePolicy>
 
 #include "backend/Backend.h"
+#include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPoll.h"
+#include "backend/types/BackendPost.h"
+#include "chat-area/ChatArea.h"
+#include "channel-tree/ChannelItem.h"
+#include "channel-tree/SidebarItem.h"
 
 namespace Mattermost {
+namespace {
+
+QString pollActionTeamContextId(QWidget* origin, Backend& backend, const BackendPost& post)
+{
+	if (BackendChannel* actionChannel = backend.getStorage().getChannelById(post.channel_id)) {
+		if (actionChannel->team) {
+			return actionChannel->team->id;
+		}
+	}
+
+	for (QWidget* widget = origin; widget; widget = widget->parentWidget()) {
+		auto* area = qobject_cast<ChatArea*>(widget);
+		if (!area) {
+			continue;
+		}
+
+		for (ChatArea* contextArea = area; contextArea;
+		     contextArea = contextArea->parentChatArea()) {
+			if (contextArea->channel.team) {
+				return contextArea->channel.team->id;
+			}
+			if (!contextArea->treeItem) {
+				continue;
+			}
+
+			const QString teamId = contextArea->treeItem
+				->data(0, SidebarItem::TeamIdRole).toString();
+			if (!teamId.isEmpty()) {
+				return teamId;
+			}
+		}
+		break;
+	}
+
+	return backend.getCurrentTeamContextId();
+}
+
+void sendPollAction(Backend& backend, QWidget* origin,
+                    const BackendPost& post, const QString& actionId)
+{
+	const QString teamId = pollActionTeamContextId(origin, backend, post);
+	if (!teamId.isEmpty()) {
+		backend.setCurrentTeamContextId(teamId);
+	}
+	backend.sendPostAction(post, actionId);
+}
+
+bool isAddOptionAction(const QString& actionId)
+{
+	return actionId == QStringLiteral("addOption");
+}
+
+bool isPollManagementAction(const QString& actionId)
+{
+	return actionId == QStringLiteral("endPoll")
+		|| actionId == QStringLiteral("deletePoll");
+}
+
+} // namespace
 
 PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll, QWidget *parent)
 :QFrame(parent)
-,ui(new Ui::PostPoll)
-,backend (backend)
+,ui_(new Ui::PostPoll)
+,backend_(backend)
 {
-	ui->setupUi(this);
+	ui_->setupUi(this);
 
-	ui->titleLabel->setText (poll.title);
+	ui_->titleLabel->setText (poll.title);
 
 	QString text (poll.text.toHtmlEscaped ());
 	text.replace("---\n", "");
@@ -55,7 +118,7 @@ PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll
 		pos = text.indexOf("**", start);
 	}
 
-	ui->textLabel->setText (text);
+	ui_->textLabel->setText (text);
 
 	for (const auto& option: poll.options) {
 		QPushButton* pushButton = new QPushButton (option.name, this);
@@ -67,36 +130,33 @@ PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll
 			pushButton->setDisabled (true);
 		}
 
-		ui->verticalLayout->addWidget(pushButton);
+		ui_->verticalLayout->addWidget(pushButton);
 
 		// Keep this vector aligned 1:1 with BackendPoll::options. Poll metadata
 		// reports indices in that full option array, which also contains admin
 		// actions. Storing only voting buttons here made those indices diverge and
 		// caused QList::operator[] assertions on valid metadata.
-		optionButtons.push_back(pushButton);
+		optionButtons_.push_back(pushButton);
 
 		const QString actionId = option.actionID;
-		if (actionId.isEmpty() || actionId.startsWith("vote")) {
-			connect(pushButton, &QPushButton::released, this,
-			        [this, &post, actionId] {
-				this->backend.sendPostAction(post, actionId);
-			});
-		} else {
-			adminButtons.push_back(pushButton);
-			connect(pushButton, &QPushButton::released, this,
-			        [this, &post, actionId, pushButton] {
-				if (QMessageBox::question(
-				        this, tr("Are you sure?"),
-				        tr("Are you sure that you want to %1?").arg(pushButton->text()))
-				    == QMessageBox::Yes) {
-					this->backend.sendPostAction(post, actionId);
-				}
-			});
+		connect(pushButton, &QPushButton::released, this,
+		        [this, &post, actionId] {
+			sendPollAction(backend_, this, post, actionId);
+		});
 
+		if (!actionId.isEmpty() && !actionId.startsWith(QStringLiteral("vote"))) {
 			QPalette pal = pushButton->palette();
 			pal.setColor (QPalette::Button, QColor(Qt::darkGray));
 			pushButton->setPalette (pal);
-			pushButton->setVisible (poll.metadata.hasAdminPermissions);
+		}
+
+		if (isAddOptionAction(actionId)) {
+			addOptionButtons_.push_back(pushButton);
+			pushButton->setVisible(
+				poll.metadata.hasAdminPermissions || poll.metadata.allowsPublicAddOption);
+		} else if (isPollManagementAction(actionId)) {
+			managementButtons_.push_back(pushButton);
+			pushButton->setVisible(poll.metadata.hasAdminPermissions);
 		}
 	}
 
@@ -104,13 +164,20 @@ PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll
 	// can outlive a materialized PostWidget, so a context-less lambda capturing
 	// this would otherwise run after the poll widget had been evicted.
 	connect(&poll, &BackendPoll::onMetadataUpdated, this, [this, &poll] {
-		for (QPushButton* adminButton: adminButtons) {
-			if (adminButton) {
-				adminButton->setVisible(poll.metadata.hasAdminPermissions);
+		for (QPushButton* addOptionButton: addOptionButtons_) {
+			if (addOptionButton) {
+				addOptionButton->setVisible(
+					poll.metadata.hasAdminPermissions || poll.metadata.allowsPublicAddOption);
 			}
 		}
 
-		for (QPushButton* button: optionButtons) {
+		for (QPushButton* managementButton: managementButtons_) {
+			if (managementButton) {
+				managementButton->setVisible(poll.metadata.hasAdminPermissions);
+			}
+		}
+
+		for (QPushButton* button: optionButtons_) {
 			if (!button) {
 				continue;
 			}
@@ -120,10 +187,10 @@ PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll
 		}
 
 		for (uint32_t idx: poll.metadata.ownVoteOptions) {
-			if (idx >= static_cast<uint32_t>(optionButtons.size())) {
+			if (idx >= static_cast<uint32_t>(optionButtons_.size())) {
 				continue;
 			}
-			QPushButton* button = optionButtons.at(static_cast<int>(idx));
+			QPushButton* button = optionButtons_.at(static_cast<int>(idx));
 			if (!button) {
 				continue;
 			}
@@ -132,7 +199,7 @@ PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll
 			button->setFont(font);
 		}
 
-		ui->verticalLayout->invalidate();
+		ui_->verticalLayout->invalidate();
 		updateGeometry();
 		if (QWidget* parent = parentWidget()) {
 			parent->updateGeometry();
@@ -142,13 +209,13 @@ PostPoll::PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll
 	// Request metadata only after the buttons and the lifetime-safe callback are
 	// in place. This also removes a needless race with very fast/local responses.
 	if (!poll.id.isEmpty()) {
-		backend.retrievePollMetadata (poll);
+		backend_.retrievePollMetadata (poll);
 	}
 }
 
 PostPoll::~PostPoll()
 {
-    delete ui;
+    delete ui_;
 }
 
 } /* namespace Mattermost */

@@ -1,10 +1,13 @@
 #include "PostCreateService.h"
 
+#include <QDebug>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPointer>
+#include <QStringList>
 
 #include "Backend.h"
 #include "NetworkRequest.h"
@@ -15,6 +18,40 @@
 #include "backend/types/BackendPost.h"
 
 namespace Mattermost {
+namespace {
+
+QString quoteMatterpollArgument(QString value)
+{
+    value.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    return QLatin1Char('"') + value + QLatin1Char('"');
+}
+
+QString buildMatterpollCommand(const QString& trigger, const BackendNewPollData& pollData)
+{
+    QStringList parts;
+    parts.push_back(QLatin1Char('/') + trigger);
+    parts.push_back(quoteMatterpollArgument(pollData.question));
+    for (const QString& option : pollData.options) {
+        parts.push_back(quoteMatterpollArgument(option));
+    }
+
+    if (pollData.isAnonymous) {
+        parts.push_back(QStringLiteral("--anonymous"));
+    }
+    if (pollData.isAnonymousCreator) {
+        parts.push_back(QStringLiteral("--anonymous-creator"));
+    }
+    if (pollData.showProgress) {
+        parts.push_back(QStringLiteral("--progress"));
+    }
+    if (pollData.allowAddOptions) {
+        parts.push_back(QStringLiteral("--public-add-option"));
+    }
+    parts.push_back(QStringLiteral("--votes=%1").arg(pollData.maxVotes));
+    return parts.join(QLatin1Char(' '));
+}
+
+} // namespace
 
 PostCreateService& PostCreateService::instance(Backend& backend)
 {
@@ -119,46 +156,97 @@ void PostCreateService::submitPoll(BackendChannel& channel,
                                    const BackendNewPollData& pollData,
                                    ResultCallback callback)
 {
-    if (!channel.team) {
+    // Matterpoll's interactive-dialog API is intentionally not used here: its
+    // create handler is hard-coded to option1..option3. The slash-command path
+    // accepts an arbitrary option list and supports the same poll settings.
+    const QString channelId = channel.id;
+    QString teamId = pollData.commandTeamId;
+    if (teamId.isEmpty() && channel.team) {
+        teamId = channel.team->id;
+    }
+    if (teamId.isEmpty()) {
+        qWarning().noquote() << "Poll command has no team execution context: channel="
+                             << channelId;
         if (callback) {
             callback(false);
         }
         return;
     }
 
-    NetworkRequest request(QStringLiteral("actions/dialogs/submit"));
-    QJsonObject json {
-        {QStringLiteral("callback_id"), QString()},
-        {QStringLiteral("channel_id"), channel.id},
-        {QStringLiteral("state"), QString()},
-        {QStringLiteral("url"), QStringLiteral("/plugins/com.github.matterpoll.matterpoll/api/v1/polls/create")},
-        {QStringLiteral("team_id"), channel.team->id},
-    };
+    const BackendNewPollData commandPollData = pollData;
+    QPointer<PostCreateService> guard(this);
 
-    QJsonObject submission {
-        {QStringLiteral("question"), pollData.question},
-    };
-    for (int i = 0; i < pollData.options.size(); ++i) {
-        submission.insert(QStringLiteral("option") + QString::number(i + 1),
-                          pollData.options.at(i));
-    }
-    if (pollData.isAnonymous) {
-        submission.insert(QStringLiteral("setting-anonymous"), true);
-    }
-    if (pollData.showProgress) {
-        submission.insert(QStringLiteral("setting-progress"), true);
-    }
-    if (pollData.allowAddOptions) {
-        submission.insert(QStringLiteral("setting-public-add-option"), true);
-    }
-    json.insert(QStringLiteral("submission"), submission);
-
-    const QByteArrayCreator payload(json);
-    httpConnector.post(request, payload, HttpResponseCallback(
-        [callback = std::move(callback)](QVariant status, QByteArray) mutable {
-            if (callback) {
-                callback(status.toInt() == QNetworkReply::NoError);
+    NetworkRequest configurationRequest(NetworkRequest::matterpoll,
+                                        QStringLiteral("configuration"));
+    httpConnector.get(configurationRequest, HttpResponseCallback(
+        [guard, channelId, teamId, commandPollData,
+         callback = std::move(callback)](QVariant configurationStatus,
+                                         const QJsonDocument& configurationDocument) mutable {
+            if (!guard) {
+                return;
             }
+
+            if (configurationStatus.toInt() != QNetworkReply::NoError
+                || !configurationDocument.isObject()) {
+                qWarning().noquote()
+                    << "Matterpoll configuration request failed: networkError="
+                    << configurationStatus.toInt();
+                if (callback) {
+                    callback(false);
+                }
+                return;
+            }
+
+            const QString trigger = configurationDocument.object()
+                .value(QStringLiteral("trigger")).toString().trimmed();
+            if (trigger.isEmpty()) {
+                qWarning() << "Matterpoll configuration returned an empty trigger";
+                if (callback) {
+                    callback(false);
+                }
+                return;
+            }
+
+            NetworkRequest request(QStringLiteral("commands/execute"));
+            QJsonObject json {
+                {QStringLiteral("channel_id"), channelId},
+                {QStringLiteral("command"), buildMatterpollCommand(trigger, commandPollData)},
+                {QStringLiteral("root_id"), commandPollData.rootId},
+                {QStringLiteral("team_id"), teamId},
+            };
+
+            qInfo().noquote() << "Poll command submit: channel=" << channelId
+                              << "root=" << commandPollData.rootId
+                              << "team=" << teamId
+                              << "trigger=/" << trigger
+                              << "options=" << commandPollData.options.size();
+
+            const QByteArrayCreator payload(json);
+            guard->httpConnector.post(request, payload, HttpResponseCallback(
+                [callback = std::move(callback)](QVariant status,
+                                                 QByteArray response,
+                                                 const QNetworkReply& reply) mutable {
+                    const bool transportSuccess = status.toInt() == QNetworkReply::NoError;
+                    const int httpStatus = reply.attribute(
+                        QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                    qInfo().noquote() << "Poll command submit finished: networkError="
+                                      << status.toInt()
+                                      << "httpStatus=" << httpStatus
+                                      << "bytes=" << response.size()
+                                      << "transportSuccess=" << transportSuccess;
+                    if (!transportSuccess && !response.trimmed().isEmpty()) {
+                        qWarning().noquote() << "Poll command submit response:"
+                                             << QString::fromUtf8(response.left(1024));
+                    }
+
+                    // A successful command HTTP response is not a reliable poll
+                    // acknowledgement: plugins may return HTTP 200 while posting
+                    // an ephemeral error. Successful creation is confirmed by the
+                    // correlated Matterpoll bot post in OutgoingPostCreator.
+                    if (!transportSuccess && callback) {
+                        callback(false);
+                    }
+                }));
         }));
 }
 

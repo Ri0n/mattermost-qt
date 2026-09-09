@@ -432,7 +432,7 @@ void PostWidget::setEdited(const QString& message)
 	if (post.poll) {
 		clearMessageText();
 		std::unique_ptr<PostPoll> newPoll =
-			std::make_unique<PostPoll>(poll->backend, post, *post.poll, this);
+			std::make_unique<PostPoll>(backend, post, *post.poll, this);
 		ui->verticalLayout->replaceWidget(poll.get(), newPoll.get());
 		poll = std::move(newPoll);
 	}

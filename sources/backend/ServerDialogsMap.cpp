@@ -22,12 +22,12 @@
  * along with Mattermost-QT. if not, see https://www.gnu.org/licenses/.
  */
 
-
 #include "ServerDialogsMap.h"
 
-#include <QJsonDocument>
 #include <QTimer>
+
 #include "Backend.h"
+#include "ServerUiService.h"
 #include "log.h"
 
 namespace Mattermost {
@@ -46,14 +46,13 @@ ServerDialogsMap::~ServerDialogsMap () = default;
 void ServerDialogsMap::addEvent (const OpenDialogEvent& event)
 {
 	LOG_DEBUG ("ServerDialogsMap::total events: " << events.size());
-	//LOG_DEBUG ("ServerDialogsMap::addEvent - WebSocket: " << event.triggerID);
 	auto it = events.find (event.triggerID);
 
 	bool hasHttpResponse = (it != events.end());
 
-	if (hasHttpResponse) {	//if there is previous HTTP response, send the event
+	if (hasHttpResponse) {
 		sendEvent (event);
-	} else {				//delete the event if no HTTP response comes
+	} else {
 		events.insert (event.triggerID, event);
 		QTimer::singleShot (5000, [this, triggerID = event.triggerID] {
 			auto it = events.find (triggerID);
@@ -71,15 +70,14 @@ void ServerDialogsMap::addEvent (const OpenDialogEvent& event)
 void ServerDialogsMap::addEvent (const QString& triggerID)
 {
 	LOG_DEBUG ("ServerDialogsMap::total events: " << events.size());
-	//LOG_DEBUG ("ServerDialogsMap::addEvent - HTTP: " << triggerID);
 
 	auto it = events.find (triggerID);
 
 	bool hasWsResponse = (it != events.end());
 
-	if (hasWsResponse) { 	//if there is previous WS response, send the event
+	if (hasWsResponse) {
 		sendEvent (*it);
-	} else {				//delete the event if no WS response comes
+	} else {
 		events.insert (triggerID, OpenDialogEvent (triggerID));
 		QTimer::singleShot (5000, [this, triggerID] {
 			auto it = events.find (triggerID);
@@ -95,25 +93,24 @@ void ServerDialogsMap::sendEvent (const OpenDialogEvent& event)
 	BackendChannel* currentChannel = backend.getCurrentChannel();
 
 	if (!currentChannel) {
-		LOG_DEBUG ("WebSocketEventHandler::handleEvent (OpenDialogEvent): no current channel set");
+		LOG_DEBUG ("ServerDialogsMap::sendEvent: no current channel set");
 		return;
 	}
 
-	if (!currentChannel->team) {
-		LOG_DEBUG ("WebSocketEventHandler::handleEvent (OpenDialogEvent): no current channel's team set");
-		return;
+	// Team channels carry their own team. DM/GM channels do not, but older
+	// Mattermost servers still validate SubmitDialogRequest::team_id. Use the
+	// exact UI team context from which the action was invoked in that case.
+	const QString teamId = currentChannel->team
+		? currentChannel->team->id
+		: backend.getCurrentTeamContextId();
+
+	if (teamId.isEmpty()) {
+		LOG_DEBUG ("ServerDialogsMap::sendEvent: no team context for channel "
+		           << currentChannel->id);
 	}
 
-	QJsonObject json {
-		{"channel_id", 	currentChannel->id},
-		{"callback_id", event.callbackID},
-		{"state", 		""},
-		{"submission", 	QJsonObject()},
-		{"team_id", 	currentChannel->team->id},
-		{"url", 		event.url}
-	};
-
-	backend.sendSubmitDialog (QJsonDocument (json));
+	ServerUiService::instance(backend).requestInteractiveDialog(
+		event.dialog, event.url, currentChannel->id, teamId);
 
 	auto it = events.find (event.triggerID);
 	if (it != events.end ()) {

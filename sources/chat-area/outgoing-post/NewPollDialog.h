@@ -45,6 +45,7 @@ private:
     void disableSendButton (const QString& tooltip);
 private:
     Ui::NewPollDialog *ui;
+    QString rootId;
 };
 
 } /* namespace Mattermost */

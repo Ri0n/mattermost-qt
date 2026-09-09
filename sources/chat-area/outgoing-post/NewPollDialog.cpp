@@ -23,40 +23,97 @@
  */
 
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QSet>
+
 #include "NewPollDialog.h"
+#include "OutgoingPostCreator.h"
 #include "ui_NewPollDialog.h"
 
 namespace Mattermost {
+namespace {
 
-NewPollDialog::NewPollDialog(QWidget *parent, BackendNewPollData initialPollData)
-:QDialog(parent)
-,ui(new Ui::NewPollDialog)
+QStringList pollOptionsFromText(const QString& text)
 {
-	ui->setupUi(this);
+    QStringList options;
+    const QStringList lines = text.split(QLatin1Char('\n'));
+    for (const QString& line : lines) {
+        const QString option = line.trimmed();
+        if (!option.isEmpty()) {
+            options.push_back(option);
+        }
+    }
+    return options;
+}
 
-	connect (ui->questionValue, &QLineEdit::textChanged, this, &NewPollDialog::validateInput);
-	connect (ui->option1Value, &QLineEdit::textChanged, this, &NewPollDialog::validateInput);
-	connect (ui->option2Value, &QLineEdit::textChanged, this, &NewPollDialog::validateInput);
+bool hasPollFlag(const QString& command, const QString& flag)
+{
+    const QRegularExpression expression(
+        QStringLiteral("(?:^|\\s)--%1(?:\\s|$)")
+            .arg(QRegularExpression::escape(flag)));
+    return expression.match(command).hasMatch();
+}
 
+} // namespace
 
-	ui->questionValue->setText (initialPollData.question);
+NewPollDialog::NewPollDialog(QWidget* parent, BackendNewPollData initialPollData)
+    : QDialog(parent)
+    , ui(new Ui::NewPollDialog)
+    , rootId(initialPollData.rootId)
+{
+    ui->setupUi(this);
+    ui->buttonBox->button(QDialogButtonBox::Ok)->setText(tr("Create"));
 
-	QLineEdit* optionsLineEditArr[] = { ui->option1Value, ui->option2Value, ui->option3Value };
+    // The legacy /poll path constructs BackendNewPollData inside the composer.
+    // Preserve the thread root from that composer so Matterpoll can create the
+    // generated post as a real thread reply. Also normalize settings here so
+    // older substring-based command parsing cannot confuse --anonymous with
+    // --anonymous-creator and can prefill newer Matterpoll settings.
+    if (const auto* creator = qobject_cast<const OutgoingPostCreator*>(parent)) {
+        if (rootId.isEmpty()) {
+            rootId = creator->rootId();
+        }
 
-	for (int i = 0; i < initialPollData.options.size(); ++i) {
-		optionsLineEditArr[i]->setText (initialPollData.options[i]);
-	}
+        const QString command = creator->toPlainText();
+        if (command.startsWith(QStringLiteral("/poll"))) {
+            initialPollData.isAnonymous = hasPollFlag(command, QStringLiteral("anonymous"));
+            initialPollData.isAnonymousCreator =
+                hasPollFlag(command, QStringLiteral("anonymous-creator"));
+            initialPollData.showProgress = hasPollFlag(command, QStringLiteral("progress"));
+            initialPollData.allowAddOptions =
+                hasPollFlag(command, QStringLiteral("public-add-option"));
 
-	if (initialPollData.isAnonymous) {
-		ui->checkBoxAnonymous->setChecked(true);
-	}
+            const QRegularExpression votesExpression(
+                QStringLiteral("(?:^|\\s)--votes=(\\d+)(?:\\s|$)"));
+            const QRegularExpressionMatch votesMatch = votesExpression.match(command);
+            if (votesMatch.hasMatch()) {
+                initialPollData.maxVotes = votesMatch.captured(1).toInt();
+            }
+        }
+    }
 
-	if (initialPollData.showProgress) {
-		ui->checkBoxProgress->setChecked(true);
-	}
+    connect(ui->questionValue, &QLineEdit::textChanged,
+            this, &NewPollDialog::validateInput);
+    connect(ui->optionsValue, &QPlainTextEdit::textChanged,
+            this, &NewPollDialog::validateInput);
 
-	validateInput ();
-	setAttribute(Qt::WA_DeleteOnClose);
+    ui->questionValue->setText(initialPollData.question);
+
+    QStringList initialOptions;
+    initialOptions.reserve(static_cast<int>(initialPollData.options.size()));
+    for (const QString& option : initialPollData.options) {
+        initialOptions.push_back(option);
+    }
+    ui->optionsValue->setPlainText(initialOptions.join(QLatin1Char('\n')));
+
+    ui->checkBoxAnonymous->setChecked(initialPollData.isAnonymous);
+    ui->checkBoxAnonymousCreator->setChecked(initialPollData.isAnonymousCreator);
+    ui->checkBoxProgress->setChecked(initialPollData.showProgress);
+    ui->checkBoxAllowAdditional->setChecked(initialPollData.allowAddOptions);
+    ui->maxVotesValue->setValue(initialPollData.maxVotes);
+
+    validateInput();
+    setAttribute(Qt::WA_DeleteOnClose);
 }
 
 NewPollDialog::~NewPollDialog()
@@ -64,50 +121,64 @@ NewPollDialog::~NewPollDialog()
     delete ui;
 }
 
-void NewPollDialog::validateInput ()
+void NewPollDialog::validateInput()
 {
-	if (ui->questionValue->text().isEmpty()) {
-		return disableSendButton ("'Question' is empty");
-	}
+    const QStringList options = pollOptionsFromText(ui->optionsValue->toPlainText());
+    const int optionCount = static_cast<int>(options.size());
+    ui->maxVotesValue->setMaximum(qMax(2, optionCount));
 
-	if (ui->option1Value->text().isEmpty()) {
-		return disableSendButton ("'Option 1' is empty");
-	}
+    if (ui->questionValue->text().trimmed().isEmpty()) {
+        return disableSendButton(tr("'Question' is empty"));
+    }
 
-	if (ui->option2Value->text().isEmpty()) {
-		return disableSendButton ("'Option 2' is empty");
-	}
+    if (optionCount < 2) {
+        return disableSendButton(tr("At least two options are required"));
+    }
 
-	auto okButton = ui->buttonBox->button(QDialogButtonBox::Ok);
-	okButton->setEnabled(true);
-	okButton->setToolTip ("");
+    QSet<QString> uniqueOptions;
+    for (const QString& option : options) {
+        if (uniqueOptions.contains(option)) {
+            return disableSendButton(tr("Duplicate options are not allowed"));
+        }
+        uniqueOptions.insert(option);
+    }
+
+    auto* okButton = ui->buttonBox->button(QDialogButtonBox::Ok);
+    okButton->setEnabled(true);
+    okButton->setToolTip(QString());
 }
 
-void NewPollDialog::disableSendButton (const QString& tooltip)
+void NewPollDialog::disableSendButton(const QString& tooltip)
 {
-	auto okButton = ui->buttonBox->button(QDialogButtonBox::Ok);
-	okButton->setEnabled (false);
-	okButton->setToolTip (tooltip);
+    auto* okButton = ui->buttonBox->button(QDialogButtonBox::Ok);
+    okButton->setEnabled(false);
+    okButton->setToolTip(tooltip);
 }
 
-BackendNewPollData NewPollDialog::getData ()
+BackendNewPollData NewPollDialog::getData()
 {
-	BackendNewPollData ret;
-	ret.question = ui->questionValue->text();
-	ret.options.push_back (ui->option1Value->text());
-	ret.options.push_back (ui->option2Value->text());
+    BackendNewPollData ret;
+    ret.question = ui->questionValue->text().trimmed();
 
-	//option 3 is not mandatory
-	if (!ui->option3Value->text().isEmpty()) {
-		ret.options.push_back (ui->option3Value->text());
-	}
+    const QStringList options = pollOptionsFromText(ui->optionsValue->toPlainText());
+    ret.options.reserve(static_cast<int>(options.size()));
+    for (const QString& option : options) {
+        ret.options.push_back(option);
+    }
 
-	ret.isAnonymous = ui->checkBoxAnonymous->isChecked();
-	ret.showProgress = ui->checkBoxProgress->isChecked();
-	ret.allowAddOptions = ui->checkBoxAllowAdditional->isChecked();
+    ret.rootId = rootId;
+    ret.isAnonymous = ui->checkBoxAnonymous->isChecked();
+    ret.isAnonymousCreator = ui->checkBoxAnonymousCreator->isChecked();
+    ret.showProgress = ui->checkBoxProgress->isChecked();
+    ret.allowAddOptions = ui->checkBoxAllowAdditional->isChecked();
+    ret.maxVotes = ui->maxVotesValue->value();
 
-	return ret;
+    if (auto* creator = qobject_cast<OutgoingPostCreator*>(parentWidget())) {
+        ret.commandTeamId = creator->pollCommandTeamId();
+        creator->armPollRealtimeAcknowledgement(ret);
+    }
+
+    return ret;
 }
-
 
 } /* namespace Mattermost */

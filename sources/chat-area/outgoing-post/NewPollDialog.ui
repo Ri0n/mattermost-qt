@@ -6,12 +6,12 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>400</width>
-    <height>417</height>
+    <width>440</width>
+    <height>500</height>
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Create New Poll - Mattermost</string>
+   <string>Create Poll - Mattermost</string>
   </property>
   <property name="modal">
    <bool>true</bool>
@@ -28,44 +28,67 @@
     <widget class="QLineEdit" name="questionValue"/>
    </item>
    <item>
-    <widget class="Line" name="line">
-     <property name="lineWidth">
-      <number>5</number>
-     </property>
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QLabel" name="option1Label">
+    <widget class="QLabel" name="optionsLabel">
      <property name="text">
-      <string>Option 1</string>
+      <string>Options (one per line)</string>
      </property>
     </widget>
    </item>
    <item>
-    <widget class="QLineEdit" name="option1Value"/>
-   </item>
-   <item>
-    <widget class="QLabel" name="option2Label">
-     <property name="text">
-      <string>Option 2</string>
+    <widget class="QPlainTextEdit" name="optionsValue">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>120</height>
+      </size>
+     </property>
+     <property name="placeholderText">
+      <string>Option 1&#10;Option 2&#10;Option 3&#10;...</string>
      </property>
     </widget>
    </item>
    <item>
-    <widget class="QLineEdit" name="option2Value"/>
-   </item>
-   <item>
-    <widget class="QLabel" name="option3Label">
-     <property name="text">
-      <string>Option 3 (not required)</string>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QLineEdit" name="option3Value"/>
+    <layout class="QHBoxLayout" name="votesLayout">
+     <item>
+      <widget class="QLabel" name="maxVotesLabel">
+       <property name="text">
+        <string>Votes per user</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QSpinBox" name="maxVotesValue">
+       <property name="toolTip">
+        <string>How many options each user may vote for. 0 means unlimited.</string>
+       </property>
+       <property name="specialValueText">
+        <string>Unlimited</string>
+       </property>
+       <property name="minimum">
+        <number>0</number>
+       </property>
+       <property name="maximum">
+        <number>999</number>
+       </property>
+       <property name="value">
+        <number>1</number>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="votesSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
    </item>
    <item>
     <widget class="QCheckBox" name="checkBoxAnonymous">
@@ -74,6 +97,16 @@
      </property>
      <property name="text">
       <string>Anonymous</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QCheckBox" name="checkBoxAnonymousCreator">
+     <property name="toolTip">
+      <string>Don't show who created the poll</string>
+     </property>
+     <property name="text">
+      <string>Anonymous creator</string>
      </property>
     </widget>
    </item>
@@ -105,7 +138,7 @@
      <property name="sizeHint" stdset="0">
       <size>
        <width>20</width>
-       <height>40</height>
+       <height>10</height>
       </size>
      </property>
     </spacer>
@@ -132,11 +165,11 @@
    <hints>
     <hint type="sourcelabel">
      <x>248</x>
-     <y>254</y>
+     <y>470</y>
     </hint>
     <hint type="destinationlabel">
      <x>157</x>
-     <y>274</y>
+     <y>470</y>
     </hint>
    </hints>
   </connection>
@@ -148,11 +181,11 @@
    <hints>
     <hint type="sourcelabel">
      <x>316</x>
-     <y>260</y>
+     <y>470</y>
     </hint>
     <hint type="destinationlabel">
      <x>286</x>
-     <y>274</y>
+     <y>470</y>
     </hint>
    </hints>
   </connection>
