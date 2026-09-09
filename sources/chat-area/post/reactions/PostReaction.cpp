@@ -33,6 +33,22 @@
 #include "ui_PostReaction.h"
 
 namespace Mattermost {
+namespace {
+
+bool looksLikeMattermostId(const QString& value)
+{
+    if (value.size() != 26) {
+        return false;
+    }
+    for (const QChar ch : value) {
+        if (!ch.isDigit() && (ch < QLatin1Char('a') || ch > QLatin1Char('z'))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
 
 PostReaction::PostReaction(Backend& backend,
                            const QString& emojiName,
@@ -57,18 +73,28 @@ PostReaction::PostReaction(Backend& backend,
     ui_->emoji->setText(emojiValue_);
     ui_->count->setText(QString::number(reactionData_.size()));
 
+    QStringList unresolvedUserIds;
+    for (const QString& value : reactionData_) {
+        if (looksLikeMattermostId(value)) {
+            unresolvedUserIds.push_back(value);
+        }
+    }
+
+    profileLookupFinished_ = unresolvedUserIds.isEmpty();
     updateToolTip();
 
-    QPointer<PostReaction> guard(this);
-    UserProfileService::instance(backend_).ensureUsers(
-        QStringList(reactionData_.cbegin(), reactionData_.cend()),
-        [guard] {
-            if (!guard) {
-                return;
-            }
-            guard->profileLookupFinished_ = true;
-            guard->updateToolTip();
-        });
+    if (!unresolvedUserIds.isEmpty()) {
+        QPointer<PostReaction> guard(this);
+        UserProfileService::instance(backend_).ensureUsers(
+            unresolvedUserIds,
+            [guard] {
+                if (!guard) {
+                    return;
+                }
+                guard->profileLookupFinished_ = true;
+                guard->updateToolTip();
+            });
+    }
 
     ReactionChipStyle::apply(this, ui_->horizontalLayout,
                              QStringLiteral("postReaction"));
@@ -83,8 +109,13 @@ void PostReaction::updateToolTip()
 {
     QStringList names;
     int unresolved = 0;
-    for (const QString& userId : reactionData_) {
-        const BackendUser* user = backend_.getStorage().getUserById(userId);
+    for (const QString& value : reactionData_) {
+        if (!looksLikeMattermostId(value)) {
+            names.push_back(value);
+            continue;
+        }
+
+        const BackendUser* user = backend_.getStorage().getUserById(value);
         if (!user) {
             ++unresolved;
             continue;
@@ -95,6 +126,9 @@ void PostReaction::updateToolTip()
             name = QLatin1Char('@') + user->username;
         }
         if (!name.isEmpty()) {
+            if (user->isLoginUser) {
+                name += tr(" (you)");
+            }
             names.push_back(name);
         } else {
             ++unresolved;
