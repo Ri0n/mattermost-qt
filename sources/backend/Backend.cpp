@@ -153,7 +153,7 @@ void Backend::login (const BackendLoginData& credentials, std::function<void(con
 			QJsonDocument doc = QJsonDocument::fromJson(data);
 
 			QString jsonString = doc.toJson(QJsonDocument::Indented);
-			LOG_DEBUG (jsonString);
+			std::cout << jsonString.toStdString() << std::endl;
 		});
 #endif
 
@@ -439,6 +439,7 @@ void Backend::retrieveAllUsers ()
 
 #if 0
 			QString jsonString = doc.toJson(QJsonDocument::Indented);
+			std::cout << "get users reply: " <<  std::endl;
 			std::cout << jsonString.toStdString() << std::endl;
 #endif
 
@@ -497,6 +498,7 @@ void Backend::retrieveUserAvatar (const QString & userID)
 
  	request.setAttribute(QNetworkRequest::BackgroundRequestAttribute, true);
 	request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
+
 	//LOG_DEBUG ("getUserImage request");
 
 	httpConnector.get (request, HttpResponseCallback ([this, userID] (QVariant, QByteArray data) {
@@ -598,6 +600,7 @@ void Backend::retrieveAllPublicTeams ()
     	LOG_DEBUG ("retrieveAllPublicTeams reply");
 #if 1
 		QString jsonString = doc.toJson(QJsonDocument::Indented);
+		std::cout << "get teams reply: "  << std::endl;
 		std::cout << jsonString.toStdString() << std::endl;
 #endif
     }));
@@ -877,15 +880,12 @@ void Backend::retrieveChannelUnreadPost (BackendChannel& channel, std::function<
 		std::cout << jsonString.toStdString() << std::endl;
 #endif
 
-		QJsonObject root = doc.object();
-		QString lastReadPost (root.value("prev_post_id").toString());
+		const QJsonArray order = doc.object().value("order").toArray();
+		const QString firstUnreadPost = order.isEmpty() ? QString() : order.last().toString();
 
-		if (!lastReadPost.isEmpty()) {
-			responseHandler (lastReadPost);
+		responseHandler (firstUnreadPost);
+		if (!firstUnreadPost.isEmpty()) {
 			emit onUnreadPostsAtStartup (channel);
-		} else {
-			static QString emptyString ("");
-			responseHandler (emptyString);
 		}
     }));
 }
@@ -1051,7 +1051,7 @@ void Backend::editPost (const QString& postID, const QString& message, const QLi
 	json.insert ("message", message);
 
 	if (!files.isEmpty()) {
-		json.insert ("file_ids", files);
+		json.insert ("file_ids", attachments);
 	}
 
 	QString jsonString = QJsonDocument(json).toJson(QJsonDocument::Indented);
@@ -1210,7 +1210,7 @@ void Backend::createDirectChannel(const BackendUser& user,
                 return;
             }
 
-            LOG_DEBUG("	New Channel added: " << channel->id << " " << channel->display_name);
+            LOG_DEBUG("\tNew Channel added: " << channel->id << " " << channel->display_name);
             emit storage.directChannels.onNewChannel(*channel);
 
             // Keep the server-side DM preference in sync with the existing
@@ -1317,7 +1317,8 @@ void Backend::retrieveCustomEmojis ()
 
 		for (const auto& it: data.array()) {
 			QString emojiID = it.toObject().value("id").toString();
-			QString emojiName = it.toObject().value("name").toString();
+			QString emojiName = it.toObject().value("name").toString();;
+
 			retrieveCustomEmojiImage (emojiID, [emojiID, emojiName] (QByteArray data) {
 
 				QDir cacheDir (QStandardPaths::writableLocation(QStandardPaths::CacheLocation));
