@@ -111,10 +111,13 @@ bool NotificationManager::showFreedesktop(const QString& title, const QString& b
         return false;
     }
 
-    const QStringList actions {
-        QStringLiteral("default"),
-        tr("Open"),
-    };
+    QStringList actions;
+    if (target.isValid()) {
+        actions = {
+            QStringLiteral("default"),
+            tr("Open"),
+        };
+    }
     const QVariantMap hints {
         {QStringLiteral("desktop-entry"), QStringLiteral("mattermost-qt")},
     };
@@ -136,7 +139,9 @@ bool NotificationManager::showFreedesktop(const QString& title, const QString& b
         return false;
     }
 
-    freedesktopTargets.insert(reply.value(), target);
+    if (target.isValid()) {
+        freedesktopTargets.insert(reply.value(), target);
+    }
     return true;
 }
 
