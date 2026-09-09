@@ -193,7 +193,7 @@ ChatArea::ChatArea(Backend& backend,
                                 .arg(channel.display_name.toHtmlEscaped()));
     connect(ui->titleLabel, &QLabel::linkActivated, this,
             [this](const QString&) {
-        AppNavigationService::instance(backend).openChannel(channel.id);
+        AppNavigationService::instance(this->backend).openChannel(this->channel.id);
     });
 
     // The parent channel topic/header is useful on the channel itself, but
@@ -301,7 +301,7 @@ void ChatArea::setupHeaderUi()
             this, [this](const QPoint& pos) {
         QMenu menu(this);
         QAction* copyLinkAction = menu.addAction(tr("Copy link to chat"));
-        const QString link = channelWebUrl(backend, channel);
+        const QString link = channelWebUrl(this->backend, this->channel);
         copyLinkAction->setEnabled(!link.isEmpty());
         if (menu.exec(ui->titleLabel->mapToGlobal(pos)) == copyLinkAction
             && !link.isEmpty()) {
