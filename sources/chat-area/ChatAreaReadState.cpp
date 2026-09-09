@@ -1,11 +1,13 @@
 #include "ChatArea.h"
 
+#include <QPointer>
 #include <QTimer>
 
 #include "AbstractPostSource.h"
 #include "ChatLogWidget.h"
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
+#include "backend/ThreadFollowService.h"
 #include "backend/types/BackendChannel.h"
 #include "ui_ChatArea.h"
 
@@ -86,6 +88,59 @@ void ChatArea::tryExplicitReadAcknowledgement()
     setUnreadMessagesCount(0);
     sidebar.markChannelViewedLocally(channel);
     backend.markChannelAsViewed(channel);
+}
+
+void ChatArea::requestThreadReadAcknowledgement()
+{
+    if (!isThread || root_id.isEmpty() || !ui || !ui->listWidget) {
+        return;
+    }
+
+    // A live reply can arrive before LongListWidget has materialized its new
+    // logical tail. Remember the semantic read intent and let the normal view
+    // synchronization finish first; no pixel/layout event is itself a read.
+    threadReadPending = true;
+    QTimer::singleShot(0, this, &ChatArea::tryThreadReadAcknowledgement);
+}
+
+void ChatArea::tryThreadReadAcknowledgement()
+{
+    if (!threadReadPending || threadReadInFlight || !isThread || !initialized
+        || root_id.isEmpty() || !channel.team || !ui || !ui->listWidget) {
+        return;
+    }
+
+    // Thread read state follows what was actually presented to the user. Merely
+    // keeping a thread object alive in the background must not consume unread
+    // replies. Composer focus is deliberately irrelevant: a visible active
+    // thread at its newest edge is sufficient.
+    if (!isVisible() || !isActiveWindow() || !ui->listWidget->isAtEnd()
+        || !hasRenderedNewestPost(ui->listWidget)) {
+        return;
+    }
+
+    threadReadPending = false;
+    threadReadInFlight = true;
+
+    const QString teamId = channel.team->id;
+    const QString threadId = root_id;
+    QPointer<ChatArea> guard(this);
+    ThreadFollowService::instance(backend).markThreadRead(
+        teamId, threadId,
+        [guard](bool) {
+            if (!guard) {
+                return;
+            }
+
+            guard->threadReadInFlight = false;
+            // Several replies may have arrived while the first read request was
+            // in flight. Coalesce that burst into one more read at the newest
+            // currently presented edge instead of issuing one request per post.
+            if (guard->threadReadPending) {
+                QTimer::singleShot(0, guard,
+                                   &ChatArea::tryThreadReadAcknowledgement);
+            }
+        });
 }
 
 } // namespace Mattermost
