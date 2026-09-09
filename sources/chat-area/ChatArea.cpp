@@ -186,14 +186,15 @@ ChatArea::ChatArea(Backend& backend,
     ui->outgoingPostCreator->setRootId(root_id);
 
     // Match the web client: a thread keeps the parent chat name in its header,
-    // but the name is a way back to that chat rather than a second static title.
+    // but the name links back to the root message that anchors this thread in
+    // the parent timeline.
     ui->titleLabel->setTextFormat(Qt::RichText);
     ui->titleLabel->setTextInteractionFlags(Qt::LinksAccessibleByMouse);
     ui->titleLabel->setText(QStringLiteral("<a href=\"channel\">%1</a>")
                                 .arg(channel.display_name.toHtmlEscaped()));
     connect(ui->titleLabel, &QLabel::linkActivated, this,
             [this](const QString&) {
-        AppNavigationService::instance(this->backend).openChannel(this->channel.id);
+        AppNavigationService::instance(this->backend).openPost(this->root_id);
     });
 
     // The parent channel topic/header is useful on the channel itself, but
