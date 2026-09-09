@@ -26,6 +26,7 @@
 #include <QSettings>
 #include <QComboBox>
 #include "backend/emoji/EmojiInfo.h"
+#include "ui/EmojiPresentation.h"
 #include "ui_ChooseEmojiDialog.h"
 
 namespace Mattermost {
@@ -197,6 +198,7 @@ void ChooseEmojiDialog::createTabForCategory (uint32_t categoryIndex, uint32_t t
 
 	QFont font;
 	font.setPointSize(16);
+	EmojiPresentation::preferEmojiFont(font);
 
 	QGridLayout *gridLayout = createTab (categoryIndex, tabIndex);
 

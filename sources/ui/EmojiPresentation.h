@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QImageReader>
 #include <QRegularExpression>
@@ -54,6 +55,54 @@ inline QFont fontForMode(QFont font, Mode mode)
         font.setPixelSize(std::max(1, qRound(font.pixelSize() * scale)));
     }
     return font;
+}
+
+// Ordered strongest-first among known colour emoji families. The list mirrors
+// the common human preference for Apple's design, then the JoyPixels/EmojiOne
+// palette, then Noto, then Twemoji, then the Windows monochrome fallback. Only
+// families installed on the current system are considered.
+inline const QStringList& preferredEmojiFamilies()
+{
+    static const QStringList families = {
+        QStringLiteral("Apple Color Emoji"),
+        QStringLiteral("JoyPixels"),
+        QStringLiteral("EmojiOne Color"),
+        QStringLiteral("Noto Color Emoji"),
+        QStringLiteral("Twemoji Mozilla"),
+        QStringLiteral("Twitter Color Emoji"),
+        QStringLiteral("Segoe UI Emoji"),
+        QStringLiteral("Noto Emoji"),
+    };
+    return families;
+}
+
+inline const QString& preferredEmojiFamily()
+{
+    static const QString family = [] {
+        const QFontDatabase database;
+        const QStringList installed = database.families();
+        for (const QString& candidate : preferredEmojiFamilies()) {
+            if (installed.contains(candidate, Qt::CaseInsensitive)) {
+                return candidate;
+            }
+        }
+        return QString();
+    }();
+    return family;
+}
+
+inline void preferEmojiFont(QFont& font)
+{
+    const QString& family = preferredEmojiFamily();
+    if (!family.isEmpty()) {
+        font.setFamilies(QStringList{family});
+    }
+}
+
+inline QFont emojiFontForMode(QFont font, Mode mode)
+{
+    preferEmojiFont(font);
+    return fontForMode(std::move(font), mode);
 }
 
 inline int extent(const QFont& font, Mode mode)
