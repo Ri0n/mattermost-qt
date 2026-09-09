@@ -17,9 +17,9 @@
  * along with Mattermost-QT. if not, see https://www.gnu.org/licenses/.
  */
 
-#ifndef POSTREACTIONLIST_H
-#define POSTREACTIONLIST_H
+#pragma once
 
+#include <QVector>
 #include <QWidget>
 
 namespace Ui {
@@ -28,24 +28,27 @@ class PostReactionList;
 
 namespace Mattermost {
 
+class Backend;
+
 using BackendPostReaction = QVector<QString>;
 
 class PostReactionList: public QWidget
 {
     Q_OBJECT
 public:
-    explicit PostReactionList(QWidget *parent = nullptr);
+    explicit PostReactionList(Backend& backend, QWidget* parent = nullptr);
     ~PostReactionList();
-public:
-    void addReaction (const QString& emojiName, const QString& emojiValue, const BackendPostReaction& reactionData);
+
+    void addReaction(const QString& emojiName,
+                     const QString& emojiValue,
+                     const BackendPostReaction& reactionData);
 
 signals:
     void reactionClicked(const QString& emojiName);
 
 private:
-    Ui::PostReactionList *ui;
+    Backend& backend_;
+    Ui::PostReactionList* ui_;
 };
-
-#endif // POSTREACTIONLIST_H
 
 } /* namespace Mattermost */
