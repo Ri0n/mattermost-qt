@@ -110,7 +110,7 @@ ServerDialog::ServerDialog(Backend& backend,
         submit(false);
     });
     connect(buttons, &QDialogButtonBox::rejected, this, [this] {
-        if (dialog.value(QStringLiteral("notify_on_cancel")).toBool(false)) {
+        if (this->dialog.value(QStringLiteral("notify_on_cancel")).toBool(false)) {
             submit(true);
         } else {
             reject();
