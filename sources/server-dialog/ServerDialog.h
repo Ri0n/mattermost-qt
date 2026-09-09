@@ -43,14 +43,14 @@ private:
     void submit(bool cancelled);
     void showValidationError(const QString& message);
 
-    Backend& backend;
-    QJsonObject dialog;
-    QString url;
-    QString channelId;
-    QString teamId;
-    QVector<FieldBinding> fields;
-    QLabel* errorLabel = nullptr;
-    bool hasUnsupportedElements = false;
+    Backend& backend_;
+    QJsonObject dialog_;
+    QString url_;
+    QString channelId_;
+    QString teamId_;
+    QVector<FieldBinding> fields_;
+    QLabel* errorLabel_ = nullptr;
+    bool hasUnsupportedElements_ = false;
 };
 
 } // namespace Mattermost
