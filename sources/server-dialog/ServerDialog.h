@@ -13,6 +13,7 @@
 #include <QVector>
 
 class QLabel;
+class QVBoxLayout;
 
 namespace Mattermost {
 
