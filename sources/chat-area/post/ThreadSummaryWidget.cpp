@@ -40,7 +40,7 @@
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendUser.h"
 #include "ui/AvatarUtils.h"
-#include "ui/IconUtils.h"
+#include "ui/EmojiPresentation.h"
 
 namespace Mattermost {
 
@@ -150,11 +150,10 @@ void ThreadSummaryWidget::refreshTheme()
     const QPalette currentPalette = qApp ? qApp->palette() : palette();
     chipCount->setPalette(currentPalette);
 
-    const QColor iconColor = currentPalette.color(QPalette::WindowText);
-    chipIcon->setPixmap(IconUtils::tintedSymbolicIcon(
-        QStringLiteral(":/icons/message-balloon"), iconColor)
-                            .pixmap(ReactionChipStyle::IconExtent,
-                                    ReactionChipStyle::IconExtent));
+    // Render the thread glyph with the preferred emoji font so it matches the
+    // rest of the interface instead of the tinted symbolic balloon icon.
+    chipIcon->setPixmap(EmojiPresentation::renderEmojiPixmap(
+        QStringLiteral("💬"), ReactionChipStyle::IconExtent));
     chipIcon->update();
     chipCount->update();
 }

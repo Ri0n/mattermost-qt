@@ -5,6 +5,9 @@
 #include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QImageReader>
+#include <QPainter>
+#include <QPixmap>
+#include <QRectF>
 #include <QRegularExpression>
 #include <QTextBlock>
 #include <QTextCharFormat>
@@ -103,6 +106,30 @@ inline QFont emojiFontForMode(QFont font, Mode mode)
 {
     preferEmojiFont(font);
     return fontForMode(std::move(font), mode);
+}
+
+// Renders a single emoji grapheme with the preferred emoji font into a
+// transparent pixmap of the requested glyph size. Used for controls that only
+// accept an icon (tab labels, tool buttons) rather than mixed rich text.
+inline QPixmap renderEmojiPixmap(const QString& glyph, int size)
+{
+    QFont font;
+    preferEmojiFont(font);
+    font.setPixelSize(std::max(1, size));
+
+    QFontMetricsF metrics(font);
+    const int width = std::max(1, qRound(metrics.horizontalAdvance(glyph)));
+    const int height = std::max(1, qRound(metrics.ascent() + metrics.descent()));
+
+    QPixmap pixmap(width, height);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    painter.setFont(font);
+    painter.drawText(QRectF(0, 0, width, height), Qt::AlignCenter, glyph);
+    painter.end();
+    return pixmap;
 }
 
 inline int extent(const QFont& font, Mode mode)
@@ -267,5 +294,10 @@ inline QString normalizeHtml(const QString& html, const QFont& font, Mode mode)
     result += html.mid(previousEnd);
     return result;
 }
+
+// Returns true only when every non-whitespace grapheme in @p text is a known
+// unicode emoji. Used to decide whether a glyph should be rendered with the
+// preferred emoji font rather than the surrounding label font.
+bool isEmojiOnlyText(const QString& text);
 
 } // namespace Mattermost::EmojiPresentation
