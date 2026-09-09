@@ -38,6 +38,7 @@ public:
 	QString url;
 	QString triggerID;
 	QString callbackID;
+	QJsonObject dialog;
 };
 
 } /* namespace Mattermost */
