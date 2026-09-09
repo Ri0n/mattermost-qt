@@ -68,11 +68,11 @@ ServerDialog::ServerDialog(Backend& backend,
                            const QString& teamId,
                            QWidget* parent)
     : QDialog(parent)
-    , backend(backend)
-    , dialog(dialog)
-    , url(url)
-    , channelId(channelId)
-    , teamId(teamId)
+    , backend_(backend)
+    , dialog_(dialog)
+    , url_(url)
+    , channelId_(channelId)
+    , teamId_(teamId)
 {
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowModality(Qt::WindowModal);
@@ -94,23 +94,23 @@ ServerDialog::ServerDialog(Backend& backend,
         }
     }
 
-    errorLabel = new QLabel(this);
-    errorLabel->setWordWrap(true);
-    errorLabel->setVisible(false);
-    layout->addWidget(errorLabel);
+    errorLabel_ = new QLabel(this);
+    errorLabel_->setWordWrap(true);
+    errorLabel_->setVisible(false);
+    layout->addWidget(errorLabel_);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
     QPushButton* submitButton = buttons->addButton(
         dialog.value(QStringLiteral("submit_label")).toString(QStringLiteral("Submit")),
         QDialogButtonBox::AcceptRole);
-    submitButton->setEnabled(!hasUnsupportedElements);
+    submitButton->setEnabled(!hasUnsupportedElements_);
     layout->addWidget(buttons);
 
     connect(buttons, &QDialogButtonBox::accepted, this, [this] {
         submit(false);
     });
     connect(buttons, &QDialogButtonBox::rejected, this, [this] {
-        if (this->dialog.value(QStringLiteral("notify_on_cancel")).toBool(false)) {
+        if (dialog_.value(QStringLiteral("notify_on_cancel")).toBool(false)) {
             submit(true);
         } else {
             reject();
@@ -273,7 +273,7 @@ void ServerDialog::addElement(const QJsonObject& element, QVBoxLayout* layout)
             return QJsonValue(edit->dateTime().toString(Qt::ISODate));
         };
     } else {
-        hasUnsupportedElements = true;
+        hasUnsupportedElements_ = true;
         auto* unsupported = makeHelpLabel(
             tr("Unsupported interactive dialog field type: %1").arg(type), group);
         groupLayout->addWidget(unsupported);
@@ -285,13 +285,13 @@ void ServerDialog::addElement(const QJsonObject& element, QVBoxLayout* layout)
 
     layout->addWidget(group);
     if (binding.value) {
-        fields.push_back(std::move(binding));
+        fields_.push_back(std::move(binding));
     }
 }
 
 bool ServerDialog::collectSubmission(QJsonObject& submission)
 {
-    for (const FieldBinding& field : fields) {
+    for (const FieldBinding& field : fields_) {
         const QJsonValue value = field.value();
         const bool isEmptyString = value.isString() && value.toString().isEmpty();
         const bool isEmptyArray = value.isArray() && value.toArray().isEmpty();
@@ -333,25 +333,25 @@ void ServerDialog::submit(bool cancelled)
     }
 
     QJsonObject request {
-        {QStringLiteral("callback_id"), dialog.value(QStringLiteral("callback_id")).toString()},
-        {QStringLiteral("channel_id"), channelId},
-        {QStringLiteral("state"), dialog.value(QStringLiteral("state")).toString()},
+        {QStringLiteral("callback_id"), dialog_.value(QStringLiteral("callback_id")).toString()},
+        {QStringLiteral("channel_id"), channelId_},
+        {QStringLiteral("state"), dialog_.value(QStringLiteral("state")).toString()},
         {QStringLiteral("submission"), submission},
-        {QStringLiteral("team_id"), teamId},
-        {QStringLiteral("url"), url},
+        {QStringLiteral("team_id"), teamId_},
+        {QStringLiteral("url"), url_},
     };
     if (cancelled) {
         request.insert(QStringLiteral("cancelled"), true);
     }
 
-    backend.sendSubmitDialog(QJsonDocument(request));
+    backend_.sendSubmitDialog(QJsonDocument(request));
     done(cancelled ? QDialog::Rejected : QDialog::Accepted);
 }
 
 void ServerDialog::showValidationError(const QString& message)
 {
-    errorLabel->setText(message);
-    errorLabel->setVisible(true);
+    errorLabel_->setText(message);
+    errorLabel_->setVisible(true);
 }
 
 } // namespace Mattermost
