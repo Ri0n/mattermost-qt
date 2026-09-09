@@ -124,8 +124,12 @@ void OutgoingPostCreator::init(Backend& backendInstance,
 	        this, &OutgoingPostCreator::sendPostButtonAction);
 	connect(this, &MessageTextEditWidget::enterPressed,
 	        this, &OutgoingPostCreator::sendPostButtonAction);
-	connect(attachButton, &QPushButton::clicked,
-	        this, &OutgoingPostCreator::onAttachButtonClick);
+	// ChatArea may turn the paperclip into a menu button. Keep the legacy
+	// direct-file behavior only for callers that provide a plain button.
+	if (!attachButton->menu()) {
+		connect(attachButton, &QPushButton::clicked,
+		        this, &OutgoingPostCreator::onAttachButtonClick);
+	}
 
 	connect(addEmojiButton, &QPushButton::clicked, this, [this] {
 		showEmojiDialog([this](Emoji emoji) {
@@ -148,7 +152,7 @@ void OutgoingPostCreator::setStatusLabelText(const QString& string)
 	// continues to use composerStatusLabel.
 	if (attachButton && string.isEmpty()) {
 		attachButton->setProperty(ComposerBusyTextProperty, QString());
-		attachButton->setToolTip(tr("Attach File"));
+		attachButton->setToolTip(tr("Add"));
 	}
 
 	if (attachButton && outgoingPostData && !string.isEmpty()) {
@@ -223,8 +227,6 @@ bool OutgoingPostCreator::isEditingPost() const
 	return postToEdit
 		|| (outgoingPostData && outgoingPostData->postToEdit);
 }
-
-static NewPollDialog* newPollDialog;
 
 static QString getStringInsideQuotes(const QString& str, int& nextPos)
 {
@@ -310,14 +312,18 @@ void OutgoingPostCreator::sendPostButtonAction()
 			initialPollData.allowAddOptions = true;
 		}
 
-		newPollDialog = new NewPollDialog(this, initialPollData);
-		connect(newPollDialog, &QDialog::accepted, this, [this] {
+		auto* pollDialog = new NewPollDialog(this, initialPollData);
+		QPointer<NewPollDialog> pollDialogGuard(pollDialog);
+		connect(pollDialog, &QDialog::accepted, this, [this, pollDialogGuard] {
+			if (!pollDialogGuard) {
+				return;
+			}
 			outgoingPostData = std::make_unique<OutgoingPostData>();
 			outgoingPostData->pollData =
-				std::make_unique<BackendNewPollData>(newPollDialog->getData());
+				std::make_unique<BackendNewPollData>(pollDialogGuard->getData());
 			startSendPostSequence();
 		});
-		newPollDialog->show();
+		pollDialog->show();
 		return;
 	}
 
@@ -641,7 +647,7 @@ void OutgoingPostCreator::updateSendButtonState()
 
 	attachButton->setDisabled(outgoingPostData != nullptr);
 	if (!outgoingPostData) {
-		attachButton->setToolTip(tr("Attach File"));
+		attachButton->setToolTip(tr("Add"));
 	} else {
 		const QString busyText = attachButton->property(ComposerBusyTextProperty).toString();
 		attachButton->setToolTip(busyText.isEmpty() ? tooltipText : busyText);
