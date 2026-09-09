@@ -59,7 +59,6 @@ public:
 
 signals:
     void channelSelected(const QString& channelId);
-    void threadSelected(const QString& channelId, const QString& rootPostId);
     void attentionCountChanged(uint32_t count);
 
 protected:
