@@ -164,9 +164,7 @@ PostWidget::PostWidget(Backend& backend,
             quotedReplyPreview = std::make_unique<QuotedPostPreview>(this, 2);
             quotedReplyPreview->setPost(*quotedPost);
             quotedReplyPreview->setActivatedCallback([this, replyPostId] {
-                if (parentChatArea) {
-                    parentChatArea->goToPost(replyPostId);
-                }
+                AppNavigationService::instance(backend).openPost(replyPostId);
             });
             ui->verticalLayout->insertWidget(1, quotedReplyPreview.get());
         } else {
@@ -189,8 +187,9 @@ PostWidget::PostWidget(Backend& backend,
                     guard->quotedReplyPreview->setPost(*loaded);
                     guard->quotedReplyPreview->setActivatedCallback(
                         [guard, replyPostId] {
-                            if (guard && guard->parentChatArea) {
-                                guard->parentChatArea->goToPost(replyPostId);
+                            if (guard) {
+                                AppNavigationService::instance(guard->backend)
+                                    .openPost(replyPostId);
                             }
                         });
                     guard->ui->verticalLayout->insertWidget(
@@ -202,9 +201,11 @@ PostWidget::PostWidget(Backend& backend,
 		quoteFrame = std::make_unique<PostQuoteFrame>(*post.rootPost,
 		                                              backend.getStorage(), this);
 		ui->verticalLayout->insertWidget(1, quoteFrame.get(), 0, Qt::AlignLeft);
-		connect(quoteFrame.get(), &PostQuoteFrame::postClicked, [&post, chatArea] {
-			chatArea->goToPost(*post.rootPost);
-		});
+        const QString rootPostId = post.rootPost->id;
+		connect(quoteFrame.get(), &PostQuoteFrame::postClicked, this,
+                [this, rootPostId] {
+            AppNavigationService::instance(backend).openPost(rootPostId);
+        });
 	}
 
 	if (!post.isDeleted && !post.files.empty()) {
