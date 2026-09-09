@@ -23,6 +23,7 @@
 
 #include <QEvent>
 #include <QFont>
+#include <QMenu>
 #include <QPushButton>
 #include <QSet>
 #include <QTimer>
@@ -60,25 +61,22 @@ void ChatArea::setupComposerUi()
 
     ui->attachButton->setText(QString());
     ui->attachButton->setIconSize(QSize(ActionIconExtent, ActionIconExtent));
+    ui->attachButton->setToolTip(tr("Add"));
+    ui->attachButton->setAccessibleName(tr("Add"));
     configureActionButton(*ui->attachButton);
 
-    auto* pollButton = new ThemeIconButton(this);
-    pollButton->setObjectName(QStringLiteral("pollButton"));
-    pollButton->setText(QStringLiteral("☑"));
-    pollButton->setToolTip(tr("Create Poll"));
-    pollButton->setAccessibleName(tr("Create Poll"));
-    configureActionButton(*pollButton);
-    QFont pollFont = pollButton->font();
-    if (pollFont.pointSizeF() > 0.0) {
-        pollFont.setPointSizeF(pollFont.pointSizeF() + 2.0);
-    } else if (pollFont.pixelSize() > 0) {
-        pollFont.setPixelSize(pollFont.pixelSize() + 3);
-    }
-    pollButton->setFont(pollFont);
-    const int sendButtonIndex = ui->composerLayout->indexOf(ui->sendButton);
-    ui->composerLayout->insertWidget(sendButtonIndex, pollButton, 0, Qt::AlignBottom);
-    connect(pollButton, &QPushButton::clicked,
+    // Keep the composer surface compact: the paperclip is the single entry
+    // point for things added to a message. QPushButton::setMenu() opens the
+    // menu from the button's pressed path using QMenu::popup(), so this does not
+    // introduce a nested event loop.
+    auto* attachMenu = new QMenu(ui->attachButton);
+    QAction* fileAction = attachMenu->addAction(tr("File…"));
+    QAction* pollAction = attachMenu->addAction(tr("Poll…"));
+    connect(fileAction, &QAction::triggered,
+            ui->outgoingPostCreator, &OutgoingPostCreator::onAttachButtonClick);
+    connect(pollAction, &QAction::triggered,
             ui->outgoingPostCreator, &OutgoingPostCreator::createPoll);
+    ui->attachButton->setMenu(attachMenu);
 
     configureActionButton(*ui->sendButton);
     QFont sendFont = ui->sendButton->font();
