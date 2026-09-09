@@ -56,14 +56,6 @@ public:
 	 */
 	bool isOwnPost () 		const;
 
-	/**
-	 * Returns whether a post was created as a result of creating a poll from the logged-in user.
-	 * Even if it returned true, the post is not considered as an own post (because it appears as
-	 * posted by the Matterpoll bot and), in the sense, that it cannot be edited or deleted like other posts.
-	 * The function is used to check whether a poll create request has succeeded
-	 * @return bool
-	 */
-	bool isOwnPollPost () 	const;
 	QString getDisplayAuthorName () const;
 	QDateTime getCreationTime () const;
 	/**
