@@ -19,30 +19,33 @@
 
 #include "PostReactionList.h"
 
-#include <QLabel>
 #include "PostReaction.h"
 #include "ui_PostReactionList.h"
 
 namespace Mattermost {
 
-PostReactionList::PostReactionList(QWidget *parent) :
-    QWidget(parent),
-    ui(new Ui::PostReactionList)
+PostReactionList::PostReactionList(Backend& backend, QWidget* parent)
+    : QWidget(parent)
+    , backend_(backend)
+    , ui_(new Ui::PostReactionList)
 {
-    ui->setupUi(this);
+    ui_->setupUi(this);
 }
 
 PostReactionList::~PostReactionList()
 {
-    delete ui;
+    delete ui_;
 }
 
-void PostReactionList::addReaction (const QString& emojiName, const QString& emojiValue, const BackendPostReaction& reactionData)
+void PostReactionList::addReaction(const QString& emojiName,
+                                   const QString& emojiValue,
+                                   const BackendPostReaction& reactionData)
 {
-	PostReaction* reaction = new PostReaction (emojiName, emojiValue, reactionData, this);
-	connect(reaction, &PostReaction::clicked,
-	        this, &PostReactionList::reactionClicked);
-	ui->horizontalLayout_2->addWidget (reaction, 0, Qt::AlignLeft);
+    auto* reaction = new PostReaction(
+        backend_, emojiName, emojiValue, reactionData, this);
+    connect(reaction, &PostReaction::clicked,
+            this, &PostReactionList::reactionClicked);
+    ui_->horizontalLayout_2->addWidget(reaction, 0, Qt::AlignLeft);
 }
 
 } /* namespace Mattermost */
