@@ -8,7 +8,7 @@
 #include "ChatArea.h"
 #include "ThreadPostSource.h"
 #include "backend/Backend.h"
-#include "backend/ReadCursorService.h"
+#include "backend/FollowingModel.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "post/InteractivePostWidget.h"
@@ -441,7 +441,7 @@ void ChatLogWidget::updateReadCursorFromViewport()
     // A message becomes locally read only once its lower edge enters the
     // viewport. This deliberately handles oversized posts: seeing only their
     // beginning does not advance Following past them. Back-scrolling cannot
-    // regress the cursor because ReadCursorService keeps a monotonic high-water
+    // regress the cursor because FollowingModel keeps a monotonic high-water
     // semantic post identity rather than a logical list index.
     int readIndex = -1;
     BackendPost* readPost = nullptr;
@@ -470,7 +470,7 @@ void ChatLogWidget::updateReadCursorFromViewport()
     }
 
     BackendChannel& channel = chatArea->getChannel();
-    auto& cursors = ReadCursorService::instance(*backend);
+    auto& followingModel = FollowingModel::instance(*backend);
 
     if (chatArea->isThread) {
         bool threadAtEnd = readIndex == postSource->itemCount() - 1;
@@ -478,8 +478,8 @@ void ChatLogWidget::updateReadCursorFromViewport()
             threadAtEnd = threadAtEnd
                 && threadSource->isPostPositionAuthoritative(readPost->id);
         }
-        cursors.observeReadThrough(channel.id, chatArea->root_id,
-                                   *readPost, threadAtEnd);
+        followingModel.observeReadThrough(channel.id, chatArea->root_id,
+                                          *readPost, threadAtEnd);
 
         // A DM/GM Following row represents the whole conversation rather than
         // only the central root-post timeline. Reading a reply in its thread
@@ -488,15 +488,15 @@ void ChatLogWidget::updateReadCursorFromViewport()
             || channel.type == BackendChannel::groupChannel) {
             const bool channelAtEnd = channel.last_post_at == 0
                 || readPost->create_at >= channel.last_post_at;
-            cursors.observeReadThrough(channel.id, QString(),
-                                       *readPost, channelAtEnd);
+            followingModel.observeReadThrough(channel.id, QString(),
+                                              *readPost, channelAtEnd);
         }
         return;
     }
 
     const bool channelAtEnd = channel.last_post_at == 0
         || readPost->create_at >= channel.last_post_at;
-    cursors.observeReadThrough(channel.id, QString(), *readPost, channelAtEnd);
+    followingModel.observeReadThrough(channel.id, QString(), *readPost, channelAtEnd);
 }
 
 void ChatLogWidget::clearNavigationLock()
