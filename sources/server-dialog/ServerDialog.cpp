@@ -35,6 +35,11 @@
 namespace Mattermost {
 namespace {
 
+constexpr int FieldMinimumWidth = 320;
+constexpr int TextAreaMinimumWidth = 360;
+constexpr int TextAreaMinimumHeight = 100;
+constexpr int ListMinimumHeight = 120;
+
 QLabel* makeHelpLabel(const QString& text, QWidget* parent)
 {
     auto* label = new QLabel(text, parent);
@@ -77,7 +82,6 @@ ServerDialog::ServerDialog(Backend& backend,
     setAttribute(Qt::WA_DeleteOnClose);
     setWindowModality(Qt::WindowModal);
     setWindowTitle(dialog.value(QStringLiteral("title")).toString());
-    resize(440, 240);
 
     auto* layout = new QVBoxLayout(this);
 
@@ -116,6 +120,13 @@ ServerDialog::ServerDialog(Backend& backend,
             reject();
         }
     });
+
+    // Let confirmation dialogs stay compact, while dialogs containing actual
+    // controls keep enough horizontal room to make text entry comfortable.
+    if (!elements.isEmpty()) {
+        setMinimumWidth(TextAreaMinimumWidth);
+    }
+    adjustSize();
 }
 
 void ServerDialog::addElement(const QJsonObject& element, QVBoxLayout* layout)
@@ -141,6 +152,7 @@ void ServerDialog::addElement(const QJsonObject& element, QVBoxLayout* layout)
 
     if (type == QStringLiteral("text")) {
         auto* edit = new QLineEdit(group);
+        edit->setMinimumWidth(FieldMinimumWidth);
         edit->setText(element.value(QStringLiteral("default")).toString());
         edit->setPlaceholderText(placeholder);
         if (maxLength > 0) {
@@ -163,9 +175,9 @@ void ServerDialog::addElement(const QJsonObject& element, QVBoxLayout* layout)
         };
     } else if (type == QStringLiteral("textarea")) {
         auto* edit = new QPlainTextEdit(group);
+        edit->setMinimumSize(TextAreaMinimumWidth, TextAreaMinimumHeight);
         edit->setPlainText(element.value(QStringLiteral("default")).toString());
         edit->setPlaceholderText(placeholder);
-        edit->setMinimumHeight(100);
         groupLayout->addWidget(edit);
         binding.value = [edit] {
             return QJsonValue(edit->toPlainText());
@@ -206,6 +218,7 @@ void ServerDialog::addElement(const QJsonObject& element, QVBoxLayout* layout)
 
         if (multiselect) {
             auto* list = new QListWidget(group);
+            list->setMinimumSize(FieldMinimumWidth, ListMinimumHeight);
             list->setSelectionMode(QAbstractItemView::MultiSelection);
             const QStringList defaults = defaultValue.split(QLatin1Char(','), Qt::SkipEmptyParts);
             for (const QJsonValue& optionValue : options) {
@@ -225,6 +238,7 @@ void ServerDialog::addElement(const QJsonObject& element, QVBoxLayout* layout)
             };
         } else {
             auto* combo = new QComboBox(group);
+            combo->setMinimumWidth(FieldMinimumWidth);
             if (optional) {
                 combo->addItem(placeholder, QVariant());
             }
@@ -248,6 +262,7 @@ void ServerDialog::addElement(const QJsonObject& element, QVBoxLayout* layout)
         }
     } else if (type == QStringLiteral("date")) {
         auto* edit = new QDateEdit(group);
+        edit->setMinimumWidth(FieldMinimumWidth);
         edit->setCalendarPopup(true);
         edit->setDisplayFormat(QStringLiteral("yyyy-MM-dd"));
         const QDate value = QDate::fromString(
@@ -261,6 +276,7 @@ void ServerDialog::addElement(const QJsonObject& element, QVBoxLayout* layout)
         };
     } else if (type == QStringLiteral("datetime")) {
         auto* edit = new QDateTimeEdit(group);
+        edit->setMinimumWidth(FieldMinimumWidth);
         edit->setCalendarPopup(true);
         edit->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm"));
         const QDateTime value = QDateTime::fromString(
