@@ -150,9 +150,9 @@ PostWidget::PostWidget(Backend& backend,
 	} else if (!post.user_id.isEmpty()) {
 		QPointer<PostWidget> guard(this);
 		UserProfileService::instance(backend).ensureUser(
-			post.user_id, [guard, &backend](const BackendUser* user) {
+			post.user_id, [guard](const BackendUser* user) {
 				if (guard && user) {
-					guard->setAuthor(backend, user);
+					guard->setAuthor(guard->backend_, user);
 				}
 			});
 	}
@@ -219,7 +219,7 @@ PostWidget::PostWidget(Backend& backend,
 	}
 
 	if (!post.isDeleted && !post.reactions.empty()) {
-		reactions = std::make_unique<PostReactionList>(this);
+		reactions = std::make_unique<PostReactionList>(backend_, this);
 		for (auto& it : post.reactions) {
 			const EmojiID emojiID = it.first;
 			const Emoji emoji = EmojiInfo::getEmoji(emojiID);
@@ -612,7 +612,7 @@ void PostWidget::updateReactions()
 	}
 
 	if (!post.reactions.empty()) {
-		reactions = std::make_unique<PostReactionList>(this);
+		reactions = std::make_unique<PostReactionList>(backend_, this);
 		for (auto& it : post.reactions) {
 			const EmojiID emojiID = it.first;
 			const Emoji emoji = EmojiInfo::getEmoji(emojiID);
