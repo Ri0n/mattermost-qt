@@ -39,11 +39,11 @@ public:
     explicit PostPoll (Backend& backend, const BackendPost& post, BackendPoll& poll, QWidget *parent = nullptr);
     ~PostPoll();
 private:
-    Ui::PostPoll*			ui;
-public:
-    Backend& 				backend;
-    QVector<QPushButton*> 	optionButtons;
-    QVector<QPushButton*> 	adminButtons;
+    Ui::PostPoll* ui_;
+    Backend& backend_;
+    QVector<QPushButton*> optionButtons_;
+    QVector<QPushButton*> addOptionButtons_;
+    QVector<QPushButton*> managementButtons_;
 };
 
 } /* namespace Mattermost */
