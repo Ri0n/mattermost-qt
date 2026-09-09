@@ -24,7 +24,6 @@
 
 #include "backend/Backend.h"
 #include "backend/types/BackendChannel.h"
-#include "backend/types/BackendPost.h"
 #include "backend/types/BackendUser.h"
 #include "channel-tree/ChannelTree.h"
 #include "chat-area/ChatArea.h"
@@ -440,22 +439,12 @@ void NavigationUiController::navigateTo(const Location& location)
         return;
     }
 
+    // A history entry whose semantic bookmark is still present can be restored
+    // locally without a flash. If its source no longer knows the post, do not
+    // start another ChatArea-level state machine: resolve and present it through
+    // the same application navigation path used by every external post target.
     auto* log = area->findChild<ChatLogWidget*>(QStringLiteral("listWidget"));
     if (log && log->restoreViewportBookmark(location.postId)) {
-        return;
-    }
-
-    if (area->isThread) {
-        if (area->ensurePostVisible(location.postId)) {
-            area->goToPost(location.postId);
-            return;
-        }
-        BackendPost* post = channel->postIdToPost.value(location.postId, nullptr);
-        if (post && !post->root_id.isEmpty()) {
-            AppNavigationService::instance(*sourceBackend).openPost(location.postId);
-        } else {
-            area->goToPost(location.postId);
-        }
         return;
     }
 
