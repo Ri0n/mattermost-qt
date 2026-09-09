@@ -18,6 +18,7 @@
 #include "channel-tree/AttentionList.h"
 #include "channel-tree/ChannelQuickList.h"
 #include "channel-tree/ChannelTree.h"
+#include "navigation/AppNavigationService.h"
 #include "notifications/NotificationManager.h"
 #include "post-collection/PostCollectionView.h"
 #include "server-dialog/ServerDialog.h"
@@ -31,6 +32,31 @@ void MainWindow::installRealtimeUiSync()
         return;
     }
     setProperty(InstalledProperty, true);
+
+    // Notification targets used to navigate directly through ChannelTree and a
+    // currently materialized ChatArea. That became incorrect once post/thread
+    // navigation became lazy and source-driven: a notification reply may need
+    // its root/context loaded before a concrete target can exist. Replace the
+    // legacy constructor connection with the same semantic navigation service
+    // used by permalinks, Following and Attention.
+    disconnect(notificationManager.get(), &NotificationManager::activated,
+               this, &MainWindow::activateNotification);
+    connect(notificationManager.get(), &NotificationManager::activated,
+            this, [this](const NotificationTarget& target) {
+        if (!target.isValid()) {
+            return;
+        }
+
+        if (isMinimized()) {
+            showNormal();
+        } else {
+            show();
+        }
+        raise();
+        activateWindow();
+
+        AppNavigationService::instance(backend).openPost(target.postId);
+    });
 
     // Server-originated ephemeral posts are transient by definition: surface
     // them through the existing desktop notification path rather than adding
