@@ -69,6 +69,8 @@ private:
     bool restoreNavigationTarget();
     bool finalizeNavigationLock();
     void scheduleNavigationFinalize();
+    void scheduleReadCursorUpdate();
+    void updateReadCursorFromViewport();
 
     Backend* backend = nullptr;
     ChatArea* chatArea = nullptr;
@@ -83,6 +85,7 @@ private:
     int navigationQuietPeriodMs = 2000;
     bool navigationLockPending = false;
     bool navigationRecenterPending = false;
+    bool readCursorUpdatePending_ = false;
     bool _initialScrollBarPulsePending = true;
 };
 
