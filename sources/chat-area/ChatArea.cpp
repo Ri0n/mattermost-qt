@@ -359,8 +359,7 @@ void ChatArea::scheduleNewestPosition()
     QPointer<ChatArea> guard(this);
     QTimer::singleShot(0, this, [guard, generation] {
         if (!guard || !guard->ui || !guard->ui->listWidget
-            || generation != guard->viewportNavigationGeneration
-            || !guard->pendingPostId.isEmpty()) {
+            || generation != guard->viewportNavigationGeneration) {
             return;
         }
         guard->ui->listWidget->scrollToEnd();
@@ -379,8 +378,7 @@ void ChatArea::scheduleStoredPosition()
     QPointer<ChatArea> guard(this);
     QTimer::singleShot(0, this, [guard, generation, postId] {
         if (!guard || !guard->ui || !guard->ui->listWidget
-            || generation != guard->viewportNavigationGeneration
-            || !guard->pendingPostId.isEmpty()) {
+            || generation != guard->viewportNavigationGeneration) {
             return;
         }
 
@@ -388,18 +386,6 @@ void ChatArea::scheduleStoredPosition()
             guard->scheduleNewestPosition();
         }
     });
-}
-
-void ChatArea::finishPendingNavigation()
-{
-    if (pendingPostId.isEmpty() || !ui || !ui->listWidget) {
-        return;
-    }
-    if (ui->listWidget->findPost(pendingPostId)) {
-        const QString target = pendingPostId;
-        pendingPostId.clear();
-        ui->listWidget->highlightPost(target);
-    }
 }
 
 void ChatArea::init()
@@ -485,12 +471,6 @@ void ChatArea::init()
                                         ui->listWidget,
                                         &ChatLogWidget::postEditFinished));
 
-    signalConnections.push_back(connect(ui->listWidget,
-                                        &LongListWidget::materializedRangeChanged,
-                                        this, [this](int, int) {
-        finishPendingNavigation();
-    }));
-
     ui->loadOldPosts->hide();
     if (!isThread) {
         updatePinnedPostsButton();
@@ -502,10 +482,6 @@ void ChatArea::init()
         scheduleStoredPosition();
     } else {
         scheduleNewestPosition();
-    }
-
-    if (!pendingPostId.isEmpty()) {
-        goToPost(pendingPostId);
     }
 }
 
@@ -709,38 +685,6 @@ void ChatArea::dragMoveEvent(QDragMoveEvent* event)
 void ChatArea::dropEvent(QDropEvent* event)
 {
     ui->outgoingPostCreator->onDropEvent(event);
-}
-
-void ChatArea::goToPost(const BackendPost& post)
-{
-    goToPost(post.id);
-}
-
-void ChatArea::goToPost(const QString& postId)
-{
-    if (postId.isEmpty() || !ui || !ui->listWidget) {
-        return;
-    }
-
-    // Any semantic post navigation returns the channel content surface from the
-    // optional pinned collection to the canonical timeline first. The hidden
-    // ChatLogWidget has stayed alive, so this does not disturb its viewport.
-    showPinnedPosts(false);
-
-    // Opening/reactivating a channel schedules a weak activation position on
-    // the next event-loop turn. Explicit post navigation supersedes that intent,
-    // even when the destination materializes immediately and pendingPostId is
-    // cleared before the queued callback gets a chance to run.
-    ++viewportNavigationGeneration;
-
-    if (!ui->listWidget->ensurePostVisible(postId,
-                                           LongListWidget::Alignment::Center)) {
-        pendingPostId = postId;
-        return;
-    }
-
-    pendingPostId = postId;
-    finishPendingNavigation();
 }
 
 } /* namespace Mattermost */

@@ -641,6 +641,44 @@ int LongListWidget::indexAtViewportPosition(int viewportY) const
     return heights.indexAtPixel(pixel);
 }
 
+qint64 LongListWidget::alignedContentOffset(int index, Alignment alignment) const
+{
+    if (index < 0 || index >= logicalCount) {
+        return contentOffset();
+    }
+
+    const qint64 itemTop = heights.prefixHeight(index);
+    const qint64 itemBottom = heights.prefixHeight(index + 1);
+    const qint64 itemHeight = heights.value(index);
+    const qint64 viewportHeight = std::max(0, viewport()->height());
+    const qint64 currentTop = contentOffset();
+    const qint64 currentBottom = currentTop + viewportHeight;
+
+    switch (alignment) {
+    case Alignment::Top:
+        return itemTop;
+    case Alignment::Center:
+        // A widget that does not fit has no useful visual centre: clipping its
+        // beginning hides the context the user navigated to. Show its beginning
+        // instead, while ordinary rows stay genuinely centred.
+        if (itemHeight >= viewportHeight) {
+            return itemTop;
+        }
+        return itemTop - (viewportHeight - itemHeight) / 2;
+    case Alignment::Bottom:
+        return itemBottom - viewportHeight;
+    case Alignment::EnsureVisible:
+        if (itemTop < currentTop) {
+            return itemTop;
+        }
+        if (itemBottom > currentBottom) {
+            return itemBottom - viewportHeight;
+        }
+        return currentTop;
+    }
+    return currentTop;
+}
+
 void LongListWidget::scrollToIndex(int index, Alignment alignment)
 {
     if (index < 0 || index >= logicalCount) {
@@ -652,30 +690,7 @@ void LongListWidget::scrollToIndex(int index, Alignment alignment)
     }
 
     clearSeek();
-    const qint64 itemTop = heights.prefixHeight(index);
-    const qint64 itemBottom = heights.prefixHeight(index + 1);
-    const qint64 currentTop = contentOffset();
-    const qint64 currentBottom = currentTop + viewport()->height();
-    qint64 target = currentTop;
-
-    switch (alignment) {
-    case Alignment::Top:
-        target = itemTop;
-        break;
-    case Alignment::Center:
-        target = itemTop - (viewport()->height() - heights.value(index)) / 2;
-        break;
-    case Alignment::Bottom:
-        target = itemBottom - viewport()->height();
-        break;
-    case Alignment::EnsureVisible:
-        if (itemTop < currentTop) {
-            target = itemTop;
-        } else if (itemBottom > currentBottom) {
-            target = itemBottom - viewport()->height();
-        }
-        break;
-    }
+    const qint64 target = alignedContentOffset(index, alignment);
 
     internalScrollChange = true;
     verticalScrollBar()->setValue(scrollValueForContentOffset(target));
@@ -710,12 +725,14 @@ bool LongListWidget::lockViewportToItem(int index,
     }
 
     // Replace any previous lock without reporting an intermediate unlock to the
-    // domain layer. Apply alignment once, then preserve the resulting item-top
-    // coordinate rather than repeatedly re-applying Center/Top/Bottom.
+    // domain layer. Geometry outside the target keeps the target at the current
+    // screen Y; a later target-height change re-applies this semantic alignment.
     releaseViewportLock(false);
     scrollToIndex(index, alignment);
 
     viewportLock.index = index;
+    viewportLock.itemHeight = heights.value(index);
+    viewportLock.alignment = alignment;
     viewportLock.quietPeriodMs = std::max(0, quietPeriodMs);
     captureViewportLockFraction();
     touchViewportLock();
@@ -732,7 +749,12 @@ bool LongListWidget::remapViewportLockedItem(int index)
         return true;
     }
 
+    // An authoritative source remap changes identity, not navigation intent.
+    // Adopt the destination's current height before restoring so the remap
+    // itself preserves screen Y. Any later real height change can then trigger
+    // semantic realignment normally.
     viewportLock.index = index;
+    viewportLock.itemHeight = heights.value(index);
     QSignalBlocker blocker(verticalScrollBar());
     viewport()->setUpdatesEnabled(false);
     restoreViewportLock();
@@ -818,9 +840,9 @@ void LongListWidget::resizeEvent(QResizeEvent* event)
     dirtyGeometry.clear();
     updateScrollBarRange(oldOffset);
     if (hasViewportLock()) {
-        // viewportLock.itemTopFraction was captured against the old viewport.
-        // Using it with the new viewport height intentionally scales the locked
-        // item's screen Y (e.g. 500/1000 -> 250/500).
+        // If only viewport height changed, restoreViewportLock() preserves the
+        // old relative Y. If width reflow also changed the target's own height,
+        // it re-applies the semantic alignment instead.
         restoreViewportLock();
     } else {
         restoreAnchor(anchor);
@@ -1275,6 +1297,20 @@ void LongListWidget::restoreViewportLock()
     if (!hasViewportLock() || viewportLock.index >= logicalCount) {
         return;
     }
+
+    const int currentItemHeight = heights.value(viewportLock.index);
+    if (currentItemHeight != viewportLock.itemHeight) {
+        // The target itself reflowed. Keeping its old top Y would make a row
+        // that grew after navigation spill out of the viewport, even though it
+        // could be centred with the now-authoritative height. Re-apply the
+        // semantic alignment, then make that new placement the lock anchor.
+        viewportLock.itemHeight = currentItemHeight;
+        verticalScrollBar()->setValue(scrollValueForContentOffset(
+            alignedContentOffset(viewportLock.index, viewportLock.alignment)));
+        captureViewportLockFraction();
+        return;
+    }
+
     const long double desiredViewportY = viewportLock.itemTopFraction
         * static_cast<long double>(std::max(1, viewport()->height()));
     const qint64 targetOffset = heights.prefixHeight(viewportLock.index)

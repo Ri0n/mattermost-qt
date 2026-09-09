@@ -1,6 +1,7 @@
 #include "ChatArea.h"
 
 #include <memory>
+#include <utility>
 
 #include <QPointer>
 
@@ -40,23 +41,24 @@ bool ChatArea::ensurePinnedPostVisible(const QString& postId,
                                           reachedOldest, reachedNewest);
 }
 
-void ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
+bool ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
 {
     if (postId.isEmpty() || !ui || !ui->listWidget) {
-        return;
+        return false;
     }
 
     // ChatLogWidget owns only semantic post identity. LongListWidget owns the
-    // actual viewport lock: Center is applied once, then the target post's top
-    // keeps the same screen Y through reflow and the same Y/viewportHeight ratio
-    // through window resize. Authoritative source remaps only change the locked
-    // logical index; they never recenter the post.
-    ui->listWidget->lockNavigationToPost(postId,
-                                         LongListWidget::Alignment::Center,
-                                         quietPeriodMs);
+    // actual viewport lock: fitting targets stay centred as their own geometry
+    // settles, oversized targets are top-aligned, and unrelated reflow preserves
+    // the target's current screen Y. Authoritative source remaps only change the
+    // locked logical identity without creating a visible jump.
+    return ui->listWidget->lockNavigationToPost(postId,
+                                                LongListWidget::Alignment::Center,
+                                                quietPeriodMs);
 }
 
-void ChatArea::highlightPostWhenAuthoritative(const QString& postId)
+void ChatArea::highlightPostWhenAuthoritative(const QString& postId,
+                                              std::function<void()> onPresented)
 {
     if (postId.isEmpty() || !ui || !ui->listWidget) {
         return;
@@ -65,6 +67,9 @@ void ChatArea::highlightPostWhenAuthoritative(const QString& postId)
     auto* source = qobject_cast<ThreadPostSource*>(ui->listWidget->source());
     if (!source || source->isPostPositionAuthoritative(postId)) {
         ui->listWidget->highlightPost(postId);
+        if (onPresented) {
+            onPresented();
+        }
         return;
     }
 
@@ -78,7 +83,8 @@ void ChatArea::highlightPostWhenAuthoritative(const QString& postId)
     auto connection = std::make_shared<QMetaObject::Connection>();
     *connection = connect(source, &AbstractPostSource::rangeRequestFinished,
                           this,
-                          [guard, source, postId, generation, connection](int, int) {
+                          [guard, source, postId, generation, connection,
+                           onPresented = std::move(onPresented)](int, int) mutable {
         if (!guard || generation != guard->viewportNavigationGeneration) {
             QObject::disconnect(*connection);
             return;
@@ -90,6 +96,9 @@ void ChatArea::highlightPostWhenAuthoritative(const QString& postId)
         QObject::disconnect(*connection);
         if (guard->ui && guard->ui->listWidget) {
             guard->ui->listWidget->highlightPost(postId);
+            if (onPresented) {
+                onPresented();
+            }
         }
     });
 }

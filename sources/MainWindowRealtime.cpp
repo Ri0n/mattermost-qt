@@ -18,6 +18,7 @@
 #include "channel-tree/AttentionList.h"
 #include "channel-tree/ChannelQuickList.h"
 #include "channel-tree/ChannelTree.h"
+#include "navigation/AppNavigationService.h"
 #include "notifications/NotificationManager.h"
 #include "post-collection/PostCollectionView.h"
 #include "server-dialog/ServerDialog.h"
@@ -31,6 +32,26 @@ void MainWindow::installRealtimeUiSync()
         return;
     }
     setProperty(InstalledProperty, true);
+
+    // Notification post targets use the same semantic navigation service as
+    // permalinks, Following and Attention. A reply can therefore load its root
+    // and exact thread position before the concrete target widget is presented.
+    connect(notificationManager.get(), &NotificationManager::activated,
+            this, [this](const NotificationTarget& target) {
+        if (!target.isValid()) {
+            return;
+        }
+
+        if (isMinimized()) {
+            showNormal();
+        } else {
+            show();
+        }
+        raise();
+        activateWindow();
+
+        AppNavigationService::instance(backend).openPost(target.postId);
+    });
 
     // Server-originated ephemeral posts are transient by definition: surface
     // them through the existing desktop notification path rather than adding

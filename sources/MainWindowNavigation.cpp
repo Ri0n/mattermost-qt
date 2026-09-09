@@ -8,7 +8,9 @@
 #include <QTimer>
 
 #include "backend/Backend.h"
+#include "backend/SidebarService.h"
 #include "backend/types/BackendChannel.h"
+#include "backend/types/BackendPost.h"
 #include "channel-tree/ChannelTree.h"
 #include "chat-area/ChatArea.h"
 #include "navigation/NavigationUiController.h"
@@ -18,6 +20,37 @@ namespace Mattermost {
 namespace {
 
 Q_LOGGING_CATEGORY(lcNavigationJump, "mattermost.navigation.jump", QtWarningMsg)
+
+void acknowledgeDirectTargetIfNewest(Backend& backend,
+                                     const QString& channelId,
+                                     const QString& postId)
+{
+    BackendChannel* channel = backend.getStorage().getChannelById(channelId);
+    if (!channel
+        || (channel->type != BackendChannel::directChannel
+            && channel->type != BackendChannel::groupChannel)
+        || channel->last_post_at == 0) {
+        return;
+    }
+
+    BackendPost* post = channel->postIdToPost.value(postId, nullptr);
+    if (!post || post->create_at < channel->last_post_at) {
+        // Opening an older unread reply must not consume newer unread content.
+        return;
+    }
+
+    auto& sidebar = SidebarService::instance(backend);
+    if (!sidebar.isChannelUnread(*channel)) {
+        return;
+    }
+
+    // A DM/GM reply is displayed in the thread pane, so the parent ChatArea may
+    // never become the application's current channel and cannot run its normal
+    // bottom-of-channel acknowledgement. Once the newest reply itself is really
+    // presented, however, viewing the channel is semantically complete.
+    sidebar.markChannelViewedLocally(*channel);
+    backend.markChannelAsViewed(*channel);
+}
 
 } // namespace
 
@@ -155,21 +188,27 @@ void MainWindow::openChannelPost(const QString& channelId,
             return;
         }
 
-        // A permalink/notification is an explicit semantic target and may
-        // reposition an existing thread. Following uses preserveIfOpen and was
-        // handled above, so its repeat activation never disturbs the viewport.
+        // A permalink/notification/queue activation is an explicit semantic
+        // target and may reposition an existing thread. Callers that truly want
+        // presentation-only behaviour can still opt into preserveIfOpen above.
         threadArea->preparePostNavigation();
         navigationUi.presentThread(threadArea);
 
         QPointer<ChatArea> threadGuard(threadArea);
-        QTimer::singleShot(0, threadArea, [threadGuard, postId] {
-            if (!threadGuard) {
-                return;
-            }
-            threadGuard->lockNavigationToPost(postId, 0);
-            threadGuard->ensurePostVisible(postId);
-            threadGuard->highlightPostWhenAuthoritative(postId);
-        });
+        QPointer<MainWindow> windowGuard(this);
+        QTimer::singleShot(0, threadArea,
+            [threadGuard, windowGuard, channelId, postId] {
+                if (!threadGuard || !threadGuard->lockNavigationToPost(postId, 0)) {
+                    return;
+                }
+                threadGuard->highlightPostWhenAuthoritative(
+                    postId, [windowGuard, channelId, postId] {
+                        if (windowGuard) {
+                            acknowledgeDirectTargetIfNewest(windowGuard->backend,
+                                                            channelId, postId);
+                        }
+                    });
+            });
         return;
     }
 
@@ -191,9 +230,8 @@ void MainWindow::openChannelPost(const QString& channelId,
     area->preparePostNavigation();
 
     // A freshly opened lazy ChatArea installs its ChannelPostSource on the next
-    // event-loop turn. Apply the already-fetched permalink context after that
-    // setup. The context must be published before the viewport is moved: an
-    // isolated estimated target is deliberately no longer a valid source row.
+    // event-loop turn. Publish the already-fetched permalink context before
+    // asking ChatLogWidget to establish the one semantic viewport lock.
     QPointer<ChatArea> areaGuard(area);
     QTimer::singleShot(0, area,
         [areaGuard, postId, contextPostIds, reachedOldest, reachedNewest] {
@@ -201,22 +239,22 @@ void MainWindow::openChannelPost(const QString& channelId,
                 return;
             }
 
-            bool contextReady = false;
-            if (!contextPostIds.isEmpty()) {
-                contextReady = areaGuard->ensurePinnedPostVisible(postId, contextPostIds,
-                                                                  reachedOldest, reachedNewest);
-            } else {
-                contextReady = areaGuard->ensurePostVisible(postId);
-            }
-            qCDebug(lcNavigationJump).nospace()
-                << "JUMP_APPLY post=" << postId
-                << " contextReady=" << contextReady;
-            if (!contextReady) {
+            if (!contextPostIds.isEmpty()
+                && !areaGuard->ensurePinnedPostVisible(postId, contextPostIds,
+                                                       reachedOldest, reachedNewest)) {
+                qCDebug(lcNavigationJump).nospace()
+                    << "JUMP_APPLY post=" << postId << " contextReady=false";
                 return;
             }
 
-            areaGuard->lockNavigationToPost(postId, 0);
-            areaGuard->goToPost(postId);
+            const bool navigationReady = areaGuard->lockNavigationToPost(postId, 0);
+            qCDebug(lcNavigationJump).nospace()
+                << "JUMP_APPLY post=" << postId
+                << " contextReady=" << navigationReady;
+            if (!navigationReady) {
+                return;
+            }
+            areaGuard->highlightPostWhenAuthoritative(postId);
         });
 }
 

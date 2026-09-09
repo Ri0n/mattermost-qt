@@ -74,7 +74,7 @@ public:
     void clearMessageText ();
 
     void addThreadButton();
-    Backend& getBackend() const { return backend; }
+    Backend& getBackend() const { return backend_; }
 
     BackendPost&						post;
     QString								hoveredLink;
@@ -102,7 +102,7 @@ private:
     void openGroupMention(const QString& groupId);
     QString mentionTeamId() const;
 
-    Backend&                            backend;
+    Backend&                            backend_;
     PostResidencyLease                 residencyLease;
     Ui::PostWidget*						ui;
     std::unique_ptr<PostQuoteFrame>		quoteFrame;

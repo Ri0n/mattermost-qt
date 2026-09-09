@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -72,10 +73,6 @@ public:
 	void handleUserTyping (const BackendUser& user);
 	void editPost(BackendPost& post);
 
-	/** Scroll to a post through the logical post source, materializing it if known. */
-	void goToPost (const BackendPost& post);
-	void goToPost (const QString& postId);
-
 	/**
 	 * Explicit semantic navigation supersedes weak queued activation positioning
 	 * (newest or an inactive-page bookmark). Call this synchronously as soon as
@@ -88,7 +85,6 @@ public:
 	void goToNewest ()
 	{
 		++viewportNavigationGeneration;
-		pendingPostId.clear();
 		scheduleNewestPosition();
 	}
 
@@ -103,13 +99,15 @@ public:
 	 * an estimated logical slot with its authoritative index. Pixel anchoring
 	 * remains exclusively inside LongListWidget.
 	 */
-	void lockNavigationToPost(const QString& postId, int quietPeriodMs = 2000);
+	bool lockNavigationToPost(const QString& postId, int quietPeriodMs = 2000);
 
 	/**
 	 * Flash a semantic thread target only after its provisional index has been
-	 * replaced or confirmed by an authoritative server window.
+	 * replaced or confirmed by an authoritative server window. onPresented runs
+	 * only for the still-current navigation after that authoritative placement.
 	 */
-	void highlightPostWhenAuthoritative(const QString& postId);
+	void highlightPostWhenAuthoritative(const QString& postId,
+	                                    std::function<void()> onPresented = {});
 
 	void onActivate ();
 	void onDeactivate ();
@@ -140,15 +138,15 @@ private:
 	void updatePinnedPostsButton ();
 	void updateThreadWindowTitle ();
 	void markChannelViewedIfAtBottom ();
+	void requestThreadReadAcknowledgement ();
+	void tryThreadReadAcknowledgement ();
 	void tryExplicitReadAcknowledgement ();
 	void setupPostSource();
 	void scheduleNewestPosition();
 	void scheduleStoredPosition();
-	void finishPendingNavigation();
 
 	QPointer<ChatArea> parentArea;
 	QString parentPostId;
-	QString pendingPostId;
 	QString storedViewportPostId;
 	std::uint64_t viewportNavigationGeneration = 0;
 	AbstractPostSource* postSource = nullptr; // QObject child; owned by ChatArea
@@ -157,6 +155,8 @@ private:
 	QStackedWidget* contentStack = nullptr;
 	PostCollectionView* pinnedPostsView = nullptr;
 	int pendingMessageLoads = 0;
+	bool threadReadPending = false;
+	bool threadReadInFlight = false;
 
 public:
 	Ui::ChatArea* ui;

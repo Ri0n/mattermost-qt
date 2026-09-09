@@ -6,15 +6,13 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
-#include <QHash>
 #include <QMap>
 #include <QSet>
-#include <QTimer>
 #include <QTreeWidget>
-#include <QVector>
 
-#include "backend/ThreadFollowService.h"
+#include "backend/FollowingModel.h"
 
 class QKeyEvent;
 class QMouseEvent;
@@ -24,7 +22,6 @@ namespace Mattermost {
 
 class Backend;
 class BackendChannel;
-class BackendPost;
 class BackendUser;
 
 class ChannelQuickList : public QTreeWidget
@@ -52,32 +49,22 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 private:
-    using ThreadSummary = ThreadFollowService::ThreadSummary;
-
     void activateItem(QTreeWidgetItem* item);
-    void notePost(BackendChannel& channel, const BackendPost& post);
-    void clearSyntheticMentions(const QString& channelId);
-    void scheduleThreadRefresh();
-    void openThread(const ThreadSummary& thread);
-    QString threadLabel(const ThreadSummary& thread) const;
+    void openThread(const FollowingModel::Entry& entry);
+    QString threadLabel(const FollowingModel::Entry& entry) const;
     void updateDirectUser(const BackendUser& user);
     void ensureDirectUserConnections(BackendChannel& channel);
 
-    Backend* backend = nullptr;
-    bool refreshing = false;
-    bool threadRefreshInFlight = false;
-    bool threadRefreshRequested = false;
-    bool _threadSnapshotDirty = true;
-    QTimer threadRefreshTimer;
-    QVector<ThreadSummary> serverThreads;
-    QHash<QString, ThreadSummary> syntheticMentions;
-    QHash<QString, uint64_t> pendingSince;
-    QMap<QString, QTreeWidgetItem*> channelItems;
-    QSet<QString> connectedUsers;
+    Backend* backend_ = nullptr;
+    FollowingModel* model_ = nullptr;
+    bool refreshing_ = false;
+    QMap<QString, QTreeWidgetItem*> channelItems_;
+    QSet<QString> connectedUsers_;
 
-    QString retainedKey;
-    uint64_t retainedSortTime = 0;
-    bool retainedUnreadPosition = false;
+    QString retainedKey_;
+    std::optional<FollowingModel::Entry> retainedEntry_;
+    uint64_t retainedSortTime_ = 0;
+    bool retainedUnreadPosition_ = false;
 };
 
 } // namespace Mattermost

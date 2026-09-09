@@ -877,15 +877,12 @@ void Backend::retrieveChannelUnreadPost (BackendChannel& channel, std::function<
 		std::cout << jsonString.toStdString() << std::endl;
 #endif
 
-		QJsonObject root = doc.object();
-		QString lastReadPost (root.value("prev_post_id").toString());
+		const QJsonArray order = doc.object().value("order").toArray();
+		const QString firstUnreadPost = order.isEmpty() ? QString() : order.last().toString();
 
-		if (!lastReadPost.isEmpty()) {
-			responseHandler (lastReadPost);
+		responseHandler (firstUnreadPost);
+		if (!firstUnreadPost.isEmpty()) {
 			emit onUnreadPostsAtStartup (channel);
-		} else {
-			static QString emptyString ("");
-			responseHandler (emptyString);
 		}
     }));
 }
