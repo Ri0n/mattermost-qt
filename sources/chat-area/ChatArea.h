@@ -143,6 +143,8 @@ private:
 	void updatePinnedPostsButton ();
 	void updateThreadWindowTitle ();
 	void markChannelViewedIfAtBottom ();
+	void requestThreadReadAcknowledgement ();
+	void tryThreadReadAcknowledgement ();
 	void tryExplicitReadAcknowledgement ();
 	void setupPostSource();
 	void scheduleNewestPosition();
@@ -160,6 +162,8 @@ private:
 	QStackedWidget* contentStack = nullptr;
 	PostCollectionView* pinnedPostsView = nullptr;
 	int pendingMessageLoads = 0;
+	bool threadReadPending = false;
+	bool threadReadInFlight = false;
 
 public:
 	Ui::ChatArea* ui;
