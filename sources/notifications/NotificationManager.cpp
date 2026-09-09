@@ -113,10 +113,7 @@ bool NotificationManager::showFreedesktop(const QString& title, const QString& b
 
     QStringList actions;
     if (target.isValid()) {
-        actions = {
-            QStringLiteral("default"),
-            tr("Open"),
-        };
+        actions << QStringLiteral("default") << tr("Open");
     }
     const QVariantMap hints {
         {QStringLiteral("desktop-entry"), QStringLiteral("mattermost-qt")},
