@@ -264,6 +264,18 @@ void AttentionList::initialize(Backend& sourceBackend)
         scheduleThreadRefresh();
     });
 
+    auto& sidebar = SidebarService::instance(*backend);
+    connect(&sidebar, &SidebarService::channelActivityChanged, this,
+            [this](const QString&) {
+        // Navigation can acknowledge a DM/GM locally before Mattermost echoes
+        // channel_viewed over the websocket. Rebuild now so the retained row
+        // drops its bold Attention state immediately instead of waiting for a
+        // later server thread/sidebar reconciliation.
+        refresh();
+    });
+    connect(&sidebar, &SidebarService::channelActivityReset,
+            this, &AttentionList::refresh);
+
     auto& followService = ThreadFollowService::instance(*backend);
     connect(&followService, &ThreadFollowService::followingChanged, this,
             [this](const QString&, const QString& threadId, bool following) {
