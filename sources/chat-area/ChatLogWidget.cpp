@@ -6,7 +6,10 @@
 #include <QTimer>
 
 #include "ChatArea.h"
+#include "ThreadPostSource.h"
 #include "backend/Backend.h"
+#include "backend/ReadCursorService.h"
+#include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "post/InteractivePostWidget.h"
 #include "post/PostWidget.h"
@@ -76,6 +79,7 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
             << " range=[" << first << ',' << last << ']'
             << " itemCount=" << itemCount();
 
+        scheduleReadCursorUpdate();
         if (!postSource || first < 0 || first > 1 || !postSource->canRequestBeforeFirst()) {
             return;
         }
@@ -94,6 +98,7 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
             _initialScrollBarPulsePending = false;
         }
         scheduleNavigationFinalize();
+        scheduleReadCursorUpdate();
     });
 
     // A direct user gesture wins even while semantic navigation is waiting for
@@ -101,6 +106,7 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
     // LongListWidget releases it and the viewportLockReleased handler below
     // clears the same semantic state.
     connect(this, &LongListWidget::userViewportChanged, this, [this](bool) {
+        scheduleReadCursorUpdate();
         if (!navigationLockPending) {
             return;
         }
@@ -124,6 +130,7 @@ ChatLogWidget::ChatLogWidget(QWidget* parent)
         navigationLogicalIndex = -1;
         navigationLockPending = false;
         navigationRecenterPending = false;
+        scheduleReadCursorUpdate();
     });
 }
 
@@ -172,6 +179,7 @@ void ChatLogWidget::setSource(AbstractPostSource* sourceInstance)
             setRangeAvailable(index, index, true);
         }
     }
+    scheduleReadCursorUpdate();
 }
 
 PostWidget* ChatLogWidget::findPost(const QString& postId) const
@@ -317,6 +325,7 @@ void ChatLogWidget::followOwnPost(const QString& postId)
             << " postId=" << postId;
         clearNavigationLock();
         scrollToEnd();
+        scheduleReadCursorUpdate();
     });
 }
 
@@ -388,6 +397,7 @@ bool ChatLogWidget::finalizeNavigationLock()
     if (pendingHighlightPostId == navigationPostId) {
         highlightPost(pendingHighlightPostId);
     }
+    scheduleReadCursorUpdate();
     return true;
 }
 
@@ -407,6 +417,86 @@ void ChatLogWidget::scheduleNavigationFinalize()
             highlightPost(pendingHighlightPostId);
         }
     });
+}
+
+void ChatLogWidget::scheduleReadCursorUpdate()
+{
+    if (readCursorUpdatePending_) {
+        return;
+    }
+    readCursorUpdatePending_ = true;
+    QTimer::singleShot(0, this, [this] {
+        readCursorUpdatePending_ = false;
+        updateReadCursorFromViewport();
+    });
+}
+
+void ChatLogWidget::updateReadCursorFromViewport()
+{
+    if (!backend || !chatArea || !postSource || !chatArea->isVisible()
+        || !chatArea->isActiveWindow() || viewport()->height() <= 0) {
+        return;
+    }
+
+    // A message becomes locally read only once its lower edge enters the
+    // viewport. This deliberately handles oversized posts: seeing only their
+    // beginning does not advance Following past them. Back-scrolling cannot
+    // regress the cursor because ReadCursorService keeps a monotonic high-water
+    // semantic post identity rather than a logical list index.
+    int readIndex = -1;
+    BackendPost* readPost = nullptr;
+    const int viewportHeight = viewport()->height();
+    for (int index : materializedIndices()) {
+        QWidget* widget = itemWidget(index);
+        if (!widget) {
+            continue;
+        }
+        const int bottom = widget->y() + widget->height();
+        if (bottom <= 0 || bottom > viewportHeight) {
+            continue;
+        }
+        BackendPost* post = postSource->postAt(index);
+        if (!post || post->id.isEmpty()) {
+            continue;
+        }
+        if (index > readIndex) {
+            readIndex = index;
+            readPost = post;
+        }
+    }
+
+    if (!readPost || readIndex < 0) {
+        return;
+    }
+
+    BackendChannel& channel = chatArea->getChannel();
+    auto& cursors = ReadCursorService::instance(*backend);
+
+    if (chatArea->isThread) {
+        bool threadAtEnd = readIndex == postSource->itemCount() - 1;
+        if (auto* threadSource = qobject_cast<ThreadPostSource*>(postSource.data())) {
+            threadAtEnd = threadAtEnd
+                && threadSource->isPostPositionAuthoritative(readPost->id);
+        }
+        cursors.observeReadThrough(channel.id, chatArea->root_id,
+                                   *readPost, threadAtEnd);
+
+        // A DM/GM Following row represents the whole conversation rather than
+        // only the central root-post timeline. Reading a reply in its thread
+        // therefore advances that conversation cursor as well.
+        if (channel.type == BackendChannel::directChannel
+            || channel.type == BackendChannel::groupChannel) {
+            const bool channelAtEnd = channel.last_post_at == 0
+                || readPost->create_at >= channel.last_post_at;
+            cursors.observeReadThrough(channel.id, QString(),
+                                       *readPost, channelAtEnd);
+        }
+        return;
+    }
+
+    const bool channelAtEnd = channel.last_post_at == 0
+        || readPost->create_at >= channel.last_post_at;
+    cursors.observeReadThrough(channel.id, QString(), *readPost, channelAtEnd);
 }
 
 void ChatLogWidget::clearNavigationLock()
@@ -494,6 +584,7 @@ QWidget* ChatLogWidget::createItemWidget(int index)
             << " minHint=" << widget->minimumSizeHint().height();
         if (currentIndex >= 0) {
             itemsChanged(currentIndex, currentIndex);
+            scheduleReadCursorUpdate();
             if (postId == navigationPostId && hasViewportLock()) {
                 // Geometry commit is queued by itemsChanged() first. Re-center
                 // one event-loop turn later using the new measured target height.
@@ -552,6 +643,7 @@ void ChatLogWidget::reconnectSource()
             << " count=" << count;
         setItemCount(count);
         restoreNavigationTarget();
+        scheduleReadCursorUpdate();
     }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::itemsInserted,
                                         this, [this](int first, int count) {
@@ -562,6 +654,7 @@ void ChatLogWidget::reconnectSource()
             << " count=" << count;
         insertItems(first, count);
         restoreNavigationTarget();
+        scheduleReadCursorUpdate();
     }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::itemsRemoved,
                                         this, [this](int first, int count) {
@@ -572,6 +665,7 @@ void ChatLogWidget::reconnectSource()
             << " count=" << count;
         removeItems(first, count);
         restoreNavigationTarget();
+        scheduleReadCursorUpdate();
     }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::rangeAvailable,
                                         this, [this](int first, int last) {
@@ -581,6 +675,7 @@ void ChatLogWidget::reconnectSource()
             << " range=[" << first << ',' << last << ']';
         setRangeAvailable(first, last, true);
         restoreNavigationTarget();
+        scheduleReadCursorUpdate();
     }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::bodyAvailabilityChanged,
                                         this, [this](int first, int last, bool bodyAvailable) {
@@ -592,6 +687,7 @@ void ChatLogWidget::reconnectSource()
         setRangeAvailable(first, last, bodyAvailable);
         if (bodyAvailable) {
             restoreNavigationTarget();
+            scheduleReadCursorUpdate();
         }
     }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::itemsChanged,
@@ -602,6 +698,7 @@ void ChatLogWidget::reconnectSource()
             << " range=[" << first << ',' << last << ']';
         rematerializeRange(first, last);
         restoreNavigationTarget();
+        scheduleReadCursorUpdate();
     }));
     sourceConnections.push_back(connect(postSource, &AbstractPostSource::rangeRequestFinished,
                                         this, [this](int first, int last) {
@@ -610,6 +707,7 @@ void ChatLogWidget::reconnectSource()
             << " source=" << sourceName(postSource)
             << " range=[" << first << ',' << last << ']';
         finishRangeRequest(first, last);
+        scheduleReadCursorUpdate();
     }));
 }
 
