@@ -46,8 +46,14 @@ public:
 	void reopen ();
 private:
 	std::unique_ptr<MainWindow>			mainWindow;
-	std::unique_ptr<QSystemTrayIcon> 	trayIcon;
+	// Declare the context menu before the tray icon: members are destroyed in
+	// reverse declaration order, so the menu is destroyed *after* the icon.
+	// QSystemTrayIcon only stores a raw pointer to its context menu and does not
+	// own it, so destroying the menu first would leave the icon holding a
+	// dangling pointer that the platform tray code can dereference on shutdown
+	// (use-after-free -> SIGSEGV on exit).
 	std::unique_ptr<QMenu>				trayIconMenu;
+	std::unique_ptr<QSystemTrayIcon> 	trayIcon;
 	Backend								backend;
 	LoginDialog*						loginDialog;
 	QWidget*							currentWindow;
@@ -55,8 +61,8 @@ private:
 
 inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 :QApplication (argc, argv)
-,trayIcon (std::make_unique<QSystemTrayIcon> (QIcon(":/icons/img/icon0.ico"), nullptr))
 ,trayIconMenu (std::make_unique<QMenu> (nullptr))
+,trayIcon (std::make_unique<QSystemTrayIcon> (QIcon(":/icons/img/icon0.ico"), nullptr))
 ,currentWindow (nullptr)
 {
     OverlayScrollBarManager::install(*this);
