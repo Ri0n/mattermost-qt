@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -107,9 +108,11 @@ public:
 
 	/**
 	 * Flash a semantic thread target only after its provisional index has been
-	 * replaced or confirmed by an authoritative server window.
+	 * replaced or confirmed by an authoritative server window. onPresented runs
+	 * only for the still-current navigation after that authoritative placement.
 	 */
-	void highlightPostWhenAuthoritative(const QString& postId);
+	void highlightPostWhenAuthoritative(const QString& postId,
+	                                    std::function<void()> onPresented = {});
 
 	void onActivate ();
 	void onDeactivate ();
