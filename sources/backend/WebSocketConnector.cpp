@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -146,6 +146,9 @@ const QMap<QString, void(*)(WebSocketConnector&, const QJsonObject&, const QJson
 	{"channel_created",		handler<ChannelCreatedEvent>},
 	{"channel_updated",		handler<ChannelUpdatedEvent>},
 	{"open_dialog",			handler<OpenDialogEvent>},
+	{"ephemeral_message", [] (WebSocketConnector& conn, const QJsonObject& data, const QJsonObject&) {
+		conn.eventHandler.handleEphemeralMessage(data);
+	}},
     {"preference_changed",  handler<PreferenceChangedEvent>},
     {"preferences_changed", handler<PreferencesChangedEvent>},
     {"preferences_deleted", handler<PreferencesDeletedEvent>},
@@ -162,6 +165,7 @@ bool printEvent (const QString& name)
 			name == "user_removed"		||
 			name == "user_updated"		||
 			name == "leave_team"      ||
+			name == "ephemeral_message" ||
             name == "preference_changed" ||
             name == "preferences_changed" ||
             name == "preferences_deleted"
