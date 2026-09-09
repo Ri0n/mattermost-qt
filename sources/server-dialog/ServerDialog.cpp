@@ -5,13 +5,18 @@
 
 #include "ServerDialog.h"
 
+#include <utility>
+
+#include <QAbstractButton>
+#include <QAbstractItemView>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDate>
 #include <QDateEdit>
+#include <QDateTime>
 #include <QDateTimeEdit>
 #include <QDialogButtonBox>
-#include <QFormLayout>
 #include <QGroupBox>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -22,6 +27,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QStringList>
+#include <QVariant>
 #include <QVBoxLayout>
 
 #include "backend/Backend.h"
