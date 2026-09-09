@@ -17,9 +17,9 @@
  * along with Mattermost-QT. if not, see https://www.gnu.org/licenses/.
  */
 
-#ifndef POSTREACTION_H
-#define POSTREACTION_H
+#pragma once
 
+#include <QVector>
 #include <QWidget>
 
 class QMouseEvent;
@@ -30,13 +30,19 @@ class PostReaction;
 
 namespace Mattermost {
 
+class Backend;
+
 using BackendPostReaction = QVector<QString>;
 
 class PostReaction: public QWidget
 {
     Q_OBJECT
 public:
-    explicit PostReaction (const QString& emojiName, const QString& emojiValue, const BackendPostReaction& reactionData, QWidget *parent = nullptr);
+    explicit PostReaction(Backend& backend,
+                          const QString& emojiName,
+                          const QString& emojiValue,
+                          const BackendPostReaction& reactionData,
+                          QWidget* parent = nullptr);
     ~PostReaction();
 
 signals:
@@ -46,10 +52,14 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
 
 private:
-    QString emojiName;
-    Ui::PostReaction *ui;
+    void updateToolTip();
+
+    Backend& backend_;
+    QString emojiName_;
+    QString emojiValue_;
+    BackendPostReaction reactionData_;
+    bool profileLookupFinished_ = false;
+    Ui::PostReaction* ui_;
 };
 
 } /* namespace Mattermost */
-
-#endif // POSTREACTION_H
