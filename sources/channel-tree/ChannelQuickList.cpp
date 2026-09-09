@@ -179,6 +179,17 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
         scheduleThreadRefresh();
     });
 
+    auto& sidebar = SidebarService::instance(*backend);
+    connect(&sidebar, &SidebarService::channelActivityChanged, this,
+            [this](const QString&) {
+        // Local read acknowledgement intentionally precedes the server's
+        // channel_viewed websocket echo. Reflect that state immediately rather
+        // than leaving a retained Following row bold until reconciliation.
+        refresh();
+    });
+    connect(&sidebar, &SidebarService::channelActivityReset,
+            this, &ChannelQuickList::refresh);
+
     auto& followService = ThreadFollowService::instance(*backend);
     connect(&followService, &ThreadFollowService::followingChanged, this,
             [this](const QString&, const QString& threadId, bool following) {
@@ -194,6 +205,7 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
             pendingSince.remove(threadKey(threadId));
             if (retainedKey == threadKey(threadId)) {
                 retainedKey.clear();
+                retainedPostId.clear();
                 retainedSortTime = 0;
                 retainedUnreadPosition = false;
             }
@@ -267,6 +279,9 @@ void ChannelQuickList::activateItem(QTreeWidgetItem* current)
     }
 
     const QString key = current->data(0, FollowingKeyRole).toString();
+    if (key != retainedKey) {
+        retainedPostId.clear();
+    }
     retainedKey = key;
     retainedSortTime = current->data(0, FollowingSortTimeRole).toULongLong();
     retainedUnreadPosition = current->data(0, SidebarItem::UnreadRole).toBool();
@@ -274,6 +289,7 @@ void ChannelQuickList::activateItem(QTreeWidgetItem* current)
     const QString channelId = current->data(0, SidebarItem::ChannelIdRole).toString();
     const QString threadId = current->data(0, SidebarItem::ThreadIdRole).toString();
     if (!threadId.isEmpty()) {
+        retainedPostId.clear();
         ThreadSummary thread;
         thread.id = threadId;
         thread.channelId = channelId;
@@ -288,31 +304,40 @@ void ChannelQuickList::activateItem(QTreeWidgetItem* current)
         return;
     }
 
+    // A DM/GM row represents a semantic unread target, which can itself be a
+    // thread reply. Keep the first resolved target while this row is retained so
+    // repeat activation reopens the same post even after local read state has
+    // already changed and the unread endpoint no longer identifies it.
+    if (!retainedPostId.isEmpty()) {
+        AppNavigationService::instance(*backend).openPost(retainedPostId);
+        return;
+    }
+
     BackendChannel* channel = backend->getStorage().getChannelById(channelId);
     if (!channel) {
         emit channelSelected(channelId);
         return;
     }
 
-    // Re-activating the conversation that is already the application's current
-    // channel is a presentation request, not a fresh unread jump. Routing it
-    // through ChannelTree makes a hidden existing page (e.g. behind Search)
-    // visible again while preserving its semantic viewport bookmark.
-    if (backend->getCurrentChannel() == channel) {
+    const bool unread = current->data(0, SidebarItem::UnreadRole).toBool();
+    // A read retained row in the already-current conversation is only a
+    // presentation request. An unread row must still resolve its exact target:
+    // the unread content may live in a thread pane even though the parent DM is
+    // already the current central channel.
+    if (backend->getCurrentChannel() == channel && !unread) {
         emit channelSelected(channelId);
         return;
     }
 
-    // Direct/group conversations are implicitly followed. Open the actual
-    // first unread post instead of jumping to the newest edge; ChatArea will
-    // acknowledge the channel only when the newest content is really seen.
     QPointer<ChannelQuickList> guard(this);
+    const QString requestedKey = key;
     backend->retrieveChannelUnreadPost(*channel,
-        [guard, channelId](const QString& postId) {
-            if (!guard || !guard->backend) {
+        [guard, channelId, requestedKey](const QString& postId) {
+            if (!guard || !guard->backend || guard->retainedKey != requestedKey) {
                 return;
             }
             if (!postId.isEmpty()) {
+                guard->retainedPostId = postId;
                 AppNavigationService::instance(*guard->backend).openPost(postId);
             } else {
                 emit guard->channelSelected(channelId);
@@ -327,6 +352,7 @@ void ChannelQuickList::releaseSelectionRetention()
     }
 
     retainedKey.clear();
+    retainedPostId.clear();
     retainedSortTime = 0;
     retainedUnreadPosition = false;
     QTimer::singleShot(0, this, [this] {
@@ -365,6 +391,7 @@ void ChannelQuickList::clearSyntheticMentions(const QString& channelId)
             pendingSince.remove(threadKey(it.key()));
             if (retainedKey == threadKey(it.key())) {
                 retainedKey.clear();
+                retainedPostId.clear();
                 retainedSortTime = 0;
                 retainedUnreadPosition = false;
             }
@@ -490,7 +517,9 @@ void ChannelQuickList::openThread(const ThreadSummary& thread)
                 wasUnread = entry.unreadReplies > 0 || entry.unreadMentions > 0;
                 entry.unreadReplies = 0;
                 entry.unreadMentions = 0;
-                entry.lastViewedAt = qMax(entry.lastViewedAt, entry.lastReplyAt);
+                // Keep the original last_viewed_at while this Following row is
+                // retained. A repeat activation then resolves the same unread
+                // boundary instead of degrading into presentation-only/newest.
                 break;
             }
 
@@ -499,7 +528,8 @@ void ChannelQuickList::openThread(const ThreadSummary& thread)
             if (wasUnread) {
                 ThreadFollowService::instance(*guard->backend).markThreadRead(teamId, threadId);
             }
-        });
+        },
+        false);
 }
 
 void ChannelQuickList::refresh()
