@@ -87,7 +87,6 @@ private:
     void openMessageSearch();
     void openSavedMessages(const QString& teamId = QString());
     void showCollectionPage(PostCollectionView* page);
-	void openAttentionThread (const QString& channelId, const QString& rootPostId);
 	void refreshMenuButtonIcon ();
     void refreshSearchButtonIcon();
 	void refreshUnreadFilterIcon ();
