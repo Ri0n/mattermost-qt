@@ -21,6 +21,7 @@
 #include <QVector>
 
 #include "backend/Backend.h"
+#include "backend/ReadCursorService.h"
 #include "backend/SidebarService.h"
 #include "backend/Storage.h"
 #include "backend/types/BackendChannel.h"
@@ -205,7 +206,6 @@ void ChannelQuickList::initialize(Backend& sourceBackend, Mode)
             pendingSince.remove(threadKey(threadId));
             if (retainedKey == threadKey(threadId)) {
                 retainedKey.clear();
-                retainedPostId.clear();
                 retainedSortTime = 0;
                 retainedUnreadPosition = false;
             }
@@ -279,9 +279,6 @@ void ChannelQuickList::activateItem(QTreeWidgetItem* current)
     }
 
     const QString key = current->data(0, FollowingKeyRole).toString();
-    if (key != retainedKey) {
-        retainedPostId.clear();
-    }
     retainedKey = key;
     retainedSortTime = current->data(0, FollowingSortTimeRole).toULongLong();
     retainedUnreadPosition = current->data(0, SidebarItem::UnreadRole).toBool();
@@ -289,7 +286,6 @@ void ChannelQuickList::activateItem(QTreeWidgetItem* current)
     const QString channelId = current->data(0, SidebarItem::ChannelIdRole).toString();
     const QString threadId = current->data(0, SidebarItem::ThreadIdRole).toString();
     if (!threadId.isEmpty()) {
-        retainedPostId.clear();
         ThreadSummary thread;
         thread.id = threadId;
         thread.channelId = channelId;
@@ -304,26 +300,30 @@ void ChannelQuickList::activateItem(QTreeWidgetItem* current)
         return;
     }
 
-    // A DM/GM row represents a semantic unread target, which can itself be a
-    // thread reply. Keep the first resolved target while this row is retained so
-    // repeat activation reopens the same post even after local read state has
-    // already changed and the unread endpoint no longer identifies it.
-    if (!retainedPostId.isEmpty()) {
-        AppNavigationService::instance(*backend).openPost(retainedPostId);
-        return;
-    }
-
     BackendChannel* channel = backend->getStorage().getChannelById(channelId);
     if (!channel) {
         emit channelSelected(channelId);
         return;
     }
 
+    const ReadCursorService::Cursor cursor =
+        ReadCursorService::instance(*backend).cursor(channelId);
+    if (cursor.state == ReadCursorService::State::FirstUnread
+        && !cursor.postId.isEmpty()) {
+        AppNavigationService::instance(*backend).openPost(cursor.postId);
+        return;
+    }
+    if (cursor.state == ReadCursorService::State::AtEnd) {
+        // No local unread target exists. Present the conversation normally; if
+        // a later post arrives, ReadCursorService turns AtEnd into FirstUnread.
+        emit channelSelected(channelId);
+        return;
+    }
+
     const bool unread = current->data(0, SidebarItem::UnreadRole).toBool();
-    // A read retained row in the already-current conversation is only a
-    // presentation request. An unread row must still resolve its exact target:
-    // the unread content may live in a thread pane even though the parent DM is
-    // already the current central channel.
+    // With no local read cursor yet, retain the server fallback. An unread row
+    // must resolve its exact target because DM/GM unread content can live in a
+    // thread pane even when the parent conversation is already central.
     if (backend->getCurrentChannel() == channel && !unread) {
         emit channelSelected(channelId);
         return;
@@ -337,7 +337,6 @@ void ChannelQuickList::activateItem(QTreeWidgetItem* current)
                 return;
             }
             if (!postId.isEmpty()) {
-                guard->retainedPostId = postId;
                 AppNavigationService::instance(*guard->backend).openPost(postId);
             } else {
                 emit guard->channelSelected(channelId);
@@ -352,7 +351,6 @@ void ChannelQuickList::releaseSelectionRetention()
     }
 
     retainedKey.clear();
-    retainedPostId.clear();
     retainedSortTime = 0;
     retainedUnreadPosition = false;
     QTimer::singleShot(0, this, [this] {
@@ -391,7 +389,6 @@ void ChannelQuickList::clearSyntheticMentions(const QString& channelId)
             pendingSince.remove(threadKey(it.key()));
             if (retainedKey == threadKey(it.key())) {
                 retainedKey.clear();
-                retainedPostId.clear();
                 retainedSortTime = 0;
                 retainedUnreadPosition = false;
             }
@@ -501,9 +498,31 @@ void ChannelQuickList::openThread(const ThreadSummary& thread)
         return;
     }
 
+    const ReadCursorService::Cursor cursor =
+        ReadCursorService::instance(*backend).cursor(thread.channelId, thread.id);
+    if (cursor.state == ReadCursorService::State::AtEnd) {
+        // There is no local unread target. Reopening an existing thread is only
+        // presentation; a newly created thread naturally starts at its live edge.
+        AppNavigationService::instance(*backend).openThread(thread.channelId, thread.id);
+        return;
+    }
+
+    uint64_t resumeAfter = thread.lastViewedAt;
+    QString fallbackPostId;
+    if (cursor.hasLocalProgress()) {
+        // Local viewport progress deliberately wins over server last_viewed_at.
+        // Following may have acknowledged the whole thread server-side earlier,
+        // while the local cursor still knows that the user only read through a
+        // concrete message in the viewport.
+        resumeAfter = cursor.readThroughCreateAt;
+    }
+    if (cursor.state == ReadCursorService::State::FirstUnread) {
+        fallbackPostId = cursor.postId;
+    }
+
     QPointer<ChannelQuickList> guard(this);
     AppNavigationService::instance(*backend).openThreadAtLastViewed(
-        thread.channelId, thread.id, thread.lastViewedAt, QString(),
+        thread.channelId, thread.id, resumeAfter, fallbackPostId,
         [guard, teamId = thread.teamId, threadId = thread.id](bool opened) {
             if (!guard || !guard->backend || !opened) {
                 return;
@@ -517,9 +536,6 @@ void ChannelQuickList::openThread(const ThreadSummary& thread)
                 wasUnread = entry.unreadReplies > 0 || entry.unreadMentions > 0;
                 entry.unreadReplies = 0;
                 entry.unreadMentions = 0;
-                // Keep the original last_viewed_at while this Following row is
-                // retained. A repeat activation then resolves the same unread
-                // boundary instead of degrading into presentation-only/newest.
                 break;
             }
 
