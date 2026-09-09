@@ -12,12 +12,15 @@
 #include "ui_mainwindow.h"
 
 #include "backend/Backend.h"
+#include "backend/ServerUiService.h"
 #include "backend/Storage.h"
 #include "backend/types/BackendDirectChannelsTeam.h"
 #include "channel-tree/AttentionList.h"
 #include "channel-tree/ChannelQuickList.h"
 #include "channel-tree/ChannelTree.h"
+#include "notifications/NotificationManager.h"
 #include "post-collection/PostCollectionView.h"
+#include "server-dialog/ServerDialog.h"
 
 namespace Mattermost {
 
@@ -28,6 +31,25 @@ void MainWindow::installRealtimeUiSync()
         return;
     }
     setProperty(InstalledProperty, true);
+
+    // Server-originated ephemeral posts are transient by definition: surface
+    // them through the existing desktop notification path rather than adding
+    // them to PostRepository or a channel timeline. Interactive dialogs remain
+    // native Qt dialogs and never run a nested event loop.
+    auto& serverUi = ServerUiService::instance(backend);
+    connect(&serverUi, &ServerUiService::ephemeralMessageReceived,
+            this, [this](const QString& message) {
+        notificationManager->show(tr("Mattermost"), message, NotificationTarget {});
+    });
+    connect(&serverUi, &ServerUiService::interactiveDialogRequested,
+            this, [this](const QJsonObject& dialog,
+                         const QString& url,
+                         const QString& channelId,
+                         const QString& teamId) {
+        auto* serverDialog = new ServerDialog(
+            backend, dialog, url, channelId, teamId, this);
+        serverDialog->show();
+    });
 
     // Alternate sidebar views can legitimately know about a direct/group
     // conversation before the server-backed Channels tree has materialized its
