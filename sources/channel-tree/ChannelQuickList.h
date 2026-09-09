@@ -76,7 +76,6 @@ private:
     QSet<QString> connectedUsers;
 
     QString retainedKey;
-    QString retainedPostId;
     uint64_t retainedSortTime = 0;
     bool retainedUnreadPosition = false;
 };
