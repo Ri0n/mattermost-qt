@@ -33,14 +33,9 @@ void MainWindow::installRealtimeUiSync()
     }
     setProperty(InstalledProperty, true);
 
-    // Notification targets used to navigate directly through ChannelTree and a
-    // currently materialized ChatArea. That became incorrect once post/thread
-    // navigation became lazy and source-driven: a notification reply may need
-    // its root/context loaded before a concrete target can exist. Replace the
-    // legacy constructor connection with the same semantic navigation service
-    // used by permalinks, Following and Attention.
-    disconnect(notificationManager.get(), &NotificationManager::activated,
-               this, &MainWindow::activateNotification);
+    // Notification post targets use the same semantic navigation service as
+    // permalinks, Following and Attention. A reply can therefore load its root
+    // and exact thread position before the concrete target widget is presented.
     connect(notificationManager.get(), &NotificationManager::activated,
             this, [this](const NotificationTarget& target) {
         if (!target.isValid()) {
