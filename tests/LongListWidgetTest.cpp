@@ -356,6 +356,85 @@ private slots:
                  "Reflow above a locked item must keep its viewport Y stable");
     }
 
+    void navigationLockRecentersWhenTargetHeightChanges()
+    {
+        TestLongListWidget list;
+        list.resize(480, 400);
+        list.setDefaultItemHeight(60);
+        list.setItemCount(300);
+        list.setRangeAvailable(0, 299);
+        list.show();
+        settleEvents();
+
+        QVERIFY(list.lockViewportToItem(150,
+                                        Mattermost::LongListWidget::Alignment::Center,
+                                        0));
+        settleEvents(12);
+        QWidget* target = list.itemWidget(150);
+        QVERIFY(target != nullptr);
+
+        list.setSyntheticHeight(150, 260);
+        settleEvents(16);
+
+        target = list.itemWidget(150);
+        QVERIFY(target != nullptr);
+        const int expectedY = (list.viewport()->height() - target->height()) / 2;
+        QVERIFY2(qAbs(target->y() - expectedY) <= 2,
+                 "A navigation target that grows but still fits must be re-centred using its real height");
+
+        list.setSyntheticHeight(150, 520);
+        settleEvents(16);
+        target = list.itemWidget(150);
+        QVERIFY(target != nullptr);
+        QVERIFY2(qAbs(target->y()) <= 2,
+                 "A navigation target taller than the viewport must be aligned to the viewport top");
+    }
+
+    void oversizedNavigationTargetTopAlignsAfterMaterialization()
+    {
+        TestLongListWidget list;
+        list.resize(480, 400);
+        list.setDefaultItemHeight(60);
+        list.setItemCount(300);
+        list.setRangeAvailable(0, 299);
+        list.setSyntheticHeight(150, 520);
+        list.show();
+        settleEvents();
+
+        QVERIFY(list.lockViewportToItem(150,
+                                        Mattermost::LongListWidget::Alignment::Center,
+                                        0));
+        settleEvents(16);
+
+        QWidget* target = list.itemWidget(150);
+        QVERIFY(target != nullptr);
+        QVERIFY(target->height() > list.viewport()->height());
+        QVERIFY2(qAbs(target->y()) <= 2,
+                 "An oversized semantic target must expose its beginning instead of clipping both ends");
+    }
+
+    void centeredLastItemUsesNewestEdgeWhenItFits()
+    {
+        TestLongListWidget list;
+        list.resize(480, 400);
+        list.setDefaultItemHeight(60);
+        list.setItemCount(100);
+        list.setRangeAvailable(0, 99);
+        list.show();
+        settleEvents();
+
+        QVERIFY(list.lockViewportToItem(99,
+                                        Mattermost::LongListWidget::Alignment::Center,
+                                        0));
+        settleEvents(16);
+
+        QWidget* target = list.itemWidget(99);
+        QVERIFY(target != nullptr);
+        QCOMPARE(list.verticalScrollBar()->value(), list.verticalScrollBar()->maximum());
+        QVERIFY2(qAbs(target->y() + target->height() - list.viewport()->height()) <= 2,
+                 "A fitting last target must clamp to the newest edge rather than leave blank space below");
+    }
+
     void unavailableMeasuredItemResetsEstimateWithoutMovingLock()
     {
         TestLongListWidget list;
