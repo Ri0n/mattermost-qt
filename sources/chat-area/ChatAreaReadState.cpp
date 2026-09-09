@@ -6,8 +6,8 @@
 #include "AbstractPostSource.h"
 #include "ChatLogWidget.h"
 #include "backend/Backend.h"
+#include "backend/FollowingModel.h"
 #include "backend/SidebarService.h"
-#include "backend/ThreadFollowService.h"
 #include "backend/types/BackendChannel.h"
 #include "ui_ChatArea.h"
 
@@ -125,7 +125,7 @@ void ChatArea::tryThreadReadAcknowledgement()
     const QString teamId = channel.team->id;
     const QString threadId = root_id;
     QPointer<ChatArea> guard(this);
-    ThreadFollowService::instance(backend).markThreadRead(
+    FollowingModel::instance(backend).markThreadRead(
         teamId, threadId,
         [guard](bool) {
             if (!guard) {
