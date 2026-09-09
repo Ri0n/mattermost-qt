@@ -198,11 +198,9 @@ void MainWindow::openChannelPost(const QString& channelId,
         QPointer<MainWindow> windowGuard(this);
         QTimer::singleShot(0, threadArea,
             [threadGuard, windowGuard, channelId, postId] {
-                if (!threadGuard) {
+                if (!threadGuard || !threadGuard->lockNavigationToPost(postId, 0)) {
                     return;
                 }
-                threadGuard->lockNavigationToPost(postId, 0);
-                threadGuard->ensurePostVisible(postId);
                 threadGuard->highlightPostWhenAuthoritative(
                     postId, [windowGuard, channelId, postId] {
                         if (windowGuard) {
@@ -232,9 +230,8 @@ void MainWindow::openChannelPost(const QString& channelId,
     area->preparePostNavigation();
 
     // A freshly opened lazy ChatArea installs its ChannelPostSource on the next
-    // event-loop turn. Apply the already-fetched permalink context after that
-    // setup. The context must be published before the viewport is moved: an
-    // isolated estimated target is deliberately no longer a valid source row.
+    // event-loop turn. Publish the already-fetched permalink context before
+    // asking ChatLogWidget to establish the one semantic viewport lock.
     QPointer<ChatArea> areaGuard(area);
     QTimer::singleShot(0, area,
         [areaGuard, postId, contextPostIds, reachedOldest, reachedNewest] {
@@ -242,22 +239,22 @@ void MainWindow::openChannelPost(const QString& channelId,
                 return;
             }
 
-            bool contextReady = false;
-            if (!contextPostIds.isEmpty()) {
-                contextReady = areaGuard->ensurePinnedPostVisible(postId, contextPostIds,
-                                                                  reachedOldest, reachedNewest);
-            } else {
-                contextReady = areaGuard->ensurePostVisible(postId);
-            }
-            qCDebug(lcNavigationJump).nospace()
-                << "JUMP_APPLY post=" << postId
-                << " contextReady=" << contextReady;
-            if (!contextReady) {
+            if (!contextPostIds.isEmpty()
+                && !areaGuard->ensurePinnedPostVisible(postId, contextPostIds,
+                                                       reachedOldest, reachedNewest)) {
+                qCDebug(lcNavigationJump).nospace()
+                    << "JUMP_APPLY post=" << postId << " contextReady=false";
                 return;
             }
 
-            areaGuard->lockNavigationToPost(postId, 0);
-            areaGuard->goToPost(postId);
+            const bool navigationReady = areaGuard->lockNavigationToPost(postId, 0);
+            qCDebug(lcNavigationJump).nospace()
+                << "JUMP_APPLY post=" << postId
+                << " contextReady=" << navigationReady;
+            if (!navigationReady) {
+                return;
+            }
+            areaGuard->highlightPostWhenAuthoritative(postId);
         });
 }
 
