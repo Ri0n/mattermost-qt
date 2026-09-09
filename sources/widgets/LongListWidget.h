@@ -150,11 +150,12 @@ public:
     void scrollToEnd();
 
     /**
-     * Pin the top edge of a logical item to its current relative viewport Y.
-     * The initial alignment is applied once; later geometry changes preserve
-     * the same absolute Y while the viewport height is unchanged and the same
-     * Y / viewportHeight fraction across a resize. Direct user scrolling
-     * releases the lock. A zero quiet period keeps it until that user gesture.
+     * Keep a logical item at the requested semantic alignment while its own
+     * height settles. Geometry changes elsewhere preserve the current screen Y;
+     * a target-height change re-applies the requested alignment. Centering an
+     * item taller than the viewport is defined as top alignment. Direct user
+     * scrolling releases the lock. A zero quiet period keeps it until that
+     * user gesture.
      */
     bool lockViewportToItem(int index,
                             Alignment alignment = Alignment::Center,
@@ -241,6 +242,8 @@ private:
     struct ViewportLock {
         int index = -1;
         long double itemTopFraction = 0.0L;
+        int itemHeight = 0;
+        Alignment alignment = Alignment::EnsureVisible;
         int quietPeriodMs = 0;
     };
 
@@ -271,6 +274,7 @@ private:
     ViewAnchor captureAnchor() const;
     void restoreAnchor(const ViewAnchor& anchor);
     void restoreSeekTarget();
+    qint64 alignedContentOffset(int index, Alignment alignment) const;
     void captureViewportLockFraction();
     void restoreViewportLock();
     void touchViewportLock();
