@@ -19,7 +19,10 @@
 
 #include "ChatArea.h"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QIcon>
+#include <QMenu>
 #include <QPalette>
 #include <QPointer>
 #include <QResizeEvent>
@@ -33,10 +36,12 @@
 #include "ChatLogWidget.h"
 #include "ThreadPostSource.h"
 #include "backend/Backend.h"
+#include "backend/NetworkRequest.h"
 #include "backend/SidebarService.h"
 #include "backend/ThreadFollowService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
+#include "backend/types/BackendTeam.h"
 #include "channel-tree/ChannelItem.h"
 #include "channel-tree/ChannelItemWidget.h"
 #include "channel-tree-dialogs/ViewChannelMembersListDialog.h"
@@ -51,6 +56,33 @@ namespace Mattermost {
 namespace {
 
 constexpr int HeaderActionIconExtent = 16;
+
+QString channelWebUrl(Backend& backend, const BackendChannel& channel)
+{
+    QString teamName;
+    if (channel.team) {
+        teamName = channel.team->name;
+    } else if (const BackendTeam* team = backend.getStorage().getTeamById(
+                   backend.getCurrentTeamContextId())) {
+        // Mattermost's own web client resolves DM/GM URLs in the current team
+        // context even though those conversations do not intrinsically belong
+        // to a team.
+        teamName = team->name;
+    }
+
+    if (teamName.isEmpty() || channel.name.isEmpty()) {
+        return QString();
+    }
+
+    QString base = NetworkRequest::host();
+    if (base.isEmpty()) {
+        return QString();
+    }
+    if (!base.endsWith(QLatin1Char('/'))) {
+        base += QLatin1Char('/');
+    }
+    return base + teamName + QStringLiteral("/channels/") + channel.name;
+}
 
 } // namespace
 
@@ -153,8 +185,20 @@ ChatArea::ChatArea(Backend& backend,
                                   *ui->sendButton);
     ui->outgoingPostCreator->setRootId(root_id);
 
-    ui->titleLabel->setText(channel.display_name);
-    ui->statusLabel->setText(channel.getChannelDescription());
+    // Match the web client: a thread keeps the parent chat name in its header,
+    // but the name is a way back to that chat rather than a second static title.
+    ui->titleLabel->setTextFormat(Qt::RichText);
+    ui->titleLabel->setTextInteractionFlags(Qt::LinksAccessibleByMouse);
+    ui->titleLabel->setText(QStringLiteral("<a href=\"channel\">%1</a>")
+                                .arg(channel.display_name.toHtmlEscaped()));
+    connect(ui->titleLabel, &QLabel::linkActivated, this,
+            [this](const QString&) {
+        AppNavigationService::instance(backend).openChannel(channel.id);
+    });
+
+    // The parent channel topic/header is useful on the channel itself, but
+    // repeating it in every thread wastes vertical space and is not thread state.
+    ui->statusLabel->hide();
     ui->userAvatar->hide();
 
     init();
@@ -251,6 +295,19 @@ void ChatArea::setupHeaderUi()
     configureCountButton(*ui->usersButton);
     configureCountButton(*ui->pinnedPostsButton);
     ui->pinnedPostsButton->setCheckable(true);
+
+    ui->titleLabel->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(ui->titleLabel, &QWidget::customContextMenuRequested,
+            this, [this](const QPoint& pos) {
+        QMenu menu(this);
+        QAction* copyLinkAction = menu.addAction(tr("Copy link to chat"));
+        const QString link = channelWebUrl(backend, channel);
+        copyLinkAction->setEnabled(!link.isEmpty());
+        if (menu.exec(ui->titleLabel->mapToGlobal(pos)) == copyLinkAction
+            && !link.isEmpty()) {
+            QApplication::clipboard()->setText(link);
+        }
+    });
 
     ui->loadOldPosts->setAutoRaise(true);
     ui->propertieslLayout->setSpacing(2);
