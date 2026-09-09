@@ -21,6 +21,7 @@
 #include <QVector>
 
 #include "backend/Backend.h"
+#include "backend/SidebarService.h"
 #include "backend/Storage.h"
 #include "backend/UserProfileService.h"
 #include "backend/types/BackendChannel.h"
@@ -241,19 +242,11 @@ void AttentionList::openThread(const FollowingModel::Entry& entry)
         entry.resumeState == FollowingModel::ResumeState::FirstUnread
         ? entry.firstUnreadPostId : QString();
 
-    const QString teamId = entry.teamId;
-    const QString threadId = entry.threadId;
-    QPointer<AttentionList> guard(this);
+    // Attention is a navigation request, not proof that the message was read.
+    // Read acknowledgement comes from the thread viewport when its real newest
+    // edge has been consumed, preserving the lower-edge rule for tall messages.
     AppNavigationService::instance(*backend_).openThreadAtLastViewed(
-        entry.channelId, threadId, resumeAfter, fallbackPostId,
-        [guard, teamId, threadId](bool opened) {
-            if (!guard || !guard->model_ || !opened || !guard->retainedEntry_
-                || guard->retainedEntry_->threadId != threadId) {
-                return;
-            }
-            guard->model_->markThreadRead(teamId, threadId);
-        },
-        false);
+        entry.channelId, entry.threadId, resumeAfter, fallbackPostId, {}, false);
 }
 
 void AttentionList::refresh()
@@ -298,6 +291,21 @@ void AttentionList::refresh()
                 retainedEntry_->channelId, retainedEntry_->threadId);
             if (current && !current->muted) {
                 displayEntries.push_back(DisplayEntry { *current, false });
+            } else if (!retainedEntry_->isThread()) {
+                BackendChannel* channel = backend_->getStorage().getChannelById(
+                    retainedEntry_->channelId);
+                const bool muted = channel
+                    ? SidebarService::instance(*backend_).isChannelMuted(*channel)
+                    : true;
+                if (channel && !muted) {
+                    FollowingModel::Entry retained = *retainedEntry_;
+                    retained.unread = false;
+                    retained.mentioned = false;
+                    retained.unreadReplies = 0;
+                    retained.unreadMentions = 0;
+                    retained.attentionSince = 0;
+                    displayEntries.push_back(DisplayEntry { std::move(retained), false });
+                }
             } else if (retainedEntry_->synthetic) {
                 displayEntries.push_back(DisplayEntry { *retainedEntry_, false });
             }

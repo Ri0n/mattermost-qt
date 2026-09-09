@@ -166,7 +166,8 @@ void FollowingModel::syncConversations()
     next.reserve(entries_.size() + backend_.getStorage().channels.size());
 
     // Thread membership comes from CRT and is preserved until the next shared
-    // thread snapshot. DM/GM membership is implicit and rebuilt from Storage.
+    // thread snapshot. DM/GM entries are ephemeral Following rows: once they are
+    // read (or muted), discard the entry and its local resume cursor together.
     for (const Entry& entry : std::as_const(entries_)) {
         if (entry.isThread()) {
             next.push_back(entry);
@@ -183,6 +184,13 @@ void FollowingModel::syncConversations()
             continue;
         }
 
+        const bool unread = sidebar.isChannelUnread(*channel);
+        const bool mentioned = sidebar.hasUnreadMention(channel->id);
+        const bool muted = sidebar.isChannelMuted(*channel);
+        if (muted || (!unread && !mentioned)) {
+            continue;
+        }
+
         Entry entry;
         if (const Entry* old = findEntry(channel->id)) {
             entry = *old;
@@ -192,9 +200,9 @@ void FollowingModel::syncConversations()
         entry.channelId = channel->id;
         entry.threadId.clear();
         entry.teamId.clear();
-        entry.unread = sidebar.isChannelUnread(*channel);
-        entry.mentioned = sidebar.hasUnreadMention(channel->id);
-        entry.muted = sidebar.isChannelMuted(*channel);
+        entry.unread = unread;
+        entry.mentioned = mentioned;
+        entry.muted = false;
         entry.unreadReplies = 0;
         entry.unreadMentions = 0;
         entry.synthetic = false;

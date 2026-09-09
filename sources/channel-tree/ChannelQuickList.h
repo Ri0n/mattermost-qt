@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 #include <QMap>
 #include <QSet>
@@ -61,6 +62,7 @@ private:
     QSet<QString> connectedUsers_;
 
     QString retainedKey_;
+    std::optional<FollowingModel::Entry> retainedEntry_;
     uint64_t retainedSortTime_ = 0;
     bool retainedUnreadPosition_ = false;
 };

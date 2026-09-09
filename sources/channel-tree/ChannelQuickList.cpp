@@ -21,6 +21,7 @@
 #include <QVector>
 
 #include "backend/Backend.h"
+#include "backend/SidebarService.h"
 #include "backend/Storage.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendUser.h"
@@ -175,7 +176,17 @@ void ChannelQuickList::activateItem(QTreeWidgetItem* current)
 
     const QString channelId = current->data(0, SidebarItem::ChannelIdRole).toString();
     const QString threadId = current->data(0, SidebarItem::ThreadIdRole).toString();
-    const FollowingModel::Entry* entry = model_->findEntry(channelId, threadId);
+    const FollowingModel::Entry* modelEntry = model_->findEntry(channelId, threadId);
+    if (modelEntry) {
+        retainedEntry_ = *modelEntry;
+    }
+
+    const FollowingModel::Entry* entry = modelEntry;
+    if (!entry && retainedEntry_
+        && retainedEntry_->channelId == channelId
+        && retainedEntry_->threadId == threadId) {
+        entry = &*retainedEntry_;
+    }
     if (!entry) {
         return;
     }
@@ -223,11 +234,12 @@ void ChannelQuickList::activateItem(QTreeWidgetItem* current)
 
 void ChannelQuickList::releaseSelectionRetention()
 {
-    if (retainedKey_.isEmpty()) {
+    if (retainedKey_.isEmpty() && !retainedEntry_) {
         return;
     }
 
     retainedKey_.clear();
+    retainedEntry_.reset();
     retainedSortTime_ = 0;
     retainedUnreadPosition_ = false;
     QTimer::singleShot(0, this, [this] {
@@ -279,21 +291,11 @@ void ChannelQuickList::openThread(const FollowingModel::Entry& entry)
         entry.resumeState == FollowingModel::ResumeState::FirstUnread
         ? entry.firstUnreadPostId : QString();
 
-    const bool wasUnread = entry.requiresAttention();
-    const QString teamId = entry.teamId;
-    const QString threadId = entry.threadId;
-    QPointer<ChannelQuickList> guard(this);
+    // Navigation itself is not a read acknowledgement. The thread ChatArea
+    // marks it read only when the user has actually reached the newest edge;
+    // oversized targets therefore remain unread until their lower edge is seen.
     AppNavigationService::instance(*backend_).openThreadAtLastViewed(
-        entry.channelId, threadId, resumeAfter, fallbackPostId,
-        [guard, teamId, threadId, wasUnread](bool opened) {
-            if (!guard || !guard->model_ || !opened) {
-                return;
-            }
-            if (wasUnread) {
-                guard->model_->markThreadRead(teamId, threadId);
-            }
-        },
-        false);
+        entry.channelId, entry.threadId, resumeAfter, fallbackPostId, {}, false);
 }
 
 void ChannelQuickList::refresh()
@@ -303,7 +305,7 @@ void ChannelQuickList::refresh()
     }
 
     struct Candidate {
-        const FollowingModel::Entry* entry = nullptr;
+        FollowingModel::Entry entry;
         QString key;
         uint64_t sortTime = 0;
         bool sortAsUnread = false;
@@ -312,21 +314,18 @@ void ChannelQuickList::refresh()
     QVector<Candidate> candidates;
     const uint64_t fallbackNow = static_cast<uint64_t>(QDateTime::currentMSecsSinceEpoch());
     for (const FollowingModel::Entry& entry : model_->entries()) {
-        const QString key = entryKey(entry);
-        const bool retained = key == retainedKey_;
-
-        if (!entry.isThread()) {
-            if (entry.muted || (!entry.requiresAttention() && !retained)) {
-                continue;
-            }
-        } else if (!backend_->getStorage().getChannelById(entry.channelId)) {
+        if (!entry.isThread() && entry.muted) {
+            continue;
+        }
+        if (entry.isThread() && !backend_->getStorage().getChannelById(entry.channelId)) {
             continue;
         }
 
         Candidate candidate;
-        candidate.entry = &entry;
-        candidate.key = key;
-        const bool retainedUnread = retained && retainedUnreadPosition_;
+        candidate.entry = entry;
+        candidate.key = entryKey(entry);
+        const bool retainedUnread = candidate.key == retainedKey_
+            && retainedUnreadPosition_;
         candidate.sortAsUnread = entry.requiresAttention() || retainedUnread;
         if (candidate.sortAsUnread) {
             candidate.sortTime = retainedUnread && retainedSortTime_ != 0
@@ -337,7 +336,41 @@ void ChannelQuickList::refresh()
         } else {
             candidate.sortTime = entry.lastReplyAt;
         }
-        candidates.push_back(candidate);
+        candidates.push_back(std::move(candidate));
+    }
+
+    // A read DM/GM disappears from the shared model immediately. Keep only the
+    // selected row in this view so an action never removes the item under the
+    // pointer; this retention must not prolong its cursor/model lifetime.
+    if (retainedEntry_ && !retainedEntry_->isThread()) {
+        const QString key = entryKey(*retainedEntry_);
+        bool present = false;
+        for (const Candidate& candidate : std::as_const(candidates)) {
+            if (candidate.key == key) {
+                present = true;
+                break;
+            }
+        }
+
+        BackendChannel* channel = backend_->getStorage().getChannelById(
+            retainedEntry_->channelId);
+        const bool muted = channel
+            ? SidebarService::instance(*backend_).isChannelMuted(*channel)
+            : true;
+        if (!present && channel && !muted) {
+            Candidate candidate;
+            candidate.entry = *retainedEntry_;
+            candidate.entry.unread = false;
+            candidate.entry.mentioned = false;
+            candidate.entry.unreadReplies = 0;
+            candidate.entry.unreadMentions = 0;
+            candidate.entry.attentionSince = 0;
+            candidate.key = key;
+            candidate.sortAsUnread = retainedUnreadPosition_;
+            candidate.sortTime = retainedSortTime_ != 0
+                ? retainedSortTime_ : candidate.entry.lastReplyAt;
+            candidates.push_back(std::move(candidate));
+        }
     }
 
     std::sort(candidates.begin(), candidates.end(), [](const Candidate& lhs,
@@ -360,7 +393,7 @@ void ChannelQuickList::refresh()
     QTreeWidgetItem* itemToRestore = nullptr;
 
     for (const Candidate& candidate : std::as_const(candidates)) {
-        const FollowingModel::Entry& entry = *candidate.entry;
+        const FollowingModel::Entry& entry = candidate.entry;
         auto* item = new QTreeWidgetItem(this);
         item->setData(0, FollowingKeyRole, candidate.key);
         item->setData(0, FollowingSortTimeRole,

@@ -19,9 +19,9 @@ class BackendPost;
 /**
  * Shared semantic data backing the Following and Attention sidebar projections.
  *
- * The model owns the loaded followed-thread snapshot, implicitly-followed DM/GM
- * conversations, synthetic root mentions and the local resume cursor. Views own
- * only presentation details such as selection retention.
+ * The model owns the loaded followed-thread snapshot, current unread DM/GM
+ * entries, synthetic root mentions and each entry's local resume cursor. Views
+ * own only presentation details such as selection retention.
  */
 class FollowingModel final : public QObject
 {
