@@ -113,8 +113,6 @@ MainWindow::MainWindow(QWidget* parent, QSystemTrayIcon& trayIcon, Backend& _bac
 	ui->channelList->setFocus();
 
 	createMenu();
-	connect(notificationManager.get(), &NotificationManager::activated,
-	        this, &MainWindow::activateNotification);
 
 	const BackendUser& currentUser = backend.getLoginUser();
 	if (currentUser.id.isEmpty()) {
@@ -887,55 +885,6 @@ void MainWindow::messageNotify(BackendChannel& channel, const BackendPost& post)
 	notificationManager->show(title, post.message,
 	                          NotificationTarget {channel.id, post.id, post.root_id});
 	qApp->alert(nullptr, 0);
-}
-
-void MainWindow::activateNotification(const NotificationTarget& target)
-{
-	if (!target.isValid()) {
-		return;
-	}
-
-	if (isMinimized()) {
-		showNormal();
-	} else {
-		show();
-	}
-	raise();
-	activateWindow();
-
-	BackendChannel* channel = backend.getStorage().getChannelById(target.channelId);
-	if (!channel) {
-		return;
-	}
-
-	ui->channelList->openChannel(target.channelId);
-	ChatArea* parentArea = ui->channelList->getCurrentPage();
-	if (!parentArea || &parentArea->getChannel() != channel) {
-		return;
-	}
-
-	if (target.rootId.isEmpty()) {
-		parentArea->goToPost(target.postId);
-		return;
-	}
-
-	ChatArea* threadArea = nullptr;
-	for (ChatArea* area : parentArea->threadsAreas) {
-		if (area && area->root_id == target.rootId) {
-			threadArea = area;
-			break;
-		}
-	}
-
-	if (!threadArea) {
-		threadArea = new ChatArea(backend, *channel, target.rootId, parentArea);
-		parentArea->threadsAreas.insert(threadArea);
-	}
-
-	threadArea->show();
-	threadArea->raise();
-	threadArea->activateWindow();
-	threadArea->goToPost(target.postId);
 }
 
 void MainWindow::unreadMessagesNotify(const BackendChannel& channel)
