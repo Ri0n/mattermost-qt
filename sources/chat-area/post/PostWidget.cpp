@@ -101,7 +101,7 @@ PostWidget::PostWidget(Backend& backend,
     : QWidget(parent)
     , post(post)
     , threadButton(nullptr)
-    , backend(backend)
+    , backend_(backend)
     , residencyLease(PostRepository::instance(backend).leasePost(post))
     , ui(new Ui::PostWidget)
     , messageContent(nullptr)
@@ -164,7 +164,7 @@ PostWidget::PostWidget(Backend& backend,
             quotedReplyPreview = std::make_unique<QuotedPostPreview>(this, 2);
             quotedReplyPreview->setPost(*quotedPost);
             quotedReplyPreview->setActivatedCallback([this, replyPostId] {
-                AppNavigationService::instance(backend).openPost(replyPostId);
+                AppNavigationService::instance(backend_).openPost(replyPostId);
             });
             ui->verticalLayout->insertWidget(1, quotedReplyPreview.get());
         } else {
@@ -188,7 +188,7 @@ PostWidget::PostWidget(Backend& backend,
                     guard->quotedReplyPreview->setActivatedCallback(
                         [guard, replyPostId] {
                             if (guard) {
-                                AppNavigationService::instance(guard->backend)
+                                AppNavigationService::instance(guard->backend_)
                                     .openPost(replyPostId);
                             }
                         });
@@ -204,7 +204,7 @@ PostWidget::PostWidget(Backend& backend,
         const QString rootPostId = post.rootPost->id;
 		connect(quoteFrame.get(), &PostQuoteFrame::postClicked, this,
                 [this, rootPostId] {
-            AppNavigationService::instance(backend).openPost(rootPostId);
+            AppNavigationService::instance(backend_).openPost(rootPostId);
         });
 	}
 
@@ -309,7 +309,7 @@ void PostWidget::showPostContextMenu(const QPoint& globalPos)
         }
         QAction* deleteAction = menu.addAction(tr("Delete"));
         connect(deleteAction, &QAction::triggered, this, [this] {
-            backend.deletePost(post.id);
+            backend_.deletePost(post.id);
         });
         menu.addSeparator();
     }
@@ -350,13 +350,13 @@ void PostWidget::showPostContextMenu(const QPoint& globalPos)
     QAction* reactionAction = menu.addAction(tr("Add emoji reaction"));
     connect(reactionAction, &QAction::triggered, this, [this] {
         showEmojiDialog([this](Emoji emoji) {
-            backend.addPostReaction(post.id, emoji.name);
+            backend_.addPostReaction(post.id, emoji.name);
         });
     });
 
     QAction* saveAction = menu.addAction(tr("Save message"));
     connect(saveAction, &QAction::triggered, this, [this] {
-        backend.updateUserPreferences(BackendUserPreferences {
+        backend_.updateUserPreferences(BackendUserPreferences {
             QStringLiteral("flagged_post"), post.id, QStringLiteral("true")});
     });
 
@@ -368,7 +368,7 @@ void PostWidget::showPostContextMenu(const QPoint& globalPos)
             if (!post.author) {
                 return;
             }
-            auto* dialog = new UserProfileDialog(backend, *post.author, this);
+            auto* dialog = new UserProfileDialog(backend_, *post.author, this);
             dialog->setAttribute(Qt::WA_DeleteOnClose);
             dialog->show();
         });
@@ -433,7 +433,7 @@ void PostWidget::setEdited(const QString& message)
 	if (post.poll) {
 		clearMessageText();
 		std::unique_ptr<PostPoll> newPoll =
-			std::make_unique<PostPoll>(backend, post, *post.poll, this);
+			std::make_unique<PostPoll>(backend_, post, *post.poll, this);
 		ui->verticalLayout->replaceWidget(poll.get(), newPoll.get());
 		poll = std::move(newPoll);
 	}
@@ -459,7 +459,7 @@ void PostWidget::connectMessageLinks()
     QHash<QString, QString> groupMentionIds;
     const QString teamId = mentionTeamId();
     if (!teamId.isEmpty()) {
-        groupMentionIds = MentionGroupService::instance(backend).mentionIds(teamId);
+        groupMentionIds = MentionGroupService::instance(backend_).mentionIds(teamId);
     }
 
 	const auto browsers = messageContent->findChildren<QTextBrowser*>();
@@ -490,7 +490,7 @@ void PostWidget::connectMessageLinks()
                 }
                 return;
             }
-			AppNavigationService::instance(backend).openUrl(url);
+			AppNavigationService::instance(backend_).openUrl(url);
 		});
         connect(browser, &QWidget::customContextMenuRequested, this,
                 [this, browser](const QPoint& pos) {
@@ -518,12 +518,12 @@ void PostWidget::openUserProfile(const QString& username)
         if (!user) {
             return;
         }
-        auto* dialog = new UserProfileDialog(backend, *user, this);
+        auto* dialog = new UserProfileDialog(backend_, *user, this);
         dialog->setAttribute(Qt::WA_DeleteOnClose);
         dialog->show();
     };
 
-    for (const auto& entry : backend.getStorage().getAllUsers()) {
+    for (const auto& entry : backend_.getStorage().getAllUsers()) {
         const BackendUser& user = entry.second;
         if (user.username.compare(username, Qt::CaseInsensitive) == 0) {
             showProfile(&user);
@@ -536,7 +536,7 @@ void PostWidget::openUserProfile(const QString& username)
     options.limit = 20;
 
     QPointer<PostWidget> guard(this);
-    UserProfileService::instance(backend).searchUsers(
+    UserProfileService::instance(backend_).searchUsers(
         options, [guard, username](QVector<const BackendUser*> users) {
             if (!guard) {
                 return;
@@ -557,7 +557,7 @@ void PostWidget::openGroupMention(const QString& groupId)
         return;
     }
 
-    auto& service = MentionGroupService::instance(backend);
+    auto& service = MentionGroupService::instance(backend_);
     const MentionGroup* group = service.groupById(teamId, groupId);
     const QString title = group && !group->displayName.isEmpty()
         ? group->displayName : QStringLiteral("@") + (group ? group->name : QString());
@@ -631,14 +631,14 @@ void PostWidget::connectReactionActions()
 
 	connect(reactions.get(), &PostReactionList::reactionClicked,
 	        this, [this](const QString& emojiName) {
-		backend.addPostReaction(post.id, emojiName);
+		backend_.addPostReaction(post.id, emojiName);
 	});
 }
 
 void PostWidget::addThreadButton()
 {
 	if (!threadSummary) {
-		threadSummary = new ThreadSummaryWidget(backend,
+		threadSummary = new ThreadSummaryWidget(backend_,
 		                                        parentChatArea->getChannel(),
 		                                        post, this);
 		connect(threadSummary, &ThreadSummaryWidget::clicked,
@@ -661,7 +661,7 @@ void PostWidget::openThreadWindow()
         return;
     }
 
-    AppNavigationService::instance(backend).openThread(
+    AppNavigationService::instance(backend_).openThread(
         parentChatArea->getChannel().id, post.id);
 }
 
