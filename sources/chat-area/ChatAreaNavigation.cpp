@@ -41,10 +41,10 @@ bool ChatArea::ensurePinnedPostVisible(const QString& postId,
                                           reachedOldest, reachedNewest);
 }
 
-void ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
+bool ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
 {
     if (postId.isEmpty() || !ui || !ui->listWidget) {
-        return;
+        return false;
     }
 
     // ChatLogWidget owns only semantic post identity. LongListWidget owns the
@@ -52,9 +52,9 @@ void ChatArea::lockNavigationToPost(const QString& postId, int quietPeriodMs)
     // settles, oversized targets are top-aligned, and unrelated reflow preserves
     // the target's current screen Y. Authoritative source remaps only change the
     // locked logical identity without creating a visible jump.
-    ui->listWidget->lockNavigationToPost(postId,
-                                         LongListWidget::Alignment::Center,
-                                         quietPeriodMs);
+    return ui->listWidget->lockNavigationToPost(postId,
+                                                LongListWidget::Alignment::Center,
+                                                quietPeriodMs);
 }
 
 void ChatArea::highlightPostWhenAuthoritative(const QString& postId,
