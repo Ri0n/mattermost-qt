@@ -65,6 +65,12 @@ GAP | known successor
         -> fetch direction=up from (fromCreateAt, fromPost)
 ```
 
+A requested block may contain more than one unavailable run after several random seeks have created
+disjoint authoritative islands. Those runs are independent gaps: `ThreadPostSource` must select one
+contiguous missing run at a time and use an adjacent authoritative island as its cursor. Treating the
+first and last unavailable indices across an intervening known island as one synthetic gap hides a
+perfectly usable cursor and can incorrectly fall back to another timestamp seek.
+
 Mattermost thread pagination uses `(fromCreateAt, fromPost)` as a compound cursor. Supplying
 `fromPost` without its `create_at` is invalid and must never be emitted by `PostRepository`.
 
