@@ -131,7 +131,7 @@ void MainWindow::openChannelPost(const QString& channelId,
         ChatArea* threadArea = navigationUi.findThread(channelId, rootId);
         if (threadArea && preserveIfOpen) {
             navigationUi.presentThread(threadArea);
-            threadArea->requestExplicitReadAcknowledgement();
+            threadArea->refreshReadState();
             return;
         }
 
@@ -153,7 +153,7 @@ void MainWindow::openChannelPost(const QString& channelId,
             if (created || !preserveIfOpen) {
                 threadArea->goToNewest();
             }
-            threadArea->requestExplicitReadAcknowledgement();
+            threadArea->refreshReadState();
             return;
         }
 
@@ -186,7 +186,7 @@ void MainWindow::openChannelPost(const QString& channelId,
         // Re-evaluate the already visible viewport for repeated Following/
         // Attention activation. This does not mark the channel by navigation;
         // ChatLogWidget still requires a concrete post lower edge in view.
-        area->requestExplicitReadAcknowledgement();
+        area->refreshReadState();
         return;
     }
 
