@@ -129,15 +129,10 @@ private slots:
         settleEvents();
         requests.clear();
 
-        // Exactly five known logical rows remain before the gap: 50..54.
-        // The hard margin may include index 50, but it must not yet reach 49.
         list.scrollToIndex(55, Mattermost::LongListWidget::Alignment::Top);
         settleEvents(12);
         QCOMPARE(requests.count(), 0);
 
-        // Moving one item upward leaves only four known rows (50..53) before
-        // the gap. The desired range must now include index 49 and therefore
-        // request its whole 10-item block before the viewport reaches the gap.
         list.scrollToIndex(54, Mattermost::LongListWidget::Alignment::Top);
         settleEvents(12);
         QVERIFY2(requests.count() > 0,
@@ -259,9 +254,10 @@ private slots:
         bool sawSeek = false;
         for (int i = 0; i < requests.count(); ++i) {
             const QList<QVariant> request = requests.at(i);
-            if (request.at(2).toInt()
-                    == static_cast<int>(Mattermost::LongListWidget::RequestReason::Seek)
-                && request.at(3).toULongLong() > 0) {
+            // Ordinary scroll requests always use generation 0. A positive
+            // generation is the stable cross-Qt observable for a random seek;
+            // Qt5 QSignalSpy cannot decode the scoped RequestReason enum here.
+            if (request.at(3).toULongLong() > 0) {
                 sawSeek = true;
                 break;
             }
@@ -564,8 +560,6 @@ private slots:
         QVERIFY2(requestedIdentityBlock,
                  "Dropping only a resident body must re-request its existing 10-item logical block");
 
-        // Rematerialization restores body availability only. No item-count or
-        // structural mutation is needed for the same semantic source identity.
         list.setRangeAvailable(55, 55, true);
         settleEvents(12);
         QVERIFY(list.isItemAvailable(55));
