@@ -233,6 +233,50 @@ private slots:
         bar->setSliderDown(false);
     }
 
+    void absoluteSliderMoveStartsSparseSeek()
+    {
+        TestLongListWidget list;
+        list.resize(480, 320);
+        list.setDefaultItemHeight(80);
+        list.setRequestBlockSize(10);
+        list.setSeekDebounceMs(0);
+        list.setItemCount(10000);
+        list.setRangeAvailable(0, 9);
+        QSignalSpy requests(&list, &Mattermost::LongListWidget::rangeRequested);
+        list.show();
+        settleEvents(12);
+
+        QScrollBar* bar = list.verticalScrollBar();
+        QVERIFY(bar->maximum() > 0);
+        bar->setValue(0);
+        settleEvents(12);
+        QVERIFY2(list.itemWidget(0) != nullptr,
+                 "The starting viewport must be resident before the absolute sparse jump");
+        requests.clear();
+
+        QVERIFY(!bar->isSliderDown());
+
+        // QScrollBar uses exactly this path for an absolute groove click:
+        // setSliderPosition() with tracking enabled emits actionTriggered(SliderMove)
+        // before the handle is marked down, but it does not emit sliderMoved().
+        bar->setSliderPosition(bar->maximum() / 2);
+        settleEvents(12);
+
+        bool sawSeek = false;
+        for (int i = 0; i < requests.count(); ++i) {
+            const QList<QVariant> request = requests.at(i);
+            // Ordinary scroll requests always use generation 0. A positive
+            // generation is the stable cross-Qt observable for a random seek;
+            // Qt5 QSignalSpy cannot decode the scoped RequestReason enum here.
+            if (request.at(3).toULongLong() > 0) {
+                sawSeek = true;
+                break;
+            }
+        }
+        QVERIFY2(sawSeek,
+                 "An absolute jump from resident data into a sparse region must start a seek without a slider drag or model wake-up");
+    }
+
     void delayedRowGrowthKeepsStickyBottom()
     {
         TestLongListWidget list;

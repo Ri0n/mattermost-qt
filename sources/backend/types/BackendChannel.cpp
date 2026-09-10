@@ -149,7 +149,10 @@ BackendPost* BackendChannel::addPost (const QJsonObject& postObject)
 				rootChanged = true;
 			}
 			if (rootChanged) {
-				emit onPostEdited(*rootPost);
+				// A reply changes only the collapsed-thread footer of the root.
+				// Do not advertise this as a post-body edit: ChannelPostSource
+				// would tear down and recreate the complete root PostWidget.
+				emit onThreadSummaryChanged(*rootPost);
 			}
 		} else {
 			missingRootPostIds.insert(rootId);
@@ -157,8 +160,10 @@ BackendPost* BackendChannel::addPost (const QJsonObject& postObject)
 	}
 
 	if(missingRootPostIds.contains(newPost->id)) {
+		// The newly inserted root will be presented with this state when its
+		// normal onNewPost/onNewPosts notification is delivered. No separate
+		// post-edit notification is necessary.
 		newPost->has_thread = true;
-		emit onPostEdited(*newPost);
 		missingRootPostIds.remove(newPost->id);
 	}
 
@@ -191,8 +196,10 @@ void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPo
 		BackendPost* rootPost = findPostById(rootId);
 		if (rootPost) {
 			qDebug() << rootPost->id <<  rootPost->message;
+			// Hydrating an already existing reply body is not an edit of the
+			// root post. mergePostContext() coalesces the corresponding thread
+			// summary notification once per affected root after the whole batch.
 			rootPost->has_thread = true;
-			emit onPostEdited(*rootPost);
 		} else {
 			missingRootPostIds.insert(rootId);
 		}
@@ -200,7 +207,6 @@ void BackendChannel::addPost (const QJsonObject& postObject, std::list<BackendPo
 
 	if(missingRootPostIds.contains(newPost->id)) {
 		newPost->has_thread = true;
-		emit onPostEdited(*newPost);
 		missingRootPostIds.remove(newPost->id);
 	}
 
@@ -232,6 +238,7 @@ void BackendChannel::addPosts (const QJsonArray& orderArray, const QJsonObject& 
 void BackendChannel::mergePostContext(const QJsonArray& orderArray, const QJsonObject& postsObject)
 {
 	ChannelNewPosts allNewPosts;
+	QSet<QString> changedThreadRoots;
 
 	// Mattermost PostList order is newest -> oldest. Process it in the opposite
 	// direction so every newly inserted row can reference the already-present
@@ -286,6 +293,9 @@ void BackendChannel::mergePostContext(const QJsonArray& orderArray, const QJsonO
 		chunk.previousPostId = previousPostId;
 		addPost(postObject, position, chunk, rootIdAndPostList, false);
 		if (!chunk.postsToAdd.empty()) {
+			if (!rootId.isEmpty()) {
+				changedThreadRoots.insert(rootId);
+			}
 			// We are already iterating oldest -> newest, so do not use addChunk(),
 			// which intentionally reverses chunks produced by the old addPosts().
 			allNewPosts.postsToAdd.emplace_back(std::move(chunk));
@@ -294,6 +304,15 @@ void BackendChannel::mergePostContext(const QJsonArray& orderArray, const QJsonO
 
 	if (!allNewPosts.postsToAdd.empty()) {
 		emit onNewPosts(allNewPosts);
+	}
+
+	// Thread history may add many reply bodies in one server page. Publish one
+	// lightweight footer update per root instead of one generic post edit per
+	// reply, which would rematerialize the root row in the main channel each time.
+	for (const QString& rootId : std::as_const(changedThreadRoots)) {
+		if (BackendPost* rootPost = findPostById(rootId)) {
+			emit onThreadSummaryChanged(*rootPost);
+		}
 	}
 }
 

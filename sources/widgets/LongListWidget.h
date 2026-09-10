@@ -254,7 +254,7 @@ private:
                           quint64 generation,
                           bool centerSeekTarget);
 
-    Range desiredRangeForViewport() const;
+    Range desiredRangeForViewport(int scrollValue = -1) const;
     Range desiredRangeForSeek() const;
     Range boundedAround(int center, int count) const;
     Range clampToBudget(const Range& range, int preferredCenter) const;

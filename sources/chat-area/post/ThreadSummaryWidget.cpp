@@ -94,9 +94,9 @@ ThreadSummaryWidget::ThreadSummaryWidget(Backend& backend,
             refresh();
         }
     });
-    connect(&channel, &BackendChannel::onNewPost, this,
-            [this](BackendPost& reply) {
-        if (reply.root_id == this->rootPost.id) {
+    connect(&channel, &BackendChannel::onThreadSummaryChanged, this,
+            [this](BackendPost& changedRoot) {
+        if (changedRoot.id == this->rootPost.id) {
             refresh();
         }
     });
