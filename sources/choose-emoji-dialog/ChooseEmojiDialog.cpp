@@ -19,13 +19,21 @@
 
 #include "ChooseEmojiDialog.h"
 
+#include <algorithm>
+#include <iterator>
+
 #include <QComboBox>
 #include <QDebug>
+#include <QGridLayout>
+#include <QIcon>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSettings>
+#include <QSpacerItem>
 
 #include "EmojiDialogSupport.h"
 #include "backend/emoji/EmojiInfo.h"
@@ -254,7 +262,7 @@ QPushButton* ChooseEmojiDialog::createEmojiButton(const Emoji& emoji,
             path.replace(QStringLiteral("qrc://"), QStringLiteral(":/"));
             qDebug() << "Use path " << path;
             QIcon icon(QPixmap::fromImage(QImage(path)));
-            pushButton->clear();
+            pushButton->setText(QString());
             pushButton->setIcon(icon);
             pushButton->setIconSize(QSize(24, 24));
 
@@ -359,7 +367,7 @@ void ChooseEmojiDialog::updateSearchResults(const QString& text)
         if (!EmojiDialogSupport::matchesSearch(emoji.name, needle)) {
             continue;
         }
-        QString normalizedName = EmojiDialogSupport::normalizeSearchTerm(emoji.name);
+        const QString normalizedName = EmojiDialogSupport::normalizeSearchTerm(emoji.name);
         if (normalizedName.startsWith(needle)) {
             prefixMatches.push_back(emoji);
         } else {
@@ -382,8 +390,8 @@ void ChooseEmojiDialog::updateSearchResults(const QString& text)
             if (shown >= maxSearchResults) {
                 break;
             }
-            QPushButton* button = createEmojiButton(emoji, searchCategory,
-                                                     static_cast<uint32_t>(ui->tabWidget->count()));
+            QPushButton* button = createEmojiButton(
+                emoji, searchCategory, static_cast<uint32_t>(ui->tabWidget->count()));
             gridLayout->addWidget(button, row, column, 1, 1);
             ++shown;
             ++column;
