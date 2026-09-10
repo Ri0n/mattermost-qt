@@ -127,10 +127,31 @@ ThreadPostSource::ThreadPostSource(Backend& backendInstance,
         << " lastReplyAt=" << (root ? root->last_reply_at : 0)
         << ' ' << slotSummary(postIds);
 
+    const auto syncLogicalCount = [this](const BackendPost& rootPost) {
+        if (rootPost.id != rootId) {
+            return;
+        }
+        const int count = currentLogicalCount();
+        if (count == static_cast<int>(postIds.size())) {
+            return;
+        }
+
+        qCDebug(lcThreadTimelineTrace).nospace()
+            << "THREAD_COUNT_CHANGE source=" << static_cast<const void*>(this)
+            << " old=" << postIds.size()
+            << " new=" << count
+            << " replyCount=" << rootPost.reply_count;
+        resizeLogicalTail(count);
+        pruneProvisionalPostIds();
+        qCDebug(lcThreadTimelineTrace).nospace()
+            << "THREAD_SLOTS source=" << static_cast<const void*>(this)
+            << ' ' << slotSummary(postIds);
+    };
+
     connect(&channel, &BackendChannel::onNewPost, this,
             [this](BackendPost& post) { appendLiveReply(post); });
     connect(&channel, &BackendChannel::onPostEdited, this,
-            [this](BackendPost& post) {
+            [this, syncLogicalCount](BackendPost& post) {
         const int index = indexOfPost(post.id);
         if (index >= 0) {
             qCDebug(lcThreadTimelineTrace).nospace()
@@ -139,21 +160,14 @@ ThreadPostSource::ThreadPostSource(Backend& backendInstance,
                 << " index=" << index;
             emit itemsChanged(index, index);
         }
-        if (post.id == rootId) {
-            const int count = currentLogicalCount();
-            if (count != static_cast<int>(postIds.size())) {
-                qCDebug(lcThreadTimelineTrace).nospace()
-                    << "THREAD_COUNT_CHANGE source=" << static_cast<const void*>(this)
-                    << " old=" << postIds.size()
-                    << " new=" << count
-                    << " replyCount=" << post.reply_count;
-                resizeLogicalTail(count);
-                pruneProvisionalPostIds();
-                qCDebug(lcThreadTimelineTrace).nospace()
-                    << "THREAD_SLOTS source=" << static_cast<const void*>(this)
-                    << ' ' << slotSummary(postIds);
-            }
-        }
+        syncLogicalCount(post);
+    });
+    connect(&channel, &BackendChannel::onThreadSummaryChanged, this,
+            [syncLogicalCount](BackendPost& rootPost) {
+        // Reply-count/thread-summary changes alter the logical thread topology,
+        // but not the root post body. Keep the source count current without
+        // publishing itemsChanged(0), which would rematerialize the thread root.
+        syncLogicalCount(rootPost);
     });
     connect(&channel, &BackendChannel::onPostReactionUpdated, this,
             [this](BackendPost& post) {
@@ -936,11 +950,10 @@ void ThreadPostSource::appendLiveReply(BackendPost& post)
     const int oldCount = static_cast<int>(postIds.size());
     int count = currentLogicalCount();
 
-    // BackendChannel::addPost() updates the root's reply_count and emits
-    // onPostEdited(root) before the posted event is forwarded as onNewPost(reply).
-    // The edit handler above therefore normally grows postIds first, leaving an
-    // empty newest slot reserved for this exact live reply. Do not count the
-    // same reply twice by blindly appending another logical row.
+    // BackendChannel::addPost() advances the root thread summary before the
+    // posted event is forwarded as onNewPost(reply). onThreadSummaryChanged()
+    // therefore normally grows postIds first, leaving one empty newest slot for
+    // this exact live reply. Do not count the same reply twice.
     const bool metadataReservedTail = count == oldCount && count > 1
         && postIds.at(count - 1).isEmpty();
     if (count > oldCount) {
