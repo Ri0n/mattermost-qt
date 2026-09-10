@@ -16,16 +16,12 @@
 
 #include <QIcon>
 #include <QObject>
-#include <QPointer>
 #include <QString>
 
 #include "backend/HTTPConnector.h"
 #include "backend/QByteArrayCreator.h"
 
-class QAction;
 class QJsonObject;
-class QMainWindow;
-class QToolBar;
 class QWidget;
 
 namespace Mattermost {
@@ -38,7 +34,6 @@ class KTalkIntegration final : public QObject
     Q_OBJECT
 public:
     static KTalkIntegration& instance(Backend& backend);
-    static KTalkIntegration& installAppBar(QMainWindow& window, Backend& backend);
 
     bool isAvailable() const { return !pluginId_.isEmpty(); }
     const QIcon& icon() const { return icon_; }
@@ -58,7 +53,6 @@ signals:
 private:
     explicit KTalkIntegration(Backend& backend);
 
-    void ensureAppBar(QMainWindow& window);
     void refreshAvailability();
     void requestIcon();
     void submitStartMeeting(QWidget* parent,
@@ -71,8 +65,6 @@ private:
 
     Backend& backend_;
     HTTPConnector httpConnector_;
-    QPointer<QToolBar> toolbar_;
-    QPointer<QAction> action_;
     QString pluginId_;
     QIcon icon_;
     bool iconRequested_ = false;
