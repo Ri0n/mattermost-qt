@@ -37,7 +37,6 @@
 #include "ThreadPostSource.h"
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
-#include "backend/SidebarService.h"
 #include "backend/ThreadFollowService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
@@ -489,14 +488,6 @@ void ChatArea::init()
             updateUsersButton();
         }));
 
-        signalConnections.push_back(connect(ui->listWidget,
-                                            &LongListWidget::userViewportChanged,
-                                            this, [this](bool atEnd) {
-            if (atEnd) {
-                markChannelViewedIfAtBottom();
-            }
-        }));
-
         signalConnections.push_back(connect(ui->usersButton, &QToolButton::clicked,
                                             this, [this] {
             auto* dialog = new ViewChannelMembersListDialog(backend, channel, this);
@@ -553,10 +544,6 @@ void ChatArea::deinit()
         disconnect(connection);
     }
     signalConnections.clear();
-
-    QObject::disconnect(explicitReadPostsConnection);
-    explicitReadPostsConnection = QMetaObject::Connection();
-    explicitReadPending = false;
     initialized = false;
 }
 
@@ -609,16 +596,6 @@ void ChatArea::updatePinnedPostsButton()
     ui->pinnedPostsButton->setToolTip(tooltip);
     ui->pinnedPostsButton->setAccessibleName(tooltip);
     ui->pinnedPostsButton->show();
-}
-
-void ChatArea::markChannelViewedIfAtBottom()
-{
-    if (isThread || !initialized || !ui->listWidget->isAtEnd()) {
-        return;
-    }
-    setUnreadMessagesCount(0);
-    SidebarService::instance(backend).markChannelViewedLocally(channel);
-    backend.markChannelAsViewed(channel);
 }
 
 void ChatArea::handleUserTyping(const BackendUser& user)
