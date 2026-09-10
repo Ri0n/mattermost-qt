@@ -523,7 +523,12 @@ void ChatArea::init()
     ui->loadOldPosts->hide();
     if (!isThread) {
         updatePinnedPostsButton();
-        ui->usersButton->hide();
+        if (channel.type == BackendChannel::directChannel || channel.members.isEmpty()) {
+            ui->usersButton->hide();
+        } else {
+            updateUsersButton();
+            ui->usersButton->show();
+        }
     }
 
     initialized = true;
