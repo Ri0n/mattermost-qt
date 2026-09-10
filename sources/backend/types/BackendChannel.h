@@ -139,6 +139,13 @@ signals:
 	 */
 	void onPostEdited (BackendPost& post);
 
+	/**
+	 * Called when only a root post's collapsed-thread presentation changed.
+	 * Consumers should update reply count/participants in place rather than
+	 * treating this as a post-body edit and rematerializing the timeline row.
+	 */
+	void onThreadSummaryChanged (BackendPost& rootPost);
+
 	/** Called when a post reaction is being updated. */
 	void onPostReactionUpdated (BackendPost& post);
 
