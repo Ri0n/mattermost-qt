@@ -34,6 +34,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSpacerItem>
+#include <QTimer>
 
 #include "EmojiDialogSupport.h"
 #include "backend/emoji/EmojiInfo.h"
@@ -67,7 +68,20 @@ ChooseEmojiDialog::ChooseEmojiDialog(QWidget *parent)
 ,ui(new Ui::ChooseEmojiDialog)
 {
 	ui->setupUi(this);
-	connect (ui->searchEdit, &QLineEdit::textChanged, this, &ChooseEmojiDialog::updateSearchResults);
+	searchTimer = new QTimer(this);
+	searchTimer->setSingleShot(true);
+	searchTimer->setInterval(100);
+	connect(searchTimer, &QTimer::timeout, this, [this] {
+		updateSearchResults(ui->searchEdit->text());
+	});
+	connect(ui->searchEdit, &QLineEdit::textChanged, this, [this](const QString& text) {
+		if (EmojiDialogSupport::normalizeSearchTerm(text).isEmpty()) {
+			searchTimer->stop();
+			removeSearchTab();
+			return;
+		}
+		searchTimer->start();
+	});
 
 }
 
@@ -260,9 +274,9 @@ void ChooseEmojiDialog::createTabForCategory (uint32_t categoryIndex, uint32_t t
 					EmojiID emojiID = EmojiInfo::findByName (emoji.name);
 					qDebug() << "Add to favorites: " << emoji.name << " " << emojiID.seq;
 					favorites.insert (emojiID, emoji);
-					saveEmojiFavorites ();
-					updateFavoritesTab ();
-				});
+						saveEmojiFavorites ();
+						updateFavoritesTab ();
+					});
 			}
 
 			menu.exec (pushButton->parentWidget()->mapToGlobal(pushButton->pos()) + QPoint (32, 0));
