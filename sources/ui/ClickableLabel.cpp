@@ -13,6 +13,7 @@ namespace Mattermost {
 ClickableLabel::ClickableLabel(QWidget* parent)
     : QLabel(parent)
 {
+    setCursor(Qt::PointingHandCursor);
 }
 
 void ClickableLabel::mouseReleaseEvent(QMouseEvent* event)
