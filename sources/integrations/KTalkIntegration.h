@@ -18,6 +18,7 @@
 #include <QString>
 
 #include "backend/HTTPConnector.h"
+#include "backend/QByteArrayCreator.h"
 
 class QAction;
 class QJsonObject;
