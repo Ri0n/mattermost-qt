@@ -34,6 +34,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSpacerItem>
+#include <QTabBar>
 #include <QTimer>
 
 #include "EmojiDialogSupport.h"
@@ -68,6 +69,8 @@ ChooseEmojiDialog::ChooseEmojiDialog(QWidget *parent)
 ,ui(new Ui::ChooseEmojiDialog)
 {
 	ui->setupUi(this);
+	ui->tabWidget->tabBar()->setFont(
+		EmojiDialogSupport::emojiButtonFont(ui->tabWidget->font(), 10));
 	searchTimer = new QTimer(this);
 	searchTimer->setSingleShot(true);
 	searchTimer->setInterval(100);
