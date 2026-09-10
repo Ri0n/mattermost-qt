@@ -156,6 +156,7 @@ private:
 	QStackedWidget* contentStack = nullptr;
 	PostCollectionView* pinnedPostsView = nullptr;
 	int pendingMessageLoads = 0;
+    bool channelMembersLoaded = false;
 
 public:
 	Ui::ChatArea* ui;
