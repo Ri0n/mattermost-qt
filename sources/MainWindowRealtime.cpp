@@ -42,7 +42,7 @@ void MainWindow::installRealtimeUiSync()
     auto& webappPlugins = WebappPluginService::instance(backend);
     webappPlugins.clear();
     webappPlugins.refresh();
-    KTalkIntegration::install(*this, backend);
+    KTalkIntegration::installAppBar(*this, backend);
 
     // Notification post targets use the same semantic navigation service as
     // permalinks, Following and Attention. A reply can therefore load its root
