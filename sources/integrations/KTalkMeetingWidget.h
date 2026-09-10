@@ -16,6 +16,7 @@
 
 #include <QFrame>
 
+class QEvent;
 class QLabel;
 class QPushButton;
 
@@ -44,12 +45,17 @@ public:
     /** True when the post contains enough metadata for the native card. */
     bool isValid() const { return valid_; }
 
+protected:
+    void changeEvent(QEvent* event) override;
+
 private:
+    void refreshAccent();
     void refreshIcon();
     void openMeeting();
 
     Backend& backend_;
     QString meetingLink_;
+    QFrame* accentBar_ = nullptr;
     QLabel* iconLabel_ = nullptr;
     QPushButton* joinButton_ = nullptr;
     bool valid_ = false;
