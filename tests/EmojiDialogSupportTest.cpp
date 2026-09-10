@@ -25,6 +25,8 @@ private slots:
                               QStringLiteral("rolling floor")));
         QVERIFY(matchesSearch(QStringLiteral("face_vomiting"),
                               QStringLiteral(":vomit:")));
+        QVERIFY(!matchesSearch(QStringLiteral("floor_rolling"),
+                               QStringLiteral("rolling floor")));
         QVERIFY(!matchesSearch(QStringLiteral("pizza"),
                                QStringLiteral("cherry")));
     }
@@ -47,6 +49,8 @@ private slots:
                  QStringLiteral("Segoe UI Emoji"));
         QCOMPARE(chooseLegacyEmojiFontFamily(installed, Platform::MacOS),
                  QStringLiteral("Apple Color Emoji"));
+        QVERIFY(chooseLegacyEmojiFontFamily({QStringLiteral("Arial")},
+                                            Platform::Linux).isEmpty());
     }
 
     void preservesFoundryQualifiedFamilyName()
