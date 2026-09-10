@@ -1,3 +1,4 @@
+
 /**
  * Copyright 2021, 2022 Lyubomir Filipov
  *
@@ -5,7 +6,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -21,12 +22,10 @@
 
 #include <QDialog>
 #include <QMap>
-
 #include "backend/emoji/EmojiDefs.h"
 
-class QComboBox;
 class QGridLayout;
-class QPushButton;
+class QComboBox;
 class QWidget;
 
 namespace Ui {
@@ -45,9 +44,8 @@ private:
     void createEmojiTabs ();
     void createTabForCategory (uint32_t categoryIndex, uint32_t tabIndex, const QString& tabName, const QVector<Emoji>& emojis);
     QGridLayout* createTab (uint32_t categoryIdx, int tabIndex);
-    QPushButton* createEmojiButton(const Emoji& emoji, uint32_t categoryIndex, uint32_t tabIndex);
-    void updateSearchResults(const QString& text);
-    void removeSearchTab();
+    void updateSearchResults (const QString& text);
+    void removeSearchTab ();
     Emoji getSelectedEmoji ();
     void addSkinToneComboBox (QWidget *tab, QGridLayout *gridLayout, uint32_t categoryIdx);
     void restoreEmojiFavorites ();
@@ -56,7 +54,7 @@ private:
 private:
     friend class ChooseEmojiDialogWrapper;
     Ui::ChooseEmojiDialog*	ui;
-    QComboBox*				skinToneComboBox = nullptr;
+    QComboBox*				skinToneComboBox;
     QVector<QPushButton*>	peopleEmojiButtons;
     QVector<Emoji>          searchableEmojis;
     QWidget*                searchTab = nullptr;
