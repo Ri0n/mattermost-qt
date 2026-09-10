@@ -205,7 +205,19 @@ LongListWidget::LongListWidget(QWidget* parent)
     QScrollBar* bar = verticalScrollBar();
     connect(bar, &QScrollBar::valueChanged, this, [this] { onScrollValueChanged(); });
     connect(bar, &QScrollBar::sliderMoved, this, &LongListWidget::onSliderMoved);
-    connect(bar, &QScrollBar::actionTriggered, this, [this](int) {
+    connect(bar, &QScrollBar::actionTriggered, this, [this, bar](int action) {
+        // An absolute groove click updates sliderPosition and, with tracking
+        // enabled, emits SliderMove before QScrollBar marks its handle down. It
+        // therefore has no sliderMoved() signal even though it is the same kind
+        // of random logical jump as dragging the thumb. Start that one-shot seek
+        // immediately; otherwise a sparse timeline is treated as ordinary scroll
+        // and can depend on unrelated model/geometry changes to continue loading.
+        if (action == QAbstractSlider::SliderMove && !bar->isSliderDown()) {
+            onSliderMoved(bar->sliderPosition());
+            seekTimer.stop();
+            activateSeekTarget();
+        }
+
         // actionTriggered is a user scrollbar action. setValue() used by our
         // geometry transactions does not emit it. Defer until Qt has applied
         // the action's new value so observers see the final at-end state.
@@ -1422,9 +1434,9 @@ void LongListWidget::onScrollValueChanged()
 
 void LongListWidget::onSliderMoved(int value)
 {
-    // sliderMoved is emitted only for interactive thumb movement. The first
-    // move immediately gives the user authority over the viewport, even before
-    // sliderReleased publishes the final viewport state.
+    // This path is used by an interactive thumb move and by the explicit
+    // SliderMove action generated for an absolute groove click. Either gesture
+    // gives the user authority over the viewport before sparse data is loaded.
     releaseViewportLock(true);
 
     const int target = logicalTargetForScrollValue(value);
