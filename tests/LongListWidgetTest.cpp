@@ -246,12 +246,14 @@ private slots:
         list.show();
         settleEvents(12);
 
+        QScrollBar* bar = list.verticalScrollBar();
+        QVERIFY(bar->maximum() > 0);
+        bar->setValue(0);
+        settleEvents(12);
         QVERIFY2(list.itemWidget(0) != nullptr,
                  "The starting viewport must be resident before the absolute sparse jump");
         requests.clear();
 
-        QScrollBar* bar = list.verticalScrollBar();
-        QVERIFY(bar->maximum() > 0);
         QVERIFY(!bar->isSliderDown());
 
         // QScrollBar uses exactly this path for an absolute groove click:
