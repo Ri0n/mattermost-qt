@@ -453,7 +453,7 @@ QString renderMarkdownHtml(const QString& text)
                 code += lines.at(i);
                 ++i;
             }
-            html += QStringLiteral("<pre>") + htmlEscape(code) + QStringLiteral("</pre>");
+            html += QStringLiteral("<pre style=\"white-space:pre-wrap;\">") + htmlEscape(code) + QStringLiteral("</pre>");
             continue;
         }
 

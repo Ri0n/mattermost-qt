@@ -369,7 +369,7 @@ private slots:
             "int main() { return 0; }\n"
             "```");
         const QString html = MessageFormatter::formatMessageText(source);
-        QVERIFY2(html.contains(QStringLiteral("<pre>")), qPrintable(html));
+        QVERIFY2(html.indexOf("<pre ") >= 0, qPrintable(html));
         QVERIFY2(html.contains(QStringLiteral("#include &lt;cstdio&gt;")), qPrintable(html));
     }
 
