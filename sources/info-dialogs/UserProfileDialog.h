@@ -25,6 +25,8 @@
 #include "backend/HTTPConnector.h"
 #include "fwd.h"
 
+class QEvent;
+
 namespace Ui {
 class UserProfileDialog;
 }
@@ -42,8 +44,23 @@ public:
     UserProfileDialog(Backend& backend, const BackendUser& user, QWidget* parent = nullptr);
     ~UserProfileDialog();
 
+    /**
+     * Show a non-modal profile window owned by its parent. The returned dialog
+     * deletes itself when closed and closes automatically when its window loses
+     * activation, keeping avatar/profile inspection lightweight.
+     */
+    static UserProfileDialog* showTransient(Backend& backend,
+                                            const BackendUser& user,
+                                            QWidget* parent = nullptr);
+    static UserProfileDialog* showTransient(const BackendUser& user,
+                                            QWidget* parent = nullptr);
+
+protected:
+    bool event(QEvent* event) override;
+
 private:
     UserProfileDialog(Backend* backend, const BackendUser& user, QWidget* parent);
+    static UserProfileDialog* showTransient(UserProfileDialog* dialog);
     void startDirectMessage();
 
     Ui::UserProfileDialog* ui;
