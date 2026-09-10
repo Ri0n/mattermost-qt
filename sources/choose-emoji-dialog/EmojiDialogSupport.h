@@ -102,6 +102,16 @@ inline QStringList installedFontFamilies()
 #endif
 }
 
+inline QString installedLegacyEmojiFontFamily()
+{
+    // Enumerating fonts can be relatively expensive (notably on X11). The
+    // chooser is long-lived and the installed font set does not normally
+    // change at runtime, so resolve the platform family once.
+    static const QString family = chooseLegacyEmojiFontFamily(installedFontFamilies(),
+                                                               currentPlatform());
+    return family;
+}
+
 inline QFont emojiButtonFont(QFont font, int pointSize = 16)
 {
     font.setPointSize(pointSize);
@@ -110,8 +120,7 @@ inline QFont emojiButtonFont(QFont font, int pointSize = 16)
     // Qt 6.9 gained a dedicated system emoji fallback path and prefers the
     // platform emoji font automatically for color emoji/sequences. Older Qt
     // versions need an explicit family to avoid a text-font glyph fallback.
-    const QString family = chooseLegacyEmojiFontFamily(installedFontFamilies(),
-                                                        currentPlatform());
+    const QString family = installedLegacyEmojiFontFamily();
     if (!family.isEmpty()) {
         font.setFamily(family);
     }
