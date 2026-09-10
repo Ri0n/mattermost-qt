@@ -1,12 +1,9 @@
 #include "ChatArea.h"
 
-#include <QCursor>
-
 #include "backend/Backend.h"
 #include "backend/Storage.h"
 #include "backend/types/BackendUser.h"
 #include "info-dialogs/UserProfileDialog.h"
-#include "ui_ChatArea.h"
 
 namespace Mattermost {
 
