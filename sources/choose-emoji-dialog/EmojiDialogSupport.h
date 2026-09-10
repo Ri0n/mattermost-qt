@@ -1,31 +1,12 @@
 #pragma once
 
 #include <QFont>
-#include <QFontDatabase>
 #include <QString>
 #include <QStringList>
 
+#include "ui/EmojiFont.h"
+
 namespace Mattermost::EmojiDialogSupport {
-
-enum class Platform {
-    Linux,
-    Windows,
-    MacOS,
-    Other,
-};
-
-inline Platform currentPlatform()
-{
-#if defined(Q_OS_WIN)
-    return Platform::Windows;
-#elif defined(Q_OS_MACOS)
-    return Platform::MacOS;
-#elif defined(Q_OS_LINUX)
-    return Platform::Linux;
-#else
-    return Platform::Other;
-#endif
-}
 
 inline QString normalizeSearchTerm(QString term)
 {
@@ -64,78 +45,10 @@ inline bool matchesSearch(const QString& emojiName, const QString& term)
     return true;
 }
 
-inline QStringList legacyEmojiFontCandidates(Platform platform)
-{
-    switch (platform) {
-    case Platform::Windows:
-        return {QStringLiteral("Segoe UI Emoji"),
-                QStringLiteral("Segoe UI Symbol")};
-    case Platform::MacOS:
-        return {QStringLiteral("Apple Color Emoji")};
-    case Platform::Linux:
-        return {QStringLiteral("Noto Color Emoji"),
-                QStringLiteral("Noto Emoji"),
-                QStringLiteral("Twemoji Mozilla")};
-    case Platform::Other:
-        return {QStringLiteral("Noto Color Emoji"),
-                QStringLiteral("Noto Emoji"),
-                QStringLiteral("Segoe UI Emoji"),
-                QStringLiteral("Apple Color Emoji")};
-    }
-    return {};
-}
-
-inline QString chooseLegacyEmojiFontFamily(const QStringList& availableFamilies,
-                                           Platform platform)
-{
-    const QStringList candidates = legacyEmojiFontCandidates(platform);
-    for (const QString& candidate : candidates) {
-        for (const QString& available : availableFamilies) {
-            // QFontDatabase may append a foundry as "Family [Foundry]".
-            if (available.compare(candidate, Qt::CaseInsensitive) == 0
-                || available.startsWith(candidate + QStringLiteral(" ["),
-                                        Qt::CaseInsensitive)) {
-                return available;
-            }
-        }
-    }
-    return {};
-}
-
-inline QStringList installedFontFamilies()
-{
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    return QFontDatabase::families();
-#else
-    QFontDatabase database;
-    return database.families();
-#endif
-}
-
-inline QString installedLegacyEmojiFontFamily()
-{
-    // Enumerating fonts can be relatively expensive (notably on X11). The
-    // chooser is long-lived and the installed font set does not normally
-    // change at runtime, so resolve the platform family once.
-    static const QString family = chooseLegacyEmojiFontFamily(installedFontFamilies(),
-                                                               currentPlatform());
-    return family;
-}
-
 inline QFont emojiButtonFont(QFont font, int pointSize = 16)
 {
     font.setPointSize(pointSize);
-
-#if QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
-    // Qt 6.9 gained a dedicated system emoji fallback path and prefers the
-    // platform emoji font automatically for color emoji/sequences. Older Qt
-    // versions need an explicit family to avoid a text-font glyph fallback.
-    const QString family = installedLegacyEmojiFontFamily();
-    if (!family.isEmpty()) {
-        font.setFamily(family);
-    }
-#endif
-    return font;
+    return EmojiFont::applySystemEmojiFamily(font);
 }
 
 } // namespace Mattermost::EmojiDialogSupport
