@@ -208,12 +208,12 @@ void ChannelQuickList::activateItem(QTreeWidgetItem* current)
         return;
     }
     if (entry->resumeState == FollowingModel::ResumeState::AtEnd) {
-        emit channelSelected(channelId);
+        AppNavigationService::instance(*backend_).openChannel(channelId);
         return;
     }
 
     if (backend_->getCurrentChannel() == channel && !entry->requiresAttention()) {
-        emit channelSelected(channelId);
+        AppNavigationService::instance(*backend_).openChannel(channelId);
         return;
     }
 
@@ -227,7 +227,7 @@ void ChannelQuickList::activateItem(QTreeWidgetItem* current)
             if (!postId.isEmpty()) {
                 AppNavigationService::instance(*guard->backend_).openPost(postId);
             } else {
-                emit guard->channelSelected(channelId);
+                AppNavigationService::instance(*guard->backend_).openChannel(channelId);
             }
         });
 }
