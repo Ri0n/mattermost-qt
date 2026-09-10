@@ -23,6 +23,7 @@
 
 #include <QCloseEvent>
 #include <QDialogButtonBox>
+#include <QFont>
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -42,6 +43,7 @@
 #include <QWindow>
 
 #include "./ui_mainwindow.h"
+#include "Settings.h"
 #include "SettingsWindow.h"
 #include "backend/Backend.h"
 #include "backend/SidebarService.h"
@@ -57,6 +59,7 @@
 #include "log.h"
 #include "notifications/NotificationManager.h"
 #include "post-collection/PostCollectionView.h"
+#include "ui/EmojiPresentation.h"
 #include "ui/IconUtils.h"
 
 namespace Mattermost {
@@ -415,7 +418,12 @@ void MainWindow::refreshChannelUnreadFilter()
 	}
 
 	const bool unreadOnly = unreadFilterButton->isChecked();
-	if (channelTabs && recentChannels) {
+
+	const QSettings independentSettings;
+	const bool alwaysShowFollowing =
+		independentSettings.value(ALWAYS_SHOW_FOLLOWING_TAB,
+		                          ALWAYS_SHOW_FOLLOWING_TAB_DEFAULT).toBool();
+	if (!alwaysShowFollowing && channelTabs && recentChannels) {
 		const int followingIndex = channelTabs->indexOf(recentChannels);
 		if (unreadOnly && followingIndex >= 0) {
 			channelTabs->removeTab(followingIndex);
@@ -700,19 +708,14 @@ void MainWindow::refreshUnreadFilterIcon()
 		return;
 	}
 
-	QIcon icon = QIcon::fromTheme(QStringLiteral("mail-unread-symbolic"));
-	if (icon.isNull()) {
-		icon = QIcon::fromTheme(QStringLiteral("mail-unread"));
-	}
-	if (icon.isNull()) {
-		icon = style()->standardIcon(QStyle::SP_MessageBoxInformation);
-	}
+	unreadFilterButton->setIcon(QIcon());
+	unreadFilterButton->setText(QStringLiteral("📬"));
+	unreadFilterButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+	QFont emojiFont = unreadFilterButton->font();
+	EmojiPresentation::preferEmojiFont(emojiFont);
+	emojiFont.setPixelSize(18);
+	unreadFilterButton->setFont(emojiFont);
 
-	const QPalette palette = unreadFilterButton->palette();
-	const QColor color = unreadFilterButton->isChecked()
-		? palette.color(QPalette::Highlight)
-		: palette.color(QPalette::ButtonText);
-	unreadFilterButton->setIcon(IconUtils::tintedIcon(icon, color));
 	unreadFilterButton->setToolTip(unreadFilterButton->isChecked()
 		? tr("Show all channels and Following")
 		: tr("Show unread only"));

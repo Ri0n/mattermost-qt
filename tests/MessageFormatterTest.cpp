@@ -340,6 +340,82 @@ private slots:
         QSKIP("Qt Markdown renderer is enabled starting with Qt 6.10");
 #endif
     }
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 10, 0)
+    void pre610InlineMarkdownIsRendered()
+    {
+        const QString html = MessageFormatter::formatMessageText(
+            QStringLiteral("**bold** and *italic* and ~~strike~~ and `code`"));
+        QVERIFY2(html.contains(QStringLiteral("<strong>bold</strong>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("<em>italic</em>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("<del>strike</del>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("<code>code</code>")), qPrintable(html));
+    }
+
+    void pre610HeadingsAndRuleAreRendered()
+    {
+        const QString html = MessageFormatter::formatMessageText(
+            QStringLiteral("# Title\n\nparagraph\n\n---"));
+        QVERIFY2(html.contains(QStringLiteral("<h1>Title</h1>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("<hr>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("<p>paragraph</p>")), qPrintable(html));
+    }
+
+    void pre610FencedCodeIsPreformatted()
+    {
+        const QString source = QStringLiteral(
+            "```cpp\n"
+            "#include <cstdio>\n"
+            "int main() { return 0; }\n"
+            "```");
+        const QString html = MessageFormatter::formatMessageText(source);
+        QVERIFY2(html.contains(QStringLiteral("<pre>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("#include &lt;cstdio&gt;")), qPrintable(html));
+    }
+
+    void pre610ListsAreRendered()
+    {
+        const QString html = MessageFormatter::formatMessageText(
+            QStringLiteral("- one\n- two\n- three"));
+        QVERIFY2(html.contains(QStringLiteral("<ul>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("<li>one</li>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("<li>two</li>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("</ul>")), qPrintable(html));
+    }
+
+    void pre610QuoteIsRendered()
+    {
+        const QString html = MessageFormatter::formatMessageText(
+            QStringLiteral("> quoted line"));
+        QVERIFY2(html.contains(QStringLiteral("<blockquote>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("quoted line")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("</blockquote>")), qPrintable(html));
+    }
+
+    void pre610MarkdownLinkAndImageAreRendered()
+    {
+        const QString html = MessageFormatter::formatMessageText(
+            QStringLiteral("text [example](https://example.com) ![a](https://example.com/i.png)"));
+        QVERIFY2(html.contains(QStringLiteral("<a href=\"https://example.com\">example</a>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("<img src=\"https://example.com/i.png\" alt=\"a\">")), qPrintable(html));
+    }
+
+    void pre610BareUrlIsClickableAndInsideCodeIsNot()
+    {
+        const QString html = MessageFormatter::formatMessageText(
+            QStringLiteral("see https://example.com/path and `https://example.com/code`"));
+        QVERIFY2(html.contains(QStringLiteral("<a href=\"https://example.com/path\">https://example.com/path</a>")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("<code>https://example.com/code</code>")), qPrintable(html));
+    }
+
+    void pre610EmojiAndUrlStillExpanded()
+    {
+        const QString html = MessageFormatter::formatMessageText(
+            QStringLiteral("hello :wave: world and https://example.com"));
+        QVERIFY2(!html.contains(QStringLiteral(":wave:")), qPrintable(html));
+        QVERIFY2(html.contains(QStringLiteral("https://example.com")), qPrintable(html));
+    }
+#endif
 };
 
 QTEST_MAIN(MessageFormatterTest)

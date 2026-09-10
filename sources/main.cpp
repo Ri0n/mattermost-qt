@@ -17,9 +17,12 @@
  * along with Mattermost-QT. if not, see https://www.gnu.org/licenses/.
  */
 
+#include <algorithm>
 #include <memory>
 #include <QApplication>
+#include <QFont>
 #include <QMenu>
+#include <QSettings>
 #include <QSystemTrayIcon>
 
 #include "login/LoginDialog.h"
@@ -27,6 +30,7 @@
 #include "backend/Backend.h"
 #include "backend/CustomEmojiService.h"
 #include "config/Config.h"
+#include "Settings.h"
 #include "ui/OverlayScrollBarManager.h"
 #include "ui/SplitterHandleManager.h"
 
@@ -42,8 +46,14 @@ public:
 	void reopen ();
 private:
 	std::unique_ptr<MainWindow>			mainWindow;
-	std::unique_ptr<QSystemTrayIcon> 	trayIcon;
+	// Declare the context menu before the tray icon: members are destroyed in
+	// reverse declaration order, so the menu is destroyed *after* the icon.
+	// QSystemTrayIcon only stores a raw pointer to its context menu and does not
+	// own it, so destroying the menu first would leave the icon holding a
+	// dangling pointer that the platform tray code can dereference on shutdown
+	// (use-after-free -> SIGSEGV on exit).
 	std::unique_ptr<QMenu>				trayIconMenu;
+	std::unique_ptr<QSystemTrayIcon> 	trayIcon;
 	Backend								backend;
 	LoginDialog*						loginDialog;
 	QWidget*							currentWindow;
@@ -51,8 +61,8 @@ private:
 
 inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 :QApplication (argc, argv)
-,trayIcon (std::make_unique<QSystemTrayIcon> (QIcon(":/icons/img/icon0.ico"), nullptr))
 ,trayIconMenu (std::make_unique<QMenu> (nullptr))
+,trayIcon (std::make_unique<QSystemTrayIcon> (QIcon(":/icons/img/icon0.ico"), nullptr))
 ,currentWindow (nullptr)
 {
     OverlayScrollBarManager::install(*this);
@@ -115,6 +125,28 @@ inline void MattermostApplication::toggleShowWindow ()
 
 } /* namespace Mattermost */
 
+namespace {
+
+void applyUiFontScale(QApplication& app)
+{
+	const QSettings settings;
+	int percent = settings.value(UI_FONT_SCALE_PERCENT,
+	                             UI_FONT_SCALE_PERCENT_DEFAULT).toInt();
+	percent = std::clamp(percent,
+	                     UI_FONT_SCALE_PERCENT_MIN,
+	                     UI_FONT_SCALE_PERCENT_MAX);
+	if (percent == 100) {
+		return;
+	}
+
+	const qreal factor = percent / 100.0;
+	QFont font = app.font();
+	font.setPointSizeF(font.pointSizeF() * factor);
+	app.setFont(font);
+}
+
+} // namespace
+
 int main( int argc, char *argv[])
 {
 	QCoreApplication::setOrganizationName("mattermost-native");
@@ -122,6 +154,7 @@ int main( int argc, char *argv[])
 	QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::Round);
 
 	Mattermost::MattermostApplication app (argc, argv);
+	applyUiFontScale(app);
 	app.openLoginWindow ();
 	return app.exec();
 }

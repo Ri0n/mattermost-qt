@@ -20,6 +20,7 @@
 #include "SettingsWindow.h"
 
 #include <QDir>
+#include <QCheckBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
@@ -204,6 +205,58 @@ SettingsWindow::SettingsWindow(QWidget *parent) :
     tabs->addTab(cacheScroll, tr("Cache"));
     ui->verticalLayout->insertWidget(0, tabs, 1);
 
+    // Composer / key bindings
+    auto* composerPage = new QWidget(tabs);
+    auto* composerLayout = new QVBoxLayout(composerPage);
+    composerLayout->setContentsMargins(12, 12, 12, 12);
+    composerLayout->setSpacing(12);
+
+    auto* composerGroup = new QGroupBox(tr("Message editor"), composerPage);
+    auto* composerForm = new QFormLayout(composerGroup);
+    sendOnCtrlEnter = new QCheckBox(composerGroup);
+    sendOnCtrlEnter->setChecked(settings.value(
+        COMPOSER_SEND_ON_CTRL_ENTER, COMPOSER_SEND_ON_CTRL_ENTER_DEFAULT).toBool());
+    composerForm->addRow(tr("Send on Ctrl+Enter:"), sendOnCtrlEnter);
+    composerLayout->addWidget(composerGroup);
+
+    composerLayout->addWidget(makeDescription(
+        composerPage,
+        tr("When enabled, press Ctrl+Enter to send a message and plain Enter to "
+           "insert a new line. When disabled, plain Enter sends and Ctrl+Enter "
+           "inserts a new line.")));
+
+    auto* sidebarGroup = new QGroupBox(tr("Sidebar"), composerPage);
+    auto* sidebarForm = new QFormLayout(sidebarGroup);
+    alwaysShowFollowingTab = new QCheckBox(sidebarGroup);
+    alwaysShowFollowingTab->setChecked(settings.value(
+        ALWAYS_SHOW_FOLLOWING_TAB, ALWAYS_SHOW_FOLLOWING_TAB_DEFAULT).toBool());
+    sidebarForm->addRow(tr("Always show Following tab:"), alwaysShowFollowingTab);
+    composerLayout->addWidget(sidebarGroup);
+
+    composerLayout->addWidget(makeDescription(
+        composerPage,
+        tr("Keep the Following tab visible even while \"Show unread only\" is "
+           "active. When disabled it is hidden, leaving only Channels and "
+           "Attention.")));
+
+    auto* appearanceGroup = new QGroupBox(tr("Appearance"), composerPage);
+    auto* appearanceForm = new QFormLayout(appearanceGroup);
+    uiFontScale = new QSpinBox(appearanceGroup);
+    uiFontScale->setRange(UI_FONT_SCALE_PERCENT_MIN, UI_FONT_SCALE_PERCENT_MAX);
+    uiFontScale->setSuffix(QStringLiteral(" %"));
+    uiFontScale->setSingleStep(5);
+    uiFontScale->setValue(settings.value(
+        UI_FONT_SCALE_PERCENT, UI_FONT_SCALE_PERCENT_DEFAULT).toInt());
+    appearanceForm->addRow(tr("UI font scale:"), uiFontScale);
+    composerLayout->addWidget(appearanceGroup);
+
+    composerLayout->addWidget(makeDescription(
+        composerPage,
+        tr("Scales the whole interface font as a percentage. Applies after "
+           "the application is restarted; 100% uses the system default.")));
+    composerLayout->addStretch(1);
+    tabs->addTab(composerPage, tr("General"));
+
     connect (ui->downloadLocationButton, &QPushButton::clicked, [this] {
         QDir defaultDir (ui->downloadLocationValue->text());
 
@@ -238,6 +291,9 @@ void SettingsWindow::applyNewSettings ()
     settings.setValue(POST_CACHE_MEMORY_TARGET_MB, memoryTargetMB->value());
     settings.setValue(POST_CACHE_MEMORY_POST_TTL_MINUTES, memoryPostTtlMinutes->value());
     settings.setValue(POST_CACHE_MEMORY_SWEEP_SECONDS, memorySweepSeconds->value());
+    settings.setValue(COMPOSER_SEND_ON_CTRL_ENTER, sendOnCtrlEnter->isChecked());
+    settings.setValue(ALWAYS_SHOW_FOLLOWING_TAB, alwaysShowFollowingTab->isChecked());
+    settings.setValue(UI_FONT_SCALE_PERCENT, uiFontScale->value());
     settings.sync ();
 }
 

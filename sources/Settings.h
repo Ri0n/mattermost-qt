@@ -33,6 +33,23 @@ static constexpr const char* DOWNLOAD_IMAGE_MAX_HEIGHT = "config/imageMaxHeight"
 
 // Historical attachment-file cache setting. Keep the key stable for existing
 // installations, but expose it explicitly on the Cache settings tab.
+// Composer key bindings. When enabled, Ctrl+Enter sends the message and plain
+// Enter inserts a new line. When disabled (default), plain Enter sends.
+static constexpr const char* COMPOSER_SEND_ON_CTRL_ENTER = "config/sendOnCtrlEnter";
+static constexpr bool COMPOSER_SEND_ON_CTRL_ENTER_DEFAULT = false;
+
+// Sidebar navigation. When enabled, the Following tab stays visible even while
+// "Show unread only" is active. When disabled, it is hidden just like today.
+static constexpr const char* ALWAYS_SHOW_FOLLOWING_TAB = "sidebar/alwaysShowFollowingTab";
+static constexpr bool ALWAYS_SHOW_FOLLOWING_TAB_DEFAULT = true;
+
+// Global UI font scale, expressed as a percentage of the application font.
+// Applied once at startup; 100 means no scaling.
+static constexpr const char* UI_FONT_SCALE_PERCENT = "ui/fontScalePercent";
+static constexpr int UI_FONT_SCALE_PERCENT_DEFAULT = 100;
+static constexpr int UI_FONT_SCALE_PERCENT_MIN = 80;
+static constexpr int UI_FONT_SCALE_PERCENT_MAX = 200;
+
 static constexpr const char* CACHE_SIZE_MB = "config/cacheSizeMB";
 static constexpr int CACHE_SIZE_MB_DEFAULT = 1000;
 
