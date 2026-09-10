@@ -27,6 +27,7 @@ namespace Mattermost {
 
 namespace {
 
+constexpr char MeetingPostType[] = "custom_ktalk_meeting";
 constexpr int IconExtent = 24;
 
 QUrl httpUrl(const QString& value)
@@ -41,6 +42,11 @@ QUrl httpUrl(const QString& value)
 }
 
 } // namespace
+
+bool KTalkMeetingWidget::supports(const BackendPost& post)
+{
+    return post.type == QLatin1String(MeetingPostType);
+}
 
 KTalkMeetingWidget::KTalkMeetingWidget(Backend& backend,
                                        const BackendPost& post,
