@@ -13,6 +13,7 @@
 #include <QTextImageFormat>
 #include <QUrl>
 
+#include "EmojiFont.h"
 #include "backend/emoji/EmojiInfo.h"
 
 namespace Mattermost::EmojiPresentation {
@@ -42,6 +43,8 @@ inline qreal fontScale(Mode mode)
 
 inline QFont fontForMode(QFont font, Mode mode)
 {
+    font = EmojiFont::applySystemEmojiFamily(font);
+
     if (mode == Mode::Reaction) {
         font.setPixelSize(ReactionExtent);
         return font;
@@ -54,6 +57,20 @@ inline QFont fontForMode(QFont font, Mode mode)
         font.setPixelSize(std::max(1, qRound(font.pixelSize() * scale)));
     }
     return font;
+}
+
+inline void applyUnicodeEmojiFamily(QTextCharFormat& format)
+{
+    const QString family = EmojiFont::legacyEmojiFontFamily();
+    if (family.isEmpty()) {
+        return;
+    }
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    format.setFontFamilies({family});
+#else
+    format.setFontFamily(family);
+#endif
 }
 
 inline int extent(const QFont& font, Mode mode)
