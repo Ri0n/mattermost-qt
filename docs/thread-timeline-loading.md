@@ -76,6 +76,14 @@ through approximate index placement and must not relocate already authoritative 
 Timestamp-based `fromCreateAt` loading is only a seed mechanism for a genuinely disconnected random
 seek where neither adjacent logical boundary is known.
 
+Both dragging the scrollbar thumb into an unavailable region and absolutely positioning the thumb by
+clicking the scrollbar groove are random-seek gestures. Qt may report the latter as
+`actionTriggered(SliderMove)` without first emitting `sliderMoved()`: with tracking enabled,
+`setSliderPosition()` triggers the move action before the scrollbar marks its handle as pressed.
+`LongListWidget` must therefore translate both input paths into the same logical seek target and seek
+generation. A seek must never depend on an unrelated post edit, row reflow, model refresh or other
+geometry notification to wake range loading.
+
 After a timestamp seed overlaps or establishes an authoritative mapped row, further expansion toward
 the viewport/buffer must continue with before/after post cursors. Repeating the same approximate page
 against a known adjacent gap is a bug: it can leave a permanent estimated-height hole or, if known
@@ -101,6 +109,11 @@ A page response that does not change logical identity mapping must not cause exi
 
 Newly filled empty slots require availability notification. `itemsChanged` is reserved for logical
 indices whose previously concrete identity/content really changed.
+
+Changes to a root post's collapsed-thread metadata, such as reply count or participant presentation,
+must not be published as a generic root-post edit. They may update the root's thread-summary widget
+and the corresponding `ThreadPostSource` logical count, but they must not make the parent channel
+rematerialize that root row.
 
 All viewport position preservation, request look-ahead calculation, materialization and scrolling
 remain inside `LongListWidget`. Thread-specific logical identity and cursor choice remain inside
