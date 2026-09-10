@@ -1,6 +1,7 @@
 #include <QtTest>
 
 #include "choose-emoji-dialog/EmojiDialogSupport.h"
+#include "ui/EmojiFont.h"
 
 class EmojiDialogSupportTest : public QObject
 {
@@ -33,8 +34,8 @@ private slots:
 
     void choosesPlatformLegacyEmojiFonts()
     {
-        using Mattermost::EmojiDialogSupport::Platform;
-        using Mattermost::EmojiDialogSupport::chooseLegacyEmojiFontFamily;
+        using Mattermost::EmojiFont::Platform;
+        using Mattermost::EmojiFont::chooseLegacyEmojiFontFamily;
 
         const QStringList installed = {
             QStringLiteral("Arial"),
@@ -55,8 +56,8 @@ private slots:
 
     void preservesFoundryQualifiedFamilyName()
     {
-        using Mattermost::EmojiDialogSupport::Platform;
-        using Mattermost::EmojiDialogSupport::chooseLegacyEmojiFontFamily;
+        using Mattermost::EmojiFont::Platform;
+        using Mattermost::EmojiFont::chooseLegacyEmojiFontFamily;
 
         const QStringList installed = {
             QStringLiteral("Noto Color Emoji [Google]"),
