@@ -241,9 +241,13 @@ private slots:
         list.setRequestBlockSize(10);
         list.setSeekDebounceMs(0);
         list.setItemCount(10000);
+        list.setRangeAvailable(0, 9);
         QSignalSpy requests(&list, &Mattermost::LongListWidget::rangeRequested);
         list.show();
         settleEvents(12);
+
+        QVERIFY2(list.itemWidget(0) != nullptr,
+                 "The starting viewport must be resident before the absolute sparse jump");
         requests.clear();
 
         QScrollBar* bar = list.verticalScrollBar();
@@ -268,7 +272,7 @@ private slots:
             }
         }
         QVERIFY2(sawSeek,
-                 "An absolute scrollbar jump into sparse data must start a seek without a slider drag or model wake-up");
+                 "An absolute jump from resident data into a sparse region must start a seek without a slider drag or model wake-up");
     }
 
     void delayedRowGrowthKeepsStickyBottom()
