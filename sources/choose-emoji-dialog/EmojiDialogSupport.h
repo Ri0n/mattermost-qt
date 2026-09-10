@@ -48,10 +48,20 @@ inline bool matchesSearch(const QString& emojiName, const QString& term)
         return true;
     }
 
-    QString normalizedName = emojiName.toLower();
-    normalizedName.replace(QLatin1Char('-'), QLatin1Char('_'));
-    normalizedName.replace(QLatin1Char(' '), QLatin1Char('_'));
-    return normalizedName.contains(needle);
+    const QString normalizedName = normalizeSearchTerm(emojiName);
+    int searchFrom = 0;
+    const QStringList tokens = needle.split(QLatin1Char('_'));
+    for (const QString& token : tokens) {
+        if (token.isEmpty()) {
+            continue;
+        }
+        const int foundAt = normalizedName.indexOf(token, searchFrom);
+        if (foundAt < 0) {
+            return false;
+        }
+        searchFrom = foundAt + token.size();
+    }
+    return true;
 }
 
 inline QStringList legacyEmojiFontCandidates(Platform platform)
