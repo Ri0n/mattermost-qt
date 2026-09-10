@@ -18,7 +18,7 @@ inline Platform currentPlatform()
 {
 #if defined(Q_OS_WIN)
     return Platform::Windows;
-#elif defined(Q_OS_MACOS)
+#elif defined(Q_OS_MACOS) || defined(Q_OS_MAC)
     return Platform::MacOS;
 #elif defined(Q_OS_LINUX)
     return Platform::Linux;
