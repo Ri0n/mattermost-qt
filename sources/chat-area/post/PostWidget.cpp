@@ -57,6 +57,7 @@
 #include "chat-area/ThreadWindowTitle.h"
 #include "choose-emoji-dialog/ChooseEmojiDialogWrapper.h"
 #include "info-dialogs/UserProfileDialog.h"
+#include "integrations/KTalkMeetingWidget.h"
 #include "navigation/AppNavigationService.h"
 #include "reactions/PostReactionList.h"
 #include "ui/AvatarUtils.h"
@@ -126,6 +127,15 @@ PostWidget::PostWidget(Backend& backend,
 	connectMessageLinks();
 	refreshPermalinkPreviews();
 	ui->time->setText(getMessageTimeString(post.create_at));
+
+    if (!post.isDeleted && KTalkMeetingWidget::supports(post)) {
+        auto meeting = std::make_unique<KTalkMeetingWidget>(backend_, post, this);
+        if (meeting->isValid()) {
+            ktalkMeeting_ = std::move(meeting);
+            ui->verticalLayout->insertWidget(
+                messageIndex + 1, ktalkMeeting_.get(), 0, Qt::AlignLeft);
+        }
+    }
 
 	connect(messageContent, &MessageContentWidget::linkHovered,
 	        this, [this](const QString& link) {
@@ -673,6 +683,7 @@ void PostWidget::markAsDeleted()
 	permalinkPreviews.clear();
 	attachments.reset();
 	reactions.reset();
+    ktalkMeeting_.reset();
 	if (poll) {
 		ui->verticalLayout->removeWidget(poll.get());
 		poll.reset();

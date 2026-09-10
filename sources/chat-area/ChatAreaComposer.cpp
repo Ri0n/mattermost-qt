@@ -36,6 +36,7 @@
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendTeam.h"
 #include "backend/types/BackendUser.h"
+#include "integrations/KTalkIntegration.h"
 #include "ui/ThemeIconWidgets.h"
 #include "ui_ChatArea.h"
 
@@ -76,6 +77,28 @@ void ChatArea::setupComposerUi()
             ui->outgoingPostCreator, &OutgoingPostCreator::onAttachButtonClick);
     connect(pollAction, &QAction::triggered,
             ui->outgoingPostCreator, &OutgoingPostCreator::createPoll);
+
+    // KTalk is server-provided, so keep the action hidden until discovery says
+    // this login exposes a compatible plugin. The same composer setup is used
+    // for channels and thread windows; a thread passes its root id so the
+    // meeting post appears in the context from which it was started.
+    auto* ktalk = &KTalkIntegration::instance(backend);
+    QAction* ktalkAction = attachMenu->addAction(ktalk->icon(), tr("KTalk Meeting…"));
+    ktalkAction->setVisible(ktalk->isAvailable());
+    connect(ktalk, &KTalkIntegration::availabilityChanged,
+            attachMenu, [ktalkAction](bool available) {
+        ktalkAction->setVisible(available);
+    });
+    connect(ktalk, &KTalkIntegration::iconChanged,
+            attachMenu, [ktalk, ktalkAction] {
+        ktalkAction->setIcon(ktalk->icon());
+    });
+    connect(ktalkAction, &QAction::triggered, this, [this, ktalk] {
+        ktalk->startMeeting(this,
+                            channel.id,
+                            isThread ? root_id : QString());
+    });
+
     ui->attachButton->setMenu(attachMenu);
 
     configureActionButton(*ui->sendButton);

@@ -548,12 +548,18 @@ void WebSocketConnector::onNewPacket (const QString& string)
 
 	auto it = eventHandlers.find (eventName);
 	if (it == eventHandlers.end()) {
-		if (eventName != QStringLiteral("custom_profile_attributes_values_updated")) {
-			LOG_DEBUG ("Unhandled WebSocket event '" << eventName << "'\n");
-			const QString jsonString = doc.toJson (QJsonDocument::Indented);
-			std::cout << jsonString.toStdString ();
-			qDebug() << "========" << '\n';
-		}
+        if (eventName.startsWith(QStringLiteral("custom_"))) {
+            eventHandler.handleCustomEvent(
+                eventName,
+                jsonObject.value(QStringLiteral("data")).toObject(),
+                jsonObject.value(QStringLiteral("broadcast")).toObject());
+            return;
+        }
+
+		LOG_DEBUG ("Unhandled WebSocket event '" << eventName << "'\n");
+		const QString jsonString = doc.toJson (QJsonDocument::Indented);
+		std::cout << jsonString.toStdString ();
+		qDebug() << "========" << '\n';
 		return;
 	}
 

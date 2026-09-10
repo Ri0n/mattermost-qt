@@ -23,6 +23,9 @@ public:
                                   const QString& channelId,
                                   const QString& teamId);
     void notifyEphemeralMessage(const QString& message);
+    void notifyCustomWebSocketEvent(const QString& eventName,
+                                    const QJsonObject& data,
+                                    const QJsonObject& broadcast);
 
 signals:
     void interactiveDialogRequested(const QJsonObject& dialog,
@@ -30,6 +33,9 @@ signals:
                                     const QString& channelId,
                                     const QString& teamId);
     void ephemeralMessageReceived(const QString& message);
+    void customWebSocketEventReceived(const QString& eventName,
+                                      const QJsonObject& data,
+                                      const QJsonObject& broadcast);
 
 private:
     explicit ServerUiService(Backend& backend);
