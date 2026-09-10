@@ -85,6 +85,45 @@ flowchart TD
     F --> G[FollowingModel::observeReadThrough]
 ```
 
+## Live tail while sticky-bottom is active
+
+An incoming post is not special-cased as read merely because it arrived while a
+chat was open. The same lower-edge rule still applies. However, sticky-bottom has
+an important consequence that must be preserved explicitly.
+
+If the viewport was already at the real end before a live tail item was appended,
+`LongListWidget` preserves the bottom anchor across logical growth,
+materialization, and the later replacement of estimated height by the concrete
+row height. Once that transaction settles, the new tail's lower edge is at the
+bottom of the viewport. It therefore satisfies the normal read rule immediately,
+without requiring an extra wheel/scrollbar gesture from the user.
+
+This is true even for a post taller than the viewport. Sticky-bottom aligns the
+**bottom** of that oversized post with the viewport bottom, so its lower edge has
+been seen and the post is read. By contrast, navigating to the beginning of the
+same oversized post does not qualify until the user reaches its lower edge.
+
+```mermaid
+sequenceDiagram
+    participant S as Source
+    participant L as LongListWidget
+    participant V as ChatLogWidget
+    participant M as FollowingModel
+
+    Note over L: viewport already sticky at real end
+    S->>L: append live tail
+    L->>L: preserve Bottom anchor
+    L->>L: materialize + measure concrete row
+    L->>L: restore Bottom anchor with real height
+    L-->>V: viewport/materialization/source changed
+    V->>V: lower edge of new tail is inside viewport
+    V->>M: observeReadThrough(new tail, sourceAtEnd=true)
+```
+
+If the user was **not** sticky at the end before the append, arrival of the new
+post must not move the read cursor to it. The live item remains unread until its
+lower edge actually enters the viewport later.
+
 ## The monotonic resume cursor
 
 An entry represented by `FollowingModel` keeps a semantic high-water mark:
@@ -161,9 +200,18 @@ When that condition is true, `observeReadThrough()` reaches `AtEnd`. If the
 thread still carries unread replies/mentions, `FollowingModel::markThreadRead()`
 performs the Mattermost CRT acknowledgement. The model clears the local unread
 state optimistically and uses `readAcknowledgementPending` /
-`readAcknowledgementAt` while reconciling the following thread snapshot. A stale
-snapshot that predates the acknowledgement must not resurrect unread state, but
-a genuinely newer reply must.
+`readAcknowledgementAt` while reconciling the following thread snapshot.
+
+The acknowledgement watermark is a **server-timeline post boundary**. It is taken
+from the `readThroughCreateAt` of the authoritative tail that was actually read
+(with the entry's server `lastReplyAt` only as a defensive fallback). It must not
+be based on the client's wall clock: CRT snapshots compare their server
+`lastReplyAt` against this watermark, and even small client/server clock skew
+would otherwise make a stale snapshot look like a genuinely newer reply and
+resurrect an already-read Attention item.
+
+A stale snapshot at or before the acknowledgement boundary must therefore not
+resurrect unread state, while a reply with a later server post timestamp must.
 
 ```mermaid
 sequenceDiagram
@@ -176,7 +224,7 @@ sequenceDiagram
     M->>M: FirstUnread / Unknown / AtEnd
     alt AtEnd and thread still unread
         V->>M: markThreadRead(teamId, threadId)
-        M->>M: clear unread locally + set acknowledgement watermark
+        M->>M: clear unread locally + watermark = readThroughCreateAt
         M->>T: markThreadRead(...)
         T->>S: CRT read request
         S-->>T: result
@@ -227,6 +275,11 @@ changes, source insert/remove/range/body changes, post geometry changes, and
 navigation finalization. Showing or re-presenting an already-open view may also
 request one re-evaluation so a viewport that is already at the tail is not missed.
 
+A live append while sticky-bottom is active is specifically covered by this rule:
+logical tail growth, concrete row materialization, and final measured geometry
+must result in a re-evaluation after the bottom anchor has been restored. No user
+input event is required after the append.
+
 These are **triggers to inspect the viewport**, not proof of reading. The geometry
 rule remains the only proof.
 
@@ -248,6 +301,9 @@ Do not add a second read state machine around navigation. In particular:
 - do not treat materialization by itself as reading;
 - do not use `isAtEnd()` alone as a substitute for checking the concrete newest
   post lower edge;
+- when sticky-bottom was active before a live tail append, preserve bottom through
+  logical growth and real-height measurement, then re-evaluate the new concrete
+  tail; if its lower edge is in the viewport, it is read without another gesture;
 - do not add per-Following or per-Attention read state;
 - do not add `explicitReadPending`, `threadReadPending`, or equivalent navigation
   intent flags to decide whether viewport content counts as read;
@@ -256,6 +312,9 @@ Do not add a second read state machine around navigation. In particular:
   source tail is proven;
 - keep read identity semantic (`create_at`, `id`), not tied to a provisional
   logical index;
+- compare CRT acknowledgement/snapshot ordering only on the server post timeline;
+  never compare server `create_at` / `lastReplyAt` values with client wall-clock
+  time;
 - put changes to the read definition in `ChatLogWidget` and changes to resume /
   shared projection state in `FollowingModel`, rather than duplicating logic in
   sidebar views.
