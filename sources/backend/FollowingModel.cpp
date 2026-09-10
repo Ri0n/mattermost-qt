@@ -314,18 +314,6 @@ void FollowingModel::clearSyntheticMentions(const QString& channelId)
     }
 }
 
-void FollowingModel::consumeSyntheticThread(const QString& threadId)
-{
-    for (auto it = entries_.begin(); it != entries_.end(); ++it) {
-        if (it->isThread() && it->synthetic && it->threadId == threadId) {
-            entries_.erase(it);
-            emit changed();
-            scheduleThreadRefresh();
-            return;
-        }
-    }
-}
-
 void FollowingModel::scheduleThreadRefresh()
 {
     threadSnapshotDirty_ = true;
