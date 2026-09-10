@@ -43,6 +43,7 @@ class PostAttachmentList;
 class PostReactionList;
 class PostPoll;
 class ChatArea;
+class KTalkMeetingWidget;
 class MessageContentWidget;
 class ThreadSummaryWidget;
 
@@ -111,6 +112,7 @@ private:
     std::unique_ptr<PostAttachmentList>	attachments;
     std::unique_ptr<PostPoll>			poll;
     std::unique_ptr<PostReactionList>	reactions;
+    std::unique_ptr<KTalkMeetingWidget> ktalkMeeting_;
     MessageContentWidget*				messageContent;
     ChatArea*				parentChatArea;
     ThreadSummaryWidget*                threadSummary = nullptr;

@@ -5,26 +5,17 @@
 
 #include "ServerUiService.h"
 
-#include <QHash>
-#include <QPointer>
-
 #include "Backend.h"
 
 namespace Mattermost {
 
 ServerUiService& ServerUiService::instance(Backend& backend)
 {
-    static QHash<Backend*, QPointer<ServerUiService>> services;
-
-    if (ServerUiService* existing = services.value(&backend)) {
-        return *existing;
+    auto* service = backend.findChild<ServerUiService*>(
+        QString(), Qt::FindDirectChildrenOnly);
+    if (!service) {
+        service = new ServerUiService(backend);
     }
-
-    auto* service = new ServerUiService(backend);
-    services.insert(&backend, service);
-    QObject::connect(&backend, &QObject::destroyed, service, [&backend] {
-        services.remove(&backend);
-    });
     return *service;
 }
 
@@ -45,6 +36,15 @@ void ServerUiService::notifyEphemeralMessage(const QString& message)
 {
     if (!message.isEmpty()) {
         emit ephemeralMessageReceived(message);
+    }
+}
+
+void ServerUiService::notifyCustomWebSocketEvent(const QString& eventName,
+                                                  const QJsonObject& data,
+                                                  const QJsonObject& broadcast)
+{
+    if (!eventName.isEmpty()) {
+        emit customWebSocketEventReceived(eventName, data, broadcast);
     }
 }
 
