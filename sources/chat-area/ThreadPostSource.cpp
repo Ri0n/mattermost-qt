@@ -309,10 +309,17 @@ void ThreadPostSource::requestRange(int first,
         return;
     }
 
+    // Select one actual contiguous unavailable run. A requested range can
+    // contain authoritative islands left by earlier random seeks; spanning those
+    // islands as one synthetic gap hides their usable cursors and may send the
+    // source back through timestamp approximation unnecessarily.
     int firstMissing = -1;
     int lastMissing = -1;
     for (int index = requestedFirst; index <= requestedLast; ++index) {
         if (isCursorReadyIndex(index)) {
+            if (firstMissing >= 0) {
+                break;
+            }
             continue;
         }
         if (firstMissing < 0) {
@@ -324,6 +331,11 @@ void ThreadPostSource::requestRange(int first,
         emit rangeRequestFinished(first, last);
         return;
     }
+
+    qCDebug(lcThreadTimelineTrace).nospace()
+        << "THREAD_MISSING_RUN source=" << static_cast<const void*>(this)
+        << " requested=[" << requestedFirst << ',' << requestedLast << ']'
+        << " missing=[" << firstMissing << ',' << lastMissing << ']';
 
     // Once either side of a gap is known, that identity is a stronger anchor
     // than a timestamp estimate. Fill sequentially from the adjacent cursor.
