@@ -14,10 +14,12 @@
 #include "backend/Backend.h"
 #include "backend/ServerUiService.h"
 #include "backend/Storage.h"
+#include "backend/WebappPluginService.h"
 #include "backend/types/BackendDirectChannelsTeam.h"
 #include "channel-tree/AttentionList.h"
 #include "channel-tree/ChannelQuickList.h"
 #include "channel-tree/ChannelTree.h"
+#include "integrations/KTalkIntegration.h"
 #include "navigation/AppNavigationService.h"
 #include "notifications/NotificationManager.h"
 #include "post-collection/PostCollectionView.h"
@@ -32,6 +34,15 @@ void MainWindow::installRealtimeUiSync()
         return;
     }
     setProperty(InstalledProperty, true);
+
+    // Active webapp plugins are the server-owned discovery surface for native
+    // integrations too. Keep the manifest snapshot session-local; adapters can
+    // subscribe to pluginsChanged() and derive installation-specific endpoints
+    // from the advertised manifest without executing its JavaScript bundle.
+    auto& webappPlugins = WebappPluginService::instance(backend);
+    webappPlugins.clear();
+    webappPlugins.refresh();
+    KTalkIntegration::install(*this, backend);
 
     // Notification post targets use the same semantic navigation service as
     // permalinks, Following and Attention. A reply can therefore load its root

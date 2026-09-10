@@ -81,6 +81,9 @@ public:
     void handleEvent (const PreferencesChangedEvent& event);
     void handleEvent (const PreferencesDeletedEvent& event);
     void handleEphemeralMessage(const QJsonObject& data);
+    void handleCustomEvent(const QString& eventName,
+                           const QJsonObject& data,
+                           const QJsonObject& broadcast);
 private:
     void handlePreferences(const QVector<QJsonObject>& preferences, bool deleted);
     void deliverPost(const QString& channelId, const QJsonObject& postObject);
