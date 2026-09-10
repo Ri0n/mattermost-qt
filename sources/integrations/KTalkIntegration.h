@@ -14,7 +14,9 @@
 
 #pragma once
 
+#include <QIcon>
 #include <QObject>
+#include <QPointer>
 #include <QString>
 
 #include "backend/HTTPConnector.h"
@@ -24,35 +26,55 @@ class QAction;
 class QJsonObject;
 class QMainWindow;
 class QToolBar;
+class QWidget;
 
 namespace Mattermost {
 
 class Backend;
 
-/** Native UI adapter for a compatible server-advertised KTalk plugin. */
+/** Native adapter for a compatible server-advertised KTalk plugin. */
 class KTalkIntegration final : public QObject
 {
     Q_OBJECT
 public:
-    static KTalkIntegration& install(QMainWindow& window, Backend& backend);
+    static KTalkIntegration& instance(Backend& backend);
+    static KTalkIntegration& installAppBar(QMainWindow& window, Backend& backend);
+
+    bool isAvailable() const { return !pluginId_.isEmpty(); }
+    const QIcon& icon() const { return icon_; }
+
+    /**
+     * Start a meeting in the supplied conversation context. A non-empty rootId
+     * asks the server plugin to attach the meeting post to that thread.
+     */
+    void startMeeting(QWidget* parent,
+                      const QString& channelId,
+                      const QString& rootId = QString());
+
+signals:
+    void availabilityChanged(bool available);
+    void iconChanged();
 
 private:
-    KTalkIntegration(QMainWindow& window, Backend& backend);
+    explicit KTalkIntegration(Backend& backend);
 
+    void ensureAppBar(QMainWindow& window);
     void refreshAvailability();
-    void requestAppBarIcon();
-    void startMeeting();
-    void submitStartMeeting(const QString& channelId, bool callEveryone);
+    void requestIcon();
+    void submitStartMeeting(QWidget* parent,
+                            const QString& channelId,
+                            const QString& rootId,
+                            bool callEveryone);
     void handleCustomWebSocketEvent(const QString& eventName,
                                     const QJsonObject& data);
-    void showError(const QString& message);
+    void showError(QWidget* parent, const QString& message);
 
-    QMainWindow& window_;
     Backend& backend_;
     HTTPConnector httpConnector_;
-    QToolBar* toolbar_ = nullptr;
-    QAction* action_ = nullptr;
+    QPointer<QToolBar> toolbar_;
+    QPointer<QAction> action_;
     QString pluginId_;
+    QIcon icon_;
     bool iconRequested_ = false;
 };
 
