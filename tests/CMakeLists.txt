@@ -325,3 +325,21 @@ target_link_libraries(thread-pane-layout-test
 
 add_test(NAME thread-pane-layout-test COMMAND thread-pane-layout-test)
 set_tests_properties(thread-pane-layout-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(emoji-dialog-support-test
+    EmojiDialogSupportTest.cpp
+)
+
+target_include_directories(emoji-dialog-support-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(emoji-dialog-support-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+add_test(NAME emoji-dialog-support-test COMMAND emoji-dialog-support-test)
+set_tests_properties(emoji-dialog-support-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
