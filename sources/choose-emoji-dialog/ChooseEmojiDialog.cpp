@@ -19,13 +19,22 @@
 
 #include "ChooseEmojiDialog.h"
 
+#include <algorithm>
+#include <iterator>
+
+#include <QComboBox>
+#include <QDebug>
+#include <QGridLayout>
+#include <QIcon>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QPixmap>
 #include <QPushButton>
-#include <QDebug>
 #include <QSettings>
-#include <QComboBox>
+#include <QSpacerItem>
+
 #include "EmojiDialogSupport.h"
 #include "backend/emoji/EmojiInfo.h"
 #include "ui_ChooseEmojiDialog.h"
@@ -353,15 +362,16 @@ void ChooseEmojiDialog::updateSearchResults (const QString& text)
 	}
 
 	QVector<Emoji> matches;
-	matches.reserve (std::min (searchableEmojis.size(), maxSearchResults));
+	matches.reserve (std::min (static_cast<int>(searchableEmojis.size()), maxSearchResults));
 
 	// Prefix matches are more useful for short queries. Fill them first, then
-	// append substring matches without rebuilding any of the category tabs.
+	// append ordered-token matches without rebuilding any of the category tabs.
 	for (int pass = 0; pass < 2 && matches.size() < maxSearchResults; ++pass) {
 		for (const Emoji& emoji: searchableEmojis) {
 			QString name = EmojiDialogSupport::normalizeSearchTerm (emoji.name);
 			bool prefix = name.startsWith (search);
-			if ((pass == 0) != prefix || !name.contains (search)) {
+			bool matchesTerm = EmojiDialogSupport::matchesSearch (name, search);
+			if ((pass == 0) != prefix || !matchesTerm) {
 				continue;
 			}
 			matches.push_back (emoji);
