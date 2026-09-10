@@ -114,7 +114,8 @@ public:
 	void onMainWindowActivate ();
 	void onMove (QPoint pos);
 
-	void requestExplicitReadAcknowledgement ();
+	/** Re-evaluate read progress from the current concrete timeline viewport. */
+	void refreshReadState ();
 private:
 	void changeEvent(QEvent* event) override;
 	void showEvent(QShowEvent* event) override;
@@ -137,10 +138,6 @@ private:
 	void setUnreadMessagesCount (uint32_t count);
 	void updatePinnedPostsButton ();
 	void updateThreadWindowTitle ();
-	void markChannelViewedIfAtBottom ();
-	void requestThreadReadAcknowledgement ();
-	void tryThreadReadAcknowledgement ();
-	void tryExplicitReadAcknowledgement ();
 	void setupPostSource();
 	void scheduleNewestPosition();
 	void scheduleStoredPosition();
@@ -155,8 +152,6 @@ private:
 	QStackedWidget* contentStack = nullptr;
 	PostCollectionView* pinnedPostsView = nullptr;
 	int pendingMessageLoads = 0;
-	bool threadReadPending = false;
-	bool threadReadInFlight = false;
 
 public:
 	Ui::ChatArea* ui;
@@ -170,8 +165,6 @@ public:
 	uint32_t unreadMessagesCount;
 	bool isThread;
 	bool initialized;
-	bool explicitReadPending = false;
-	QMetaObject::Connection explicitReadPostsConnection;
 	QSet<ChatArea*> threadsAreas;
 	QString root_id;
 	std::vector<QMetaObject::Connection> signalConnections;
