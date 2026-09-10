@@ -66,7 +66,8 @@ public:
         uint64_t readThroughCreateAt = 0;
 
         // Suppress a CRT response that predates an already-issued local read.
-        // New replies after this watermark are never hidden by that suppression.
+        // This watermark is on Mattermost's server post timeline
+        // (create_at/last_reply_at), never on the client's wall clock.
         bool readAcknowledgementPending = false;
         uint64_t readAcknowledgementAt = 0;
 
