@@ -21,7 +21,9 @@ class BackendPost;
  *
  * The model owns the loaded followed-thread snapshot, current unread DM/GM
  * entries, synthetic root mentions and each entry's local resume cursor. Views
- * own only presentation details such as selection retention.
+ * own only presentation details such as selection retention. Read progress is
+ * reported by ChatLogWidget from concrete viewport visibility; activating either
+ * sidebar projection must never mutate read state directly.
  */
 class FollowingModel final : public QObject
 {
@@ -64,7 +66,8 @@ public:
         uint64_t readThroughCreateAt = 0;
 
         // Suppress a CRT response that predates an already-issued local read.
-        // New replies after this watermark are never hidden by that suppression.
+        // This watermark is on Mattermost's server post timeline
+        // (create_at/last_reply_at), never on the client's wall clock.
         bool readAcknowledgementPending = false;
         uint64_t readAcknowledgementAt = 0;
 
@@ -92,9 +95,10 @@ public:
     void refreshThreads();
 
     /**
-     * Advance the resume high-water mark through a message whose lower edge was
-     * actually visible. Random non-Following chats never allocate cursor state:
-     * the target entry must already exist in this model.
+     * Advance the local high-water mark through a post whose lower edge was
+     * actually visible. The next cached semantic post becomes FirstUnread; only
+     * an authoritative source end becomes AtEnd. Back-scrolling cannot regress
+     * this boundary. Random non-Following chats never allocate cursor state.
      */
     void observeReadThrough(const QString& channelId,
                             const QString& threadId,
@@ -105,9 +109,6 @@ public:
     void markThreadRead(const QString& teamId,
                         const QString& threadId,
                         std::function<void(bool)> callback = {});
-
-    /** Consume a temporary root-mention entry after explicit navigation. */
-    void consumeSyntheticThread(const QString& threadId);
 
 signals:
     void changed();

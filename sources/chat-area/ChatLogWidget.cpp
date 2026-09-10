@@ -9,6 +9,7 @@
 #include "ThreadPostSource.h"
 #include "backend/Backend.h"
 #include "backend/FollowingModel.h"
+#include "backend/SidebarService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "post/InteractivePostWidget.h"
@@ -39,6 +40,25 @@ const char* requestReasonName(LongListWidget::RequestReason reason)
 const char* sourceName(const AbstractPostSource* source)
 {
     return source ? source->metaObject()->className() : "none";
+}
+
+bool isAfter(const BackendPost& lhs, const BackendPost& rhs)
+{
+    if (lhs.create_at != rhs.create_at) {
+        return lhs.create_at > rhs.create_at;
+    }
+    return lhs.id > rhs.id;
+}
+
+void acknowledgeChannelRead(Backend& backend, BackendChannel& channel)
+{
+    auto& sidebar = SidebarService::instance(backend);
+    if (!sidebar.isChannelUnread(channel) && !sidebar.hasUnreadMention(channel.id)) {
+        return;
+    }
+
+    sidebar.markChannelViewedLocally(channel);
+    backend.markChannelAsViewed(channel);
 }
 
 } // namespace
@@ -329,6 +349,11 @@ void ChatLogWidget::followOwnPost(const QString& postId)
     });
 }
 
+void ChatLogWidget::refreshReadState()
+{
+    scheduleReadCursorUpdate();
+}
+
 bool ChatLogWidget::lockNavigationToPost(const QString& postId,
                                          Alignment alignment,
                                          int quietPeriodMs)
@@ -438,11 +463,10 @@ void ChatLogWidget::updateReadCursorFromViewport()
         return;
     }
 
-    // A message becomes locally read only once its lower edge enters the
-    // viewport. This deliberately handles oversized posts: seeing only their
-    // beginning does not advance Following past them. Back-scrolling cannot
-    // regress the cursor because FollowingModel keeps a monotonic high-water
-    // semantic post identity rather than a logical list index.
+    // Reading is a viewport fact, not a navigation fact. Among concrete posts
+    // whose lower edge has entered the viewport, advance through the newest
+    // semantic (create_at, id) boundary. Wheel scrolling, dragging/clicking the
+    // scrollbar and programmatic navigation all converge on this same test.
     int readIndex = -1;
     BackendPost* readPost = nullptr;
     const int viewportHeight = viewport()->height();
@@ -459,7 +483,7 @@ void ChatLogWidget::updateReadCursorFromViewport()
         if (!post || post->id.isEmpty()) {
             continue;
         }
-        if (index > readIndex) {
+        if (!readPost || isAfter(*post, *readPost)) {
             readIndex = index;
             readPost = post;
         }
@@ -471,32 +495,76 @@ void ChatLogWidget::updateReadCursorFromViewport()
 
     BackendChannel& channel = chatArea->getChannel();
     auto& followingModel = FollowingModel::instance(*backend);
+    const bool sourceTailRead = readIndex == postSource->itemCount() - 1;
+
+    qCDebug(lcTimelineTrace).nospace()
+        << "READ_CURSOR list=" << static_cast<const void*>(this)
+        << " source=" << sourceName(postSource)
+        << " channel=" << channel.id
+        << " thread=" << (chatArea->isThread ? chatArea->root_id : QString())
+        << " post=" << readPost->id
+        << " createAt=" << readPost->create_at
+        << " index=" << readIndex
+        << " sourceTailRead=" << sourceTailRead;
 
     if (chatArea->isThread) {
-        bool threadAtEnd = readIndex == postSource->itemCount() - 1;
+        bool threadAtEnd = sourceTailRead;
         if (auto* threadSource = qobject_cast<ThreadPostSource*>(postSource.data())) {
             threadAtEnd = threadAtEnd
                 && threadSource->isPostPositionAuthoritative(readPost->id);
         }
+
+        const FollowingModel::Entry* threadEntry =
+            followingModel.findEntry(channel.id, chatArea->root_id);
+        const bool shouldAcknowledgeThread = threadAtEnd && threadEntry
+            && (threadEntry->requiresAttention()
+                || threadEntry->resumeState == FollowingModel::ResumeState::FirstUnread);
+        const QString threadTeamId = threadEntry ? threadEntry->teamId : QString();
+
         followingModel.observeReadThrough(channel.id, chatArea->root_id,
                                           *readPost, threadAtEnd);
 
-        // A DM/GM Following row represents the whole conversation rather than
-        // only the central root-post timeline. Reading a reply in its thread
-        // therefore advances that conversation cursor as well.
+        if (shouldAcknowledgeThread && !threadTeamId.isEmpty()) {
+            const FollowingModel::Entry* current =
+                followingModel.findEntry(channel.id, chatArea->root_id);
+            if (current && current->resumeState == FollowingModel::ResumeState::AtEnd) {
+                followingModel.markThreadRead(threadTeamId, chatArea->root_id);
+            }
+        }
+
+        // A DM/GM Following row represents the whole conversation, including
+        // replies hidden behind collapsed threads. Only the actual latest
+        // channel activity may consume that conversation-level unread state.
         if (channel.type == BackendChannel::directChannel
             || channel.type == BackendChannel::groupChannel) {
-            const bool channelAtEnd = channel.last_post_at == 0
-                || readPost->create_at >= channel.last_post_at;
+            const bool channelAtEnd = threadAtEnd
+                && (channel.last_post_at == 0
+                    || readPost->create_at >= channel.last_post_at);
             followingModel.observeReadThrough(channel.id, QString(),
                                               *readPost, channelAtEnd);
+            if (channelAtEnd) {
+                acknowledgeChannelRead(*backend, channel);
+            }
         }
         return;
     }
 
-    const bool channelAtEnd = channel.last_post_at == 0
-        || readPost->create_at >= channel.last_post_at;
+    // For ordinary channel timelines, the logical source tail is the visible
+    // channel end. DM/GM conversations additionally include collapsed replies,
+    // so do not clear their conversation unread state while newer activity is
+    // known to exist outside this root-post source.
+    bool channelAtEnd = sourceTailRead;
+    if (channel.type == BackendChannel::directChannel
+        || channel.type == BackendChannel::groupChannel) {
+        channelAtEnd = channelAtEnd
+            && (channel.last_post_at == 0
+                || readPost->create_at >= channel.last_post_at);
+    }
+
     followingModel.observeReadThrough(channel.id, QString(), *readPost, channelAtEnd);
+    if (channelAtEnd) {
+        acknowledgeChannelRead(*backend, channel);
+    }
 }
 
 void ChatLogWidget::clearNavigationLock()

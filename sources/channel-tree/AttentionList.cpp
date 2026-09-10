@@ -178,7 +178,7 @@ void AttentionList::activateItem(QTreeWidgetItem* item)
         return;
     }
     if (entry->resumeState == FollowingModel::ResumeState::AtEnd) {
-        emit channelSelected(channelId);
+        AppNavigationService::instance(*backend_).openChannel(channelId);
         return;
     }
 
@@ -200,7 +200,7 @@ void AttentionList::activateItem(QTreeWidgetItem* item)
                 guard->retainedPostId_ = postId;
                 AppNavigationService::instance(*guard->backend_).openPost(postId);
             } else {
-                emit guard->channelSelected(channelId);
+                AppNavigationService::instance(*guard->backend_).openChannel(channelId);
             }
         });
 }
@@ -229,7 +229,10 @@ void AttentionList::openThread(const FollowingModel::Entry& entry)
     }
 
     if (entry.synthetic) {
-        model_->consumeSyntheticThread(entry.threadId);
+        // A click is navigation only. Keep the temporary mention until the
+        // target is actually read; channel/thread viewport acknowledgement will
+        // reconcile the shared Following model afterwards.
+        model_->ensureThreadsFresh();
         AppNavigationService::instance(*backend_).openPost(entry.threadId);
         return;
     }

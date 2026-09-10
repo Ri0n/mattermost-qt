@@ -314,18 +314,6 @@ void FollowingModel::clearSyntheticMentions(const QString& channelId)
     }
 }
 
-void FollowingModel::consumeSyntheticThread(const QString& threadId)
-{
-    for (auto it = entries_.begin(); it != entries_.end(); ++it) {
-        if (it->isThread() && it->synthetic && it->threadId == threadId) {
-            entries_.erase(it);
-            emit changed();
-            scheduleThreadRefresh();
-            return;
-        }
-    }
-}
-
 void FollowingModel::scheduleThreadRefresh()
 {
     threadSnapshotDirty_ = true;
@@ -582,7 +570,12 @@ void FollowingModel::markThreadRead(const QString& teamId,
         entry->mentioned = false;
         entry->attentionSince = 0;
         entry->readAcknowledgementPending = true;
-        entry->readAcknowledgementAt = nowMs();
+        // CRT snapshots and post create_at/last_reply_at values live on the
+        // server timeline. Comparing them with the client's wall clock makes a
+        // small clock skew resurrect a tail that was already visibly consumed.
+        entry->readAcknowledgementAt = entry->readThroughCreateAt != 0
+            ? entry->readThroughCreateAt
+            : entry->lastReplyAt;
         emit changed();
     }
 

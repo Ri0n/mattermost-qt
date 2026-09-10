@@ -281,6 +281,31 @@ private slots:
                  "Appending a logical item must keep an already sticky viewport at the new end");
     }
 
+    void oversizedItemCountGrowthKeepsTailLowerEdgeVisible()
+    {
+        TestLongListWidget list;
+        list.resize(480, 320);
+        list.setDefaultItemHeight(60);
+        list.setItemCount(200);
+        list.setRangeAvailable(0, 199);
+        list.show();
+        settleEvents();
+        list.scrollToEnd();
+        settleEvents();
+
+        list.setSyntheticHeight(200, 720);
+        list.setItemCount(201);
+        list.setRangeAvailable(200, 200);
+        settleEvents(16);
+
+        QWidget* tail = list.itemWidget(200);
+        QVERIFY(tail != nullptr);
+        QVERIFY(tail->height() > list.viewport()->height());
+        QCOMPARE(list.verticalScrollBar()->value(), list.verticalScrollBar()->maximum());
+        QVERIFY2(qAbs(tail->y() + tail->height() - list.viewport()->height()) <= 2,
+                 "An oversized appended tail must keep its lower edge inside a sticky-bottom viewport");
+    }
+
     void prependShiftsLogicalAnchorWithoutMovingContent()
     {
         TestLongListWidget list;
