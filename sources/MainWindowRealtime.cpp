@@ -19,7 +19,6 @@
 #include "channel-tree/AttentionList.h"
 #include "channel-tree/ChannelQuickList.h"
 #include "channel-tree/ChannelTree.h"
-#include "integrations/KTalkIntegration.h"
 #include "navigation/AppNavigationService.h"
 #include "notifications/NotificationManager.h"
 #include "post-collection/PostCollectionView.h"
@@ -42,7 +41,6 @@ void MainWindow::installRealtimeUiSync()
     auto& webappPlugins = WebappPluginService::instance(backend);
     webappPlugins.clear();
     webappPlugins.refresh();
-    KTalkIntegration::installAppBar(*this, backend);
 
     // Notification post targets use the same semantic navigation service as
     // permalinks, Following and Attention. A reply can therefore load its root
