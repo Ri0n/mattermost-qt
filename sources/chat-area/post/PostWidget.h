@@ -84,6 +84,9 @@ public:
 public slots:
     void openThreadWindow();
 
+private slots:
+    void on_authorAvatar_clicked();
+
 signals:
 	void dimensionsChanged ();
 

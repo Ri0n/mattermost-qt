@@ -48,7 +48,7 @@
     <number>6</number>
    </property>
    <item alignment="Qt::AlignTop">
-    <widget class="QLabel" name="authorAvatar">
+    <widget class="Mattermost::ClickableLabel" name="authorAvatar">
      <property name="sizePolicy">
       <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
        <horstretch>0</horstretch>
@@ -196,6 +196,13 @@
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>Mattermost::ClickableLabel</class>
+   <extends>QLabel</extends>
+   <header>ui/ClickableLabel.h</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>

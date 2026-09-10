@@ -23,11 +23,13 @@
 #include <memory>
 
 #include <QDialogButtonBox>
+#include <QEvent>
 #include <QLayoutItem>
 #include <QNetworkRequest>
 #include <QPixmap>
 #include <QPointer>
 #include <QPushButton>
+#include <QTimer>
 
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
@@ -132,6 +134,44 @@ UserProfileDialog::UserProfileDialog(Backend* backendInstance,
 UserProfileDialog::~UserProfileDialog()
 {
     delete ui;
+}
+
+UserProfileDialog* UserProfileDialog::showTransient(Backend& backend,
+                                                    const BackendUser& user,
+                                                    QWidget* parent)
+{
+    return showTransient(new UserProfileDialog(backend, user, parent));
+}
+
+UserProfileDialog* UserProfileDialog::showTransient(const BackendUser& user,
+                                                    QWidget* parent)
+{
+    return showTransient(new UserProfileDialog(user, parent));
+}
+
+UserProfileDialog* UserProfileDialog::showTransient(UserProfileDialog* dialog)
+{
+    if (!dialog) {
+        return nullptr;
+    }
+    dialog->setWindowModality(Qt::NonModal);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
+    return dialog;
+}
+
+bool UserProfileDialog::event(QEvent* event)
+{
+    if (event && event->type() == QEvent::WindowDeactivate
+        && isVisible() && !isModal()) {
+        // Closing from inside WindowDeactivate can destroy a delete-on-close
+        // instance while Qt is still dispatching this event. Queue the close to
+        // the next event-loop turn; visually it is still an immediate dismissal.
+        QTimer::singleShot(0, this, &QWidget::close);
+    }
+    return QDialog::event(event);
 }
 
 void UserProfileDialog::startDirectMessage()

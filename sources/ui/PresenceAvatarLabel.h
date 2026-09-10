@@ -20,9 +20,10 @@
 #pragma once
 
 #include <QColor>
-#include <QLabel>
 #include <QPixmap>
 #include <QString>
+
+#include "ClickableLabel.h"
 
 class QEvent;
 class QPaintEvent;
@@ -35,7 +36,7 @@ namespace Mattermost {
  * used in PostWidget. setPixmap() deliberately hides QLabel::setPixmap(): uic
  * and existing callers keep their old API while the widget owns presentation.
  */
-class PresenceAvatarLabel final : public QLabel
+class PresenceAvatarLabel final : public ClickableLabel
 {
     Q_OBJECT
 

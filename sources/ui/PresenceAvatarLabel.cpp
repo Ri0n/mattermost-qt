@@ -31,7 +31,7 @@ QColor applicationWindowColor()
 } // namespace
 
 PresenceAvatarLabel::PresenceAvatarLabel(QWidget* parent)
-    : QLabel(parent)
+    : ClickableLabel(parent)
 {
     setFrameShape(QFrame::NoFrame);
     setAlignment(Qt::AlignCenter);
@@ -62,7 +62,7 @@ bool PresenceAvatarLabel::isPresenceStatus(const QString& text)
 
 void PresenceAvatarLabel::changeEvent(QEvent* event)
 {
-    QLabel::changeEvent(event);
+    ClickableLabel::changeEvent(event);
     if (event && (event->type() == QEvent::PaletteChange
                   || event->type() == QEvent::ApplicationPaletteChange
                   || event->type() == QEvent::StyleChange)) {
@@ -79,12 +79,12 @@ void PresenceAvatarLabel::paintEvent(QPaintEvent* event)
     if (renderedBackground != currentBackground) {
         refreshPixmap();
     }
-    QLabel::paintEvent(event);
+    ClickableLabel::paintEvent(event);
 }
 
 void PresenceAvatarLabel::resizeEvent(QResizeEvent* event)
 {
-    QLabel::resizeEvent(event);
+    ClickableLabel::resizeEvent(event);
     refreshPixmap();
 }
 

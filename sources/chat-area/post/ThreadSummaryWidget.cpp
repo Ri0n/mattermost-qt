@@ -39,7 +39,9 @@
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendUser.h"
+#include "info-dialogs/UserProfileDialog.h"
 #include "ui/AvatarUtils.h"
+#include "ui/ClickableLabel.h"
 #include "ui/IconUtils.h"
 
 namespace Mattermost {
@@ -214,13 +216,16 @@ void ThreadSummaryWidget::rebuildParticipantAvatars()
             UserProfileService::instance(backend).ensureAvatar(*user);
         }
 
-        auto* avatar = new QLabel(this);
+        auto* avatar = new ClickableLabel(this);
         avatar->setFixedSize(ParticipantAvatarSize, ParticipantAvatarSize);
         avatar->setAlignment(Qt::AlignCenter);
         avatar->setToolTip(user->getDisplayName());
         if (!user->avatar.isNull()) {
             avatar->setPixmap(AvatarUtils::circular(user->avatar, ParticipantAvatarSize));
         }
+        connect(avatar, &ClickableLabel::clicked, this, [this, user] {
+            UserProfileDialog::showTransient(backend, *user, this);
+        });
         layout->addWidget(avatar, 0, Qt::AlignVCenter);
     }
 
