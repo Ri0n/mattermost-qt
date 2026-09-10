@@ -59,20 +59,6 @@ inline QFont fontForMode(QFont font, Mode mode)
     return font;
 }
 
-inline void applyUnicodeEmojiFamily(QTextCharFormat& format)
-{
-    const QString family = EmojiFont::legacyEmojiFontFamily();
-    if (family.isEmpty()) {
-        return;
-    }
-
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    format.setFontFamilies({family});
-#else
-    format.setFontFamily(family);
-#endif
-}
-
 inline int extent(const QFont& font, Mode mode)
 {
     if (mode == Mode::Reaction) {
