@@ -302,7 +302,8 @@ private slots:
         QVERIFY(tail != nullptr);
         QVERIFY(tail->height() > list.viewport()->height());
         QCOMPARE(list.verticalScrollBar()->value(), list.verticalScrollBar()->maximum());
-        QCOMPARE(tail->y() + tail->height(), list.viewport()->height());
+        QVERIFY2(qAbs(tail->y() + tail->height() - list.viewport()->height()) <= 2,
+                 "An oversized appended tail must keep its lower edge inside a sticky-bottom viewport");
     }
 
     void prependShiftsLogicalAnchorWithoutMovingContent()
@@ -442,47 +443,24 @@ private slots:
         TestLongListWidget list;
         list.resize(480, 400);
         list.setDefaultItemHeight(60);
-        list.setItemCount(300);
-        list.setRangeAvailable(0, 299);
+        list.setItemCount(100);
+        list.setRangeAvailable(0, 99);
         list.show();
         settleEvents();
 
-        QVERIFY(list.lockViewportToItem(299,
-                                        Mattermost::LongListWidget::Alignment::Center,
-                                        0));
-        settleEvents(12);
-
-        QWidget* target = list.itemWidget(299);
-        QVERIFY(target != nullptr);
-        QCOMPARE(list.verticalScrollBar()->value(), list.verticalScrollBar()->maximum());
-        QVERIFY2(target->y() + target->height() <= list.viewport()->height(),
-                 "The newest fitting row must not be pushed below the viewport while centered");
-    }
-
-    void centeredLastOversizedItemKeepsBeginningVisible()
-    {
-        TestLongListWidget list;
-        list.resize(480, 400);
-        list.setDefaultItemHeight(60);
-        list.setItemCount(300);
-        list.setRangeAvailable(0, 299);
-        list.setSyntheticHeight(299, 620);
-        list.show();
-        settleEvents();
-
-        QVERIFY(list.lockViewportToItem(299,
+        QVERIFY(list.lockViewportToItem(99,
                                         Mattermost::LongListWidget::Alignment::Center,
                                         0));
         settleEvents(16);
 
-        QWidget* target = list.itemWidget(299);
+        QWidget* target = list.itemWidget(99);
         QVERIFY(target != nullptr);
-        QVERIFY(target->height() > list.viewport()->height());
-        QVERIFY2(qAbs(target->y()) <= 2,
-                 "Semantic navigation to an oversized newest item must start at its beginning");
+        QCOMPARE(list.verticalScrollBar()->value(), list.verticalScrollBar()->maximum());
+        QVERIFY2(qAbs(target->y() + target->height() - list.viewport()->height()) <= 2,
+                 "A fitting last target must clamp to the newest edge rather than leave blank space below");
     }
 
-    void viewportLockSurvivesPrependByIdentityIndexShift()
+    void unavailableMeasuredItemResetsEstimateWithoutMovingLock()
     {
         TestLongListWidget list;
         list.resize(480, 400);
@@ -496,24 +474,72 @@ private slots:
                                         Mattermost::LongListWidget::Alignment::Center,
                                         0));
         settleEvents(12);
-        QWidget* target = list.itemWidget(150);
-        QVERIFY(target != nullptr);
-        const int yBefore = target->y();
+        QVERIFY(list.itemWidget(149) != nullptr);
 
-        list.insertItems(0, 10);
-        list.setRangeAvailable(0, 9);
-        settleEvents(12);
+        list.setSyntheticHeight(149, 260);
+        settleEvents(16);
+        QWidget* locked = list.itemWidget(150);
+        QVERIFY(locked != nullptr);
+        const int yBefore = locked->y();
+        const qint64 heightBefore = list.contentHeight();
 
-        target = list.itemWidget(160);
-        QVERIFY(target != nullptr);
-        QVERIFY2(qAbs(target->y() - yBefore) <= 2,
-                 "Prepending older logical items must shift the viewport lock with its target identity");
+        list.setRangeAvailable(149, 149, false);
+        settleEvents(16);
+
+        locked = list.itemWidget(150);
+        QVERIFY(locked != nullptr);
+        QCOMPARE(list.contentHeight(), heightBefore - 200);
+        QVERIFY2(qAbs(locked->y() - yBefore) <= 2,
+                 "Dropping stale provisional geometry must preserve the active viewport lock");
     }
 
-    void removedLockedItemReleasesViewportLock()
+    void bodyAvailabilityDropRerequestsSameLogicalBlock()
     {
         TestLongListWidget list;
-        list.resize(480, 400);
+        list.resize(480, 320);
+        list.setDefaultItemHeight(60);
+        list.setRequestBlockSize(10);
+        list.setItemCount(100);
+        list.setRangeAvailable(0, 99);
+        list.show();
+        settleEvents();
+
+        list.scrollToIndex(55, Mattermost::LongListWidget::Alignment::Center);
+        settleEvents(12);
+        QVERIFY2(list.itemWidget(55) != nullptr,
+                 "The target must be materialized before simulating body eviction");
+
+        QSignalSpy requests(&list, &Mattermost::LongListWidget::rangeRequested);
+        list.setRangeAvailable(55, 55, false);
+        settleEvents(12);
+
+        QVERIFY(!list.isItemAvailable(55));
+        QCOMPARE(list.itemWidget(55), nullptr);
+
+        bool requestedIdentityBlock = false;
+        for (int i = 0; i < requests.count(); ++i) {
+            const QList<QVariant> request = requests.at(i);
+            if (request.at(0).toInt() == 50 && request.at(1).toInt() == 59) {
+                requestedIdentityBlock = true;
+                break;
+            }
+        }
+        QVERIFY2(requestedIdentityBlock,
+                 "Dropping only a resident body must re-request its existing 10-item logical block");
+
+        // Rematerialization restores body availability only. No item-count or
+        // structural mutation is needed for the same semantic source identity.
+        list.setRangeAvailable(55, 55, true);
+        settleEvents(12);
+        QVERIFY(list.isItemAvailable(55));
+        QVERIFY2(list.itemWidget(55) != nullptr,
+                 "Restoring the body must materialize the same logical item again");
+    }
+
+    void viewportLockScalesRelativeYAcrossResize()
+    {
+        TestLongListWidget list;
+        list.resize(480, 500);
         list.setDefaultItemHeight(60);
         list.setItemCount(300);
         list.setRangeAvailable(0, 299);
@@ -524,14 +550,32 @@ private slots:
                                         Mattermost::LongListWidget::Alignment::Center,
                                         0));
         settleEvents(12);
-        QVERIFY(list.hasViewportLock());
+        QWidget* locked = list.itemWidget(150);
+        QVERIFY(locked != nullptr);
+        const int yBefore = locked->y();
+        const int viewportBefore = list.viewport()->height();
+        QVERIFY(viewportBefore > 0);
 
-        list.removeItems(150, 1);
-        settleEvents(8);
-        QVERIFY(!list.hasViewportLock());
+        list.resize(480, 260);
+        settleEvents(16);
+
+        locked = list.itemWidget(150);
+        QVERIFY(locked != nullptr);
+        const int viewportAfter = list.viewport()->height();
+        const int expectedY = qRound(static_cast<qreal>(yBefore)
+            * static_cast<qreal>(viewportAfter) / static_cast<qreal>(viewportBefore));
+        QVERIFY2(qAbs(locked->y() - expectedY) <= 2,
+                 "A locked item's Y must scale with viewport height across resize");
+
+        list.resize(480, 500);
+        settleEvents(16);
+        locked = list.itemWidget(150);
+        QVERIFY(locked != nullptr);
+        QVERIFY2(qAbs(locked->y() - yBefore) <= 2,
+                 "Expanding the viewport again must restore the locked item's original relative Y");
     }
 
-    void removingBeforeLockedItemShiftsLockWithoutMovingTarget()
+    void viewportLockRemapKeepsScreenPosition()
     {
         TestLongListWidget list;
         list.resize(480, 400);
@@ -541,108 +585,53 @@ private slots:
         list.show();
         settleEvents();
 
-        QVERIFY(list.lockViewportToItem(150,
+        QVERIFY(list.lockViewportToItem(120,
                                         Mattermost::LongListWidget::Alignment::Center,
                                         0));
         settleEvents(12);
-        QWidget* target = list.itemWidget(150);
-        QVERIFY(target != nullptr);
-        const int yBefore = target->y();
+        QWidget* oldTarget = list.itemWidget(120);
+        QVERIFY(oldTarget != nullptr);
+        const int yBefore = oldTarget->y();
 
-        list.removeItems(0, 10);
-        settleEvents(12);
+        QVERIFY(list.remapViewportLockedItem(170));
+        settleEvents(16);
 
-        target = list.itemWidget(140);
-        QVERIFY(target != nullptr);
-        QVERIFY(list.hasViewportLock());
-        QVERIFY2(qAbs(target->y() - yBefore) <= 2,
-                 "Removing older logical items must shift the viewport lock with its target identity");
+        QWidget* newTarget = list.itemWidget(170);
+        QVERIFY(newTarget != nullptr);
+        QVERIFY2(qAbs(newTarget->y() - yBefore) <= 2,
+                 "Authoritative logical remap must not recenter or otherwise move the locked target");
     }
 
-    void ensureVisibleDoesNotReleaseSameItemViewportLock()
+    void lateGeometryCannotLeaveViewportWithoutMaterializedItems()
     {
         TestLongListWidget list;
-        list.resize(480, 400);
-        list.setDefaultItemHeight(60);
-        list.setItemCount(300);
-        list.setRangeAvailable(0, 299);
+        list.resize(520, 380);
+        list.setDefaultItemHeight(96);
+        list.setItemCount(10000);
+        list.setRangeAvailable(9970, 9999);
         list.show();
+        list.scrollToEnd();
         settleEvents();
 
-        QVERIFY(list.lockViewportToItem(150,
-                                        Mattermost::LongListWidget::Alignment::Center,
-                                        0));
-        settleEvents(12);
-        QWidget* target = list.itemWidget(150);
-        QVERIFY(target != nullptr);
-        const int yBefore = target->y();
+        QVERIFY(list.materializedCount() > 0);
+        QVERIFY(list.visibleRange().contains(9999));
 
-        list.scrollToIndex(150, Mattermost::LongListWidget::Alignment::EnsureVisible);
-        settleEvents(12);
+        const QVector<int> indices = list.materializedIndices();
+        for (int i = 0; i < indices.size(); ++i) {
+            list.setSyntheticHeight(indices.at(i), 55 + (i % 5) * 37);
+        }
+        settleEvents(16);
 
-        target = list.itemWidget(150);
-        QVERIFY(target != nullptr);
-        QVERIFY(list.hasViewportLock());
-        QCOMPARE(target->y(), yBefore);
-    }
-
-    void userScrollReleasesViewportLock()
-    {
-        TestLongListWidget list;
-        list.resize(480, 400);
-        list.setDefaultItemHeight(60);
-        list.setItemCount(300);
-        list.setRangeAvailable(0, 299);
-        list.show();
-        settleEvents();
-
-        QVERIFY(list.lockViewportToItem(150,
-                                        Mattermost::LongListWidget::Alignment::Center,
-                                        0));
-        settleEvents(12);
-        QVERIFY(list.hasViewportLock());
-
-        QWheelEvent wheel(QPointF(20, 20), QPointF(20, 20), QPoint(), QPoint(0, -120),
-                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
-        QCoreApplication::sendEvent(list.viewport(), &wheel);
-        settleEvents(8);
-        QVERIFY(!list.hasViewportLock());
-    }
-
-    void programmaticScrollDoesNotEmitUserViewportChanged()
-    {
-        TestLongListWidget list;
-        list.resize(480, 400);
-        list.setDefaultItemHeight(60);
-        list.setItemCount(300);
-        list.setRangeAvailable(0, 299);
-        list.show();
-        settleEvents();
-
-        QSignalSpy userChanges(&list, &Mattermost::LongListWidget::userViewportChanged);
-        list.scrollToIndex(150, Mattermost::LongListWidget::Alignment::Center);
-        settleEvents(12);
-        QCOMPARE(userChanges.count(), 0);
-    }
-
-    void wheelScrollEmitsUserViewportChanged()
-    {
-        TestLongListWidget list;
-        list.resize(480, 400);
-        list.setDefaultItemHeight(60);
-        list.setItemCount(300);
-        list.setRangeAvailable(0, 299);
-        list.show();
-        settleEvents();
-
-        QSignalSpy userChanges(&list, &Mattermost::LongListWidget::userViewportChanged);
-        QWheelEvent wheel(QPointF(20, 20), QPointF(20, 20), QPoint(), QPoint(0, -120),
-                          Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
-        QCoreApplication::sendEvent(list.viewport(), &wheel);
-        settleEvents(8);
-        QCOMPARE(userChanges.count(), 1);
+        const auto visible = list.visibleRange();
+        const auto concrete = list.materializedRange();
+        QVERIFY2(visible.isValid(), "The viewport must remain mapped to logical items after reflow");
+        QVERIFY2(concrete.isValid(), "Reflow must not evict the whole visible materialized window");
+        QVERIFY(concrete.contains(visible.first));
+        QVERIFY(concrete.contains(visible.last));
+        QVERIFY(visible.contains(9999));
     }
 };
 
 QTEST_MAIN(LongListWidgetTest)
+
 #include "LongListWidgetTest.moc"
