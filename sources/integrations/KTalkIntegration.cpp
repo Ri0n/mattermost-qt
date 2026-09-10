@@ -9,22 +9,18 @@
 
 #include "KTalkIntegration.h"
 
-#include <utility>
-
-#include <QAction>
 #include <QApplication>
 #include <QCheckBox>
 #include <QDesktopServices>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
-#include <QMainWindow>
 #include <QMessageBox>
 #include <QNetworkReply>
 #include <QPixmap>
+#include <QPointer>
 #include <QPushButton>
 #include <QStyle>
-#include <QToolBar>
 #include <QUrl>
 #include <QWidget>
 
@@ -32,7 +28,6 @@
 #include "backend/NetworkRequest.h"
 #include "backend/ServerUiService.h"
 #include "backend/WebappPluginService.h"
-#include "backend/types/BackendChannel.h"
 
 namespace Mattermost {
 namespace {
@@ -123,14 +118,6 @@ KTalkIntegration& KTalkIntegration::instance(Backend& backend)
     return *integration;
 }
 
-KTalkIntegration& KTalkIntegration::installAppBar(QMainWindow& window,
-                                                  Backend& backend)
-{
-    KTalkIntegration& integration = instance(backend);
-    integration.ensureAppBar(window);
-    return integration;
-}
-
 KTalkIntegration::KTalkIntegration(Backend& backend)
     : QObject(&backend)
     , backend_(backend)
@@ -153,37 +140,6 @@ KTalkIntegration::KTalkIntegration(Backend& backend)
     plugins.ensureLoaded();
 }
 
-void KTalkIntegration::ensureAppBar(QMainWindow& window)
-{
-    if (toolbar_) {
-        return;
-    }
-
-    toolbar_ = new QToolBar(tr("Integrations"), &window);
-    toolbar_->setObjectName(QStringLiteral("integrationAppBar"));
-    toolbar_->setMovable(false);
-    toolbar_->setFloatable(false);
-    toolbar_->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    toolbar_->setIconSize(QSize(24, 24));
-
-    action_ = toolbar_->addAction(icon_, tr("Start KTalk Meeting"));
-    action_->setToolTip(tr("Start KTalk Meeting"));
-    action_->setVisible(isAvailable());
-    toolbar_->setVisible(isAvailable());
-    window.addToolBar(Qt::RightToolBarArea, toolbar_);
-
-    QPointer<QMainWindow> windowGuard(&window);
-    connect(action_, &QAction::triggered, toolbar_, [this, windowGuard] {
-        if (!windowGuard) {
-            return;
-        }
-        BackendChannel* channel = backend_.getCurrentChannel();
-        startMeeting(windowGuard.data(),
-                     channel ? channel->id : QString(),
-                     QString());
-    });
-}
-
 void KTalkIntegration::refreshAvailability()
 {
     const bool wasAvailable = isAvailable();
@@ -201,19 +157,10 @@ void KTalkIntegration::refreshAvailability()
         pluginId_ = detectedPluginId;
         iconRequested_ = false;
         icon_ = defaultVideoIcon();
-        if (action_) {
-            action_->setIcon(icon_);
-        }
         emit iconChanged();
     }
 
     const bool available = isAvailable();
-    if (action_) {
-        action_->setVisible(available);
-    }
-    if (toolbar_) {
-        toolbar_->setVisible(available);
-    }
     if (wasAvailable != available) {
         emit availabilityChanged(available);
     }
@@ -251,9 +198,6 @@ void KTalkIntegration::requestIcon()
             }
 
             icon_ = QIcon(pixmap);
-            if (action_) {
-                action_->setIcon(icon_);
-            }
             emit iconChanged();
         }));
 }
