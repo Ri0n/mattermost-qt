@@ -25,7 +25,7 @@ class Backend;
 class BackendPost;
 
 /**
- * Displays the structured metadata carried by custom_ktalk_meeting posts.
+ * Displays the structured metadata carried by a KTalk meeting post.
  *
  * The meeting itself remains server-owned. This widget only presents the
  * advertised link/id/topic and reuses the dynamically discovered integration
@@ -35,6 +35,8 @@ class KTalkMeetingWidget final : public QFrame
 {
     Q_OBJECT
 public:
+    static bool supports(const BackendPost& post);
+
     explicit KTalkMeetingWidget(Backend& backend,
                                 const BackendPost& post,
                                 QWidget* parent = nullptr);
