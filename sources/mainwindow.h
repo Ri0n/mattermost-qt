@@ -74,6 +74,10 @@ public:
 	void setNotificationsCountVisualization (uint32_t notificationsCount);
 	void moveEvent (QMoveEvent* event) override;
 	void dragMoveEvent(QDragMoveEvent* event) override;
+
+private slots:
+    void on_usericon_label_clicked();
+
 protected:
 	bool eventFilter(QObject* watched, QEvent* event) override;
 private:
