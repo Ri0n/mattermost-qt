@@ -9,12 +9,15 @@
 
 #include "KTalkMeetingWidget.h"
 
+#include <QColor>
 #include <QDesktopServices>
+#include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QJsonObject>
 #include <QLabel>
+#include <QPalette>
 #include <QPushButton>
 #include <QSizePolicy>
 #include <QUrl>
@@ -28,6 +31,7 @@ namespace Mattermost {
 namespace {
 
 constexpr char MeetingPostType[] = "custom_ktalk_meeting";
+constexpr int MetadataAccentWidth = 3;
 constexpr int IconExtent = 24;
 
 QUrl httpUrl(const QString& value)
@@ -68,8 +72,16 @@ KTalkMeetingWidget::KTalkMeetingWidget(Backend& backend,
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
     auto* outerLayout = new QHBoxLayout(this);
-    outerLayout->setContentsMargins(10, 8, 10, 8);
-    outerLayout->setSpacing(8);
+    // Match the visual grammar used by structured attachment cards: the
+    // vertical accent marks content rendered from server-provided metadata.
+    outerLayout->setContentsMargins(5, 4, 6, 4);
+    outerLayout->setSpacing(7);
+
+    accentBar_ = new QFrame(this);
+    accentBar_->setFixedWidth(MetadataAccentWidth);
+    accentBar_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    outerLayout->addWidget(accentBar_);
+    refreshAccent();
 
     iconLabel_ = new QLabel(this);
     iconLabel_->setFixedSize(IconExtent, IconExtent);
@@ -115,6 +127,30 @@ KTalkMeetingWidget::KTalkMeetingWidget(Backend& backend,
     connect(&integration, &KTalkIntegration::iconChanged,
             this, &KTalkMeetingWidget::refreshIcon);
     refreshIcon();
+}
+
+void KTalkMeetingWidget::changeEvent(QEvent* event)
+{
+    QFrame::changeEvent(event);
+    if (event && (event->type() == QEvent::PaletteChange
+                  || event->type() == QEvent::ApplicationPaletteChange
+                  || event->type() == QEvent::StyleChange)) {
+        refreshAccent();
+    }
+}
+
+void KTalkMeetingWidget::refreshAccent()
+{
+    if (!accentBar_) {
+        return;
+    }
+
+    const QColor accentColor = palette().color(QPalette::Highlight);
+    // Keep this widget-local, just like structured attachment cards: some Qt
+    // styles ignore an inherited QFrame backgroundRole for a child accent bar.
+    accentBar_->setStyleSheet(
+        QStringLiteral("border: none; background-color: %1;")
+            .arg(accentColor.name(QColor::HexArgb)));
 }
 
 void KTalkMeetingWidget::refreshIcon()
