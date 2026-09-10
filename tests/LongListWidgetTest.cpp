@@ -233,6 +233,43 @@ private slots:
         bar->setSliderDown(false);
     }
 
+    void absoluteSliderMoveStartsSparseSeek()
+    {
+        TestLongListWidget list;
+        list.resize(480, 320);
+        list.setDefaultItemHeight(80);
+        list.setRequestBlockSize(10);
+        list.setSeekDebounceMs(0);
+        list.setItemCount(10000);
+        QSignalSpy requests(&list, &Mattermost::LongListWidget::rangeRequested);
+        list.show();
+        settleEvents(12);
+        requests.clear();
+
+        QScrollBar* bar = list.verticalScrollBar();
+        QVERIFY(bar->maximum() > 0);
+        QVERIFY(!bar->isSliderDown());
+
+        // QScrollBar uses exactly this path for an absolute groove click:
+        // setSliderPosition() with tracking enabled emits actionTriggered(SliderMove)
+        // before the handle is marked down, but it does not emit sliderMoved().
+        bar->setSliderPosition(bar->maximum() / 2);
+        settleEvents(12);
+
+        bool sawSeek = false;
+        for (int i = 0; i < requests.count(); ++i) {
+            const QList<QVariant> request = requests.at(i);
+            if (request.at(2).toInt()
+                    == static_cast<int>(Mattermost::LongListWidget::RequestReason::Seek)
+                && request.at(3).toULongLong() > 0) {
+                sawSeek = true;
+                break;
+            }
+        }
+        QVERIFY2(sawSeek,
+                 "An absolute scrollbar jump into sparse data must start a seek without a slider drag or model wake-up");
+    }
+
     void delayedRowGrowthKeepsStickyBottom()
     {
         TestLongListWidget list;
