@@ -10,7 +10,7 @@
 
 namespace Mattermost {
 
-void ChannelTree::markChannelViewed(QTreeWidgetItem* item)
+void ChannelTree::refreshCurrentChannelReadState(QTreeWidgetItem* item)
 {
     if (!item || item->data(0, ItemKindRole).toInt() != ChannelItemKind) {
         return;
@@ -22,10 +22,10 @@ void ChannelTree::markChannelViewed(QTreeWidgetItem* item)
         return;
     }
 
-    // Selection expresses read intent. ChatArea waits until the newest channel
-    // content is actually present in the model and rendered before committing
-    // the local/server viewed state.
-    page->requestExplicitReadAcknowledgement();
+    // Selection/presentation is only a trigger to inspect the concrete viewport.
+    // ChatLogWidget remains the sole owner of the lower-edge read rule and may
+    // legitimately decide that nothing new has been read.
+    page->refreshReadState();
 }
 
 void ChannelTree::currentChanged(const QModelIndex& current, const QModelIndex& previous)
@@ -52,7 +52,7 @@ void ChannelTree::currentChanged(const QModelIndex& current, const QModelIndex& 
 
     QTreeWidget::currentChanged(current, previous);
 
-    // Sidebar rebuilds are programmatic and must never consume unread state.
+    // Sidebar rebuilds are programmatic and must never affect read progress.
     if (renderingSidebar || !current.isValid()) {
         return;
     }
@@ -73,8 +73,8 @@ void ChannelTree::currentChanged(const QModelIndex& current, const QModelIndex& 
     // explicit unread/target positioning separately and installs a navigation
     // lock before its context is materialized.
 
-    // currentItemChanged activates/materializes the ChatArea. Defer the read
-    // request until that synchronous navigation path has completed, and resolve
+    // currentItemChanged activates/materializes the ChatArea. Defer the viewport
+    // re-check until that synchronous navigation path has completed, and resolve
     // the item again so category/sidebar rebuilds cannot leave a stale pointer.
     QTimer::singleShot(0, this, [this, channelId] {
         QTreeWidgetItem* currentItemPtr = currentItem();
@@ -83,7 +83,7 @@ void ChannelTree::currentChanged(const QModelIndex& current, const QModelIndex& 
             || currentItemPtr->data(0, ItemIdRole).toString() != channelId) {
             return;
         }
-        markChannelViewed(currentItemPtr);
+        refreshCurrentChannelReadState(currentItemPtr);
     });
 }
 
@@ -93,15 +93,15 @@ void ChannelTree::mousePressEvent(QMouseEvent* event)
     QTreeWidget::mousePressEvent(event);
 
     // currentChanged() handles normal navigation. A click on the already-current
-    // row has no current-index transition, but is still an explicit navigation
-    // and read intent. Re-activate it as well so a stale stacked-page mismatch
-    // can always be repaired by clicking the selected conversation again.
+    // row has no current-index transition, but can still repair a stale stacked-
+    // page mismatch. Re-present it and then re-evaluate the resulting viewport;
+    // neither action acknowledges read state by itself.
     if (!renderingSidebar && previousItem && previousItem == currentItem()) {
         QTreeWidgetItem* clickedItem = itemAt(event->pos());
         if (clickedItem == previousItem
             && clickedItem->data(0, ItemKindRole).toInt() == ChannelItemKind) {
             activateChannelItem(clickedItem);
-            markChannelViewed(clickedItem);
+            refreshCurrentChannelReadState(clickedItem);
         }
     }
 }
