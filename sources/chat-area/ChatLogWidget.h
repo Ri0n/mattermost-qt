@@ -42,6 +42,13 @@ public:
     void followOwnPost(const QString& postId);
 
     /**
+     * Re-evaluate read progress from the current viewport. This never treats the
+     * caller/navigation action itself as a read; the lower edge of a concrete
+     * post must actually be inside the active viewport.
+     */
+    void refreshReadState();
+
+    /**
      * Keep a semantic post target anchored while its provisional logical index
      * is replaced by authoritative source data. ChatLogWidget owns only post
      * identity; LongListWidget owns the actual viewport lock and all scroll math.
