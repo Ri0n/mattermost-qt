@@ -26,6 +26,8 @@
 
 class QGridLayout;
 class QComboBox;
+class QTimer;
+class QWidget;
 
 namespace Ui {
 class ChooseEmojiDialog;
@@ -43,6 +45,8 @@ private:
     void createEmojiTabs ();
     void createTabForCategory (uint32_t categoryIndex, uint32_t tabIndex, const QString& tabName, const QVector<Emoji>& emojis);
     QGridLayout* createTab (uint32_t categoryIdx, int tabIndex);
+    void updateSearchResults (const QString& text);
+    void removeSearchTab ();
     Emoji getSelectedEmoji ();
     void addSkinToneComboBox (QWidget *tab, QGridLayout *gridLayout, uint32_t categoryIdx);
     void restoreEmojiFavorites ();
@@ -53,6 +57,10 @@ private:
     Ui::ChooseEmojiDialog*	ui;
     QComboBox*				skinToneComboBox;
     QVector<QPushButton*>	peopleEmojiButtons;
+    QVector<Emoji>          searchableEmojis;
+    QWidget*                searchTab = nullptr;
+    QTimer*                 searchTimer = nullptr;
+    int                     searchReturnTabIndex = -1;
     Emoji					selectedEmoji;
     QMap<EmojiID, Emoji>	favorites;
 };
