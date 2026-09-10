@@ -12,9 +12,9 @@
 #include <utility>
 
 #include <QAction>
+#include <QApplication>
 #include <QCheckBox>
 #include <QDesktopServices>
-#include <QIcon>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
@@ -26,6 +26,7 @@
 #include <QStyle>
 #include <QToolBar>
 #include <QUrl>
+#include <QWidget>
 
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
@@ -71,6 +72,15 @@ QString meetingStartedEvent(const QString& pluginId)
             + QLatin1String(MeetingEventSuffix);
 }
 
+QIcon defaultVideoIcon()
+{
+    QIcon icon = QIcon::fromTheme(QStringLiteral("camera-video"));
+    if (icon.isNull() && QApplication::style()) {
+        icon = QApplication::style()->standardIcon(QStyle::SP_MediaPlay);
+    }
+    return icon;
+}
+
 QString responseError(const QByteArray& data)
 {
     const QJsonDocument document = QJsonDocument::fromJson(data);
@@ -84,7 +94,8 @@ QString responseError(const QByteArray& data)
         return error.toString();
     }
     if (!error.isNull() && !error.isUndefined()) {
-        return QString::fromUtf8(QJsonDocument(error.toObject()).toJson(QJsonDocument::Compact));
+        return QString::fromUtf8(
+            QJsonDocument(error.toObject()).toJson(QJsonDocument::Compact));
     }
     return object.value(QStringLiteral("message")).toString();
 }
@@ -93,7 +104,8 @@ QUrl meetingUrl(const QJsonObject& data)
 {
     const QUrl url(data.value(QStringLiteral("meeting_url")).toString());
     if (!url.isValid()
-        || (url.scheme() != QLatin1String("https") && url.scheme() != QLatin1String("http"))) {
+        || (url.scheme() != QLatin1String("https")
+            && url.scheme() != QLatin1String("http"))) {
         return {};
     }
     return url;
@@ -101,40 +113,29 @@ QUrl meetingUrl(const QJsonObject& data)
 
 } // namespace
 
-KTalkIntegration& KTalkIntegration::install(QMainWindow& window, Backend& backend)
+KTalkIntegration& KTalkIntegration::instance(Backend& backend)
 {
-    auto* integration = window.findChild<KTalkIntegration*>(
+    auto* integration = backend.findChild<KTalkIntegration*>(
         QString(), Qt::FindDirectChildrenOnly);
     if (!integration) {
-        integration = new KTalkIntegration(window, backend);
+        integration = new KTalkIntegration(backend);
     }
     return *integration;
 }
 
-KTalkIntegration::KTalkIntegration(QMainWindow& window, Backend& backend)
-    : QObject(&window)
-    , window_(window)
-    , backend_(backend)
+KTalkIntegration& KTalkIntegration::installAppBar(QMainWindow& window,
+                                                  Backend& backend)
 {
-    toolbar_ = new QToolBar(tr("Integrations"), &window_);
-    toolbar_->setObjectName(QStringLiteral("integrationAppBar"));
-    toolbar_->setMovable(false);
-    toolbar_->setFloatable(false);
-    toolbar_->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    toolbar_->setIconSize(QSize(24, 24));
+    KTalkIntegration& integration = instance(backend);
+    integration.ensureAppBar(window);
+    return integration;
+}
 
-    QIcon icon = QIcon::fromTheme(QStringLiteral("camera-video"));
-    if (icon.isNull()) {
-        icon = window_.style()->standardIcon(QStyle::SP_MediaPlay);
-    }
-    action_ = toolbar_->addAction(icon, tr("Start KTalk Meeting"));
-    action_->setToolTip(tr("Start KTalk Meeting"));
-    action_->setVisible(false);
-    toolbar_->hide();
-    window_.addToolBar(Qt::RightToolBarArea, toolbar_);
-
-    connect(action_, &QAction::triggered, this, &KTalkIntegration::startMeeting);
-
+KTalkIntegration::KTalkIntegration(Backend& backend)
+    : QObject(&backend)
+    , backend_(backend)
+    , icon_(defaultVideoIcon())
+{
     auto& plugins = WebappPluginService::instance(backend_);
     connect(&plugins, &WebappPluginService::pluginsChanged,
             this, &KTalkIntegration::refreshAvailability);
@@ -152,8 +153,40 @@ KTalkIntegration::KTalkIntegration(QMainWindow& window, Backend& backend)
     plugins.ensureLoaded();
 }
 
+void KTalkIntegration::ensureAppBar(QMainWindow& window)
+{
+    if (toolbar_) {
+        return;
+    }
+
+    toolbar_ = new QToolBar(tr("Integrations"), &window);
+    toolbar_->setObjectName(QStringLiteral("integrationAppBar"));
+    toolbar_->setMovable(false);
+    toolbar_->setFloatable(false);
+    toolbar_->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    toolbar_->setIconSize(QSize(24, 24));
+
+    action_ = toolbar_->addAction(icon_, tr("Start KTalk Meeting"));
+    action_->setToolTip(tr("Start KTalk Meeting"));
+    action_->setVisible(isAvailable());
+    toolbar_->setVisible(isAvailable());
+    window.addToolBar(Qt::RightToolBarArea, toolbar_);
+
+    QPointer<QMainWindow> windowGuard(&window);
+    connect(action_, &QAction::triggered, toolbar_, [this, windowGuard] {
+        if (!windowGuard) {
+            return;
+        }
+        BackendChannel* channel = backend_.getCurrentChannel();
+        startMeeting(windowGuard.data(),
+                     channel ? channel->id : QString(),
+                     QString());
+    });
+}
+
 void KTalkIntegration::refreshAvailability()
 {
+    const bool wasAvailable = isAvailable();
     const auto& plugins = WebappPluginService::instance(backend_).plugins();
     QString detectedPluginId;
     for (const WebappPluginManifest& manifest : plugins) {
@@ -167,19 +200,31 @@ void KTalkIntegration::refreshAvailability()
         httpConnector_.reset();
         pluginId_ = detectedPluginId;
         iconRequested_ = false;
+        icon_ = defaultVideoIcon();
+        if (action_) {
+            action_->setIcon(icon_);
+        }
+        emit iconChanged();
     }
 
-    const bool available = !pluginId_.isEmpty();
-    action_->setVisible(available);
-    toolbar_->setVisible(available);
+    const bool available = isAvailable();
+    if (action_) {
+        action_->setVisible(available);
+    }
+    if (toolbar_) {
+        toolbar_->setVisible(available);
+    }
+    if (wasAvailable != available) {
+        emit availabilityChanged(available);
+    }
 
     if (available) {
         qCDebug(lcKTalk) << "Native KTalk integration enabled by server discovery";
-        requestAppBarIcon();
+        requestIcon();
     }
 }
 
-void KTalkIntegration::requestAppBarIcon()
+void KTalkIntegration::requestIcon()
 {
     if (iconRequested_ || pluginId_.isEmpty()) {
         return;
@@ -196,34 +241,44 @@ void KTalkIntegration::requestAppBarIcon()
                 return;
             }
             if (status.toInt() != QNetworkReply::NoError || data.isEmpty()) {
-                qCDebug(lcKTalk) << "KTalk App Bar icon request failed";
+                qCDebug(lcKTalk) << "KTalk icon request failed";
                 return;
             }
 
             QPixmap pixmap;
-            if (pixmap.loadFromData(data)) {
-                action_->setIcon(QIcon(pixmap));
+            if (!pixmap.loadFromData(data)) {
+                return;
             }
+
+            icon_ = QIcon(pixmap);
+            if (action_) {
+                action_->setIcon(icon_);
+            }
+            emit iconChanged();
         }));
 }
 
-void KTalkIntegration::startMeeting()
+void KTalkIntegration::startMeeting(QWidget* parent,
+                                    const QString& channelId,
+                                    const QString& rootId)
 {
-    BackendChannel* channel = backend_.getCurrentChannel();
-    if (!channel || channel->id.isEmpty()) {
-        showError(tr("Open a channel or conversation before starting a KTalk meeting."));
+    if (channelId.isEmpty()) {
+        showError(parent,
+                  tr("Open a channel or conversation before starting a KTalk meeting."));
         return;
     }
-    if (pluginId_.isEmpty()) {
-        showError(tr("KTalk integration is not available on this server."));
+    if (!isAvailable()) {
+        showError(parent, tr("KTalk integration is not available on this server."));
         return;
     }
 
     QMessageBox dialog(QMessageBox::Question,
                        tr("Start KTalk Meeting"),
-                       tr("Are you sure you want to start a call in KTalk?"),
+                       rootId.isEmpty()
+                           ? tr("Are you sure you want to start a call in this conversation?")
+                           : tr("Are you sure you want to start a call in this thread?"),
                        QMessageBox::Cancel,
-                       &window_);
+                       parent);
     auto* callWithSound = new QCheckBox(tr("Call with sound"), &dialog);
     dialog.setCheckBox(callWithSound);
     QPushButton* callButton = dialog.addButton(tr("Call"), QMessageBox::AcceptRole);
@@ -236,29 +291,36 @@ void KTalkIntegration::startMeeting()
 
     // The web UI labels this option "Call with sound" while the plugin API
     // names the field call_everyone. Preserve that wire behaviour.
-    submitStartMeeting(channel->id, callWithSound->isChecked());
+    submitStartMeeting(parent,
+                       channelId,
+                       rootId,
+                       callWithSound->isChecked());
 }
 
-void KTalkIntegration::submitStartMeeting(const QString& channelId, bool callEveryone)
+void KTalkIntegration::submitStartMeeting(QWidget* parent,
+                                          const QString& channelId,
+                                          const QString& rootId,
+                                          bool callEveryone)
 {
-    if (pluginId_.isEmpty()) {
+    if (!isAvailable()) {
         return;
     }
 
     QJsonObject payload {
         {QStringLiteral("channel_id"), channelId},
         {QStringLiteral("topic"), QString()},
-        {QStringLiteral("root_id"), QString()},
+        {QStringLiteral("root_id"), rootId},
         {QStringLiteral("call_everyone"), callEveryone},
     };
 
     const QString activePluginId = pluginId_;
+    QPointer<QWidget> parentGuard(parent);
     NetworkRequest request(
         QString(), pluginPath(activePluginId, QLatin1String(StartMeetingSuffix)));
     httpConnector_.post(request, payload, HttpResponseCallback(
-        [this, activePluginId](QVariant status,
-                               QByteArray data,
-                               const QNetworkReply& reply) {
+        [this, activePluginId, parentGuard](QVariant status,
+                                            QByteArray data,
+                                            const QNetworkReply& reply) {
             if (activePluginId != pluginId_) {
                 return;
             }
@@ -267,7 +329,8 @@ void KTalkIntegration::submitStartMeeting(const QString& channelId, bool callEve
                 if (error.isEmpty()) {
                     error = reply.errorString();
                 }
-                showError(error.isEmpty()
+                showError(parentGuard.data(),
+                          error.isEmpty()
                               ? tr("Error occurred while starting the KTalk meeting.")
                               : error);
                 return;
@@ -275,7 +338,7 @@ void KTalkIntegration::submitStartMeeting(const QString& channelId, bool callEve
 
             const QString error = responseError(data);
             if (!error.isEmpty()) {
-                showError(error);
+                showError(parentGuard.data(), error);
                 return;
             }
 
@@ -286,7 +349,7 @@ void KTalkIntegration::submitStartMeeting(const QString& channelId, bool callEve
 void KTalkIntegration::handleCustomWebSocketEvent(const QString& eventName,
                                                    const QJsonObject& data)
 {
-    if (pluginId_.isEmpty() || eventName != meetingStartedEvent(pluginId_)) {
+    if (!isAvailable() || eventName != meetingStartedEvent(pluginId_)) {
         return;
     }
 
@@ -300,9 +363,9 @@ void KTalkIntegration::handleCustomWebSocketEvent(const QString& eventName,
     QDesktopServices::openUrl(url);
 }
 
-void KTalkIntegration::showError(const QString& message)
+void KTalkIntegration::showError(QWidget* parent, const QString& message)
 {
-    QMessageBox::warning(&window_, tr("KTalk"), message);
+    QMessageBox::warning(parent, tr("KTalk"), message);
 }
 
 } // namespace Mattermost
