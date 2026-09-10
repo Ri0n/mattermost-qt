@@ -26,6 +26,7 @@
 
 class QGridLayout;
 class QComboBox;
+class QTimer;
 class QWidget;
 
 namespace Ui {
@@ -58,6 +59,7 @@ private:
     QVector<QPushButton*>	peopleEmojiButtons;
     QVector<Emoji>          searchableEmojis;
     QWidget*                searchTab = nullptr;
+    QTimer*                 searchTimer = nullptr;
     int                     searchReturnTabIndex = -1;
     Emoji					selectedEmoji;
     QMap<EmojiID, Emoji>	favorites;
