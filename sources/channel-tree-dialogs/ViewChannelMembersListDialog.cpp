@@ -544,14 +544,21 @@ void ViewChannelMembersListDialog::filterEdited(const QString& text)
 
     QVector<const BackendUser*> localMatches;
     QSet<QString> seen;
-    for (const QString& userId : std::as_const(memberIds)) {
-        if (userId.isEmpty() || seen.contains(userId)) {
-            continue;
-        }
-        const BackendUser* user = backend.getStorage().getUserById(userId);
-        if (user && matchesUser(*user, searchTerm)) {
-            localMatches.push_back(user);
-            seen.insert(userId);
+    QVector<int> pages = loadedPages.values().toVector();
+    std::sort(pages.begin(), pages.end());
+    for (int page : std::as_const(pages)) {
+        const int first = page * ChannelMemberPageSize;
+        const int last = std::min(memberIds.size(), first + ChannelMemberPageSize);
+        for (int index = first; index < last; ++index) {
+            const QString& userId = memberIds.at(index);
+            if (userId.isEmpty() || seen.contains(userId)) {
+                continue;
+            }
+            const BackendUser* user = backend.getStorage().getUserById(userId);
+            if (user && matchesUser(*user, searchTerm)) {
+                localMatches.push_back(user);
+                seen.insert(userId);
+            }
         }
     }
 
@@ -606,6 +613,7 @@ void ViewChannelMembersListDialog::showSearchResults(
     QVector<const BackendUser*> users)
 {
     finishAllRequests();
+    memberList->setItemCount(0);
     searchMode = true;
     searchUsers = std::move(users);
     memberList->setItemCount(searchUsers.size());
@@ -618,6 +626,7 @@ void ViewChannelMembersListDialog::showSearchResults(
 void ViewChannelMembersListDialog::restorePagedMembers()
 {
     finishAllRequests();
+    memberList->setItemCount(0);
     memberList->setItemCount(memberCount);
     reapplyLoadedPages();
     setItemCountLabel(static_cast<uint32_t>(memberCount));
