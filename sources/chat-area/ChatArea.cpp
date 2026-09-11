@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -38,6 +38,7 @@
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
 #include "backend/ThreadFollowService.h"
+#include "backend/UserProfileService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendPost.h"
 #include "backend/types/BackendTeam.h"
@@ -135,15 +136,8 @@ ChatArea::ChatArea(Backend& backend,
     } else {
         ui->userAvatar->clear();
         ui->userAvatar->hide();
-
-        backend.retrieveChannelMembers(this->channel, [this] {
-            if (!ui) {
-                return;
-            }
-            channelMembersLoaded = true;
-            updateUsersButton();
-            ui->usersButton->show();
-        });
+        ui->usersButton->hide();
+        requestChannelMemberCount();
     }
 
     // Lazy ChatAreas may be created after the application's eager startup work.
@@ -384,13 +378,31 @@ void ChatArea::refreshHeaderActionIcons()
     }
 }
 
-void ChatArea::updateUsersButton()
+void ChatArea::requestChannelMemberCount()
 {
-    if (!ui || !ui->usersButton) {
+    if (isThread || channel.type == BackendChannel::directChannel) {
         return;
     }
 
-    const qulonglong memberCount = static_cast<qulonglong>(channel.members.size());
+    QPointer<ChatArea> guard(this);
+    UserProfileService::instance(backend).queryChannelMemberCount(
+        channel, [guard](int count) {
+            if (!guard || !guard->ui) {
+                return;
+            }
+            guard->channelMemberCount = std::max(0, count);
+            guard->updateUsersButton();
+            guard->ui->usersButton->show();
+        });
+}
+
+void ChatArea::updateUsersButton()
+{
+    if (!ui || !ui->usersButton || channelMemberCount < 0) {
+        return;
+    }
+
+    const qulonglong memberCount = static_cast<qulonglong>(channelMemberCount);
     ui->usersButton->setText(QString::number(memberCount));
     const QString tooltip = memberCount == 1
         ? tr("1 member")
@@ -482,11 +494,21 @@ void ChatArea::init()
 
         signalConnections.push_back(connect(&channel, &BackendChannel::onUserAdded,
                                             this, [this](const BackendUser&) {
-            updateUsersButton();
+            if (channelMemberCount >= 0) {
+                ++channelMemberCount;
+                updateUsersButton();
+            } else {
+                requestChannelMemberCount();
+            }
         }));
         signalConnections.push_back(connect(&channel, &BackendChannel::onUserRemoved,
                                             this, [this](const BackendUser&) {
-            updateUsersButton();
+            if (channelMemberCount >= 0) {
+                channelMemberCount = std::max(0, channelMemberCount - 1);
+                updateUsersButton();
+            } else {
+                requestChannelMemberCount();
+            }
         }));
 
         signalConnections.push_back(connect(ui->usersButton, &QToolButton::clicked,
@@ -524,7 +546,7 @@ void ChatArea::init()
     ui->loadOldPosts->hide();
     if (!isThread) {
         updatePinnedPostsButton();
-        if (channel.type == BackendChannel::directChannel || !channelMembersLoaded) {
+        if (channel.type == BackendChannel::directChannel || channelMemberCount < 0) {
             ui->usersButton->hide();
         } else {
             updateUsersButton();
