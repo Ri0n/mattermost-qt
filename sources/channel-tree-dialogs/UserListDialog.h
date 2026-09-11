@@ -26,9 +26,14 @@
 
 #include <array>
 #include <set>
+
+#include <QMetaObject>
 #include <QVariant>
+#include <QVector>
+
 #include "FilterListDialog.h"
 
+class QEvent;
 class QTableWidgetItem;
 
 namespace Mattermost {
@@ -52,10 +57,17 @@ public:
     void removeRowByData (const BackendUser& user);
     void setProfileBackend(Backend* backend) { profileBackend = backend; }
 protected:
+    void changeEvent(QEvent* event) override;
     void create (const FilterListDialogConfig& cfg, const std::set<UserListEntry>& users, const QStringList& columnNames);
 
     QMap<const BackendUser*, QTableWidgetItem*> dataToItemMap;
     Backend* profileBackend = nullptr;
+
+private:
+    void clearVisualConnections();
+    void refreshUserVisual(const BackendUser* user);
+
+    QVector<QMetaObject::Connection> visualConnections;
 };
 
 using ViewTeamMembersDialog = UserListDialog;

@@ -22,6 +22,11 @@ namespace Mattermost {
  * candidates. The popup performs a case-insensitive contains match across the
  * human-facing label, optional detail text and provider-supplied filter keys.
  *
+ * A rule may also observe changes to the text typed after its prefix. This is
+ * intended for debounced asynchronous discovery: the observer starts/cancels
+ * external work, while the provider remains a synchronous snapshot of the
+ * candidates currently available to the editor.
+ *
  * The selected candidate replaces only the text typed after the trigger. This
  * keeps the surrounding query/message untouched and lets each use case choose
  * its own canonical insertion text (channel name/id, username, etc.).
@@ -37,10 +42,12 @@ public:
     };
 
     using CompletionProvider = std::function<QVector<CompletionCandidate>()>;
+    using CompletionQueryHandler = std::function<void(const QString&)>;
 
     struct CompletionRule {
         QString prefix;
         CompletionProvider provider;
+        CompletionQueryHandler queryChanged;
         bool appendSpace = true;
     };
 
@@ -83,6 +90,8 @@ private:
     void rebuildCompletionModel(const CompletionRule& rule);
     void acceptCompletion(const QModelIndex& index);
     void hideCompletion();
+    void updateCompletionQuery(int ruleIndex, const QString& query);
+    void endCompletionQuery();
 
     QVector<CompletionRule> completionRules;
     QCompleter* completer = nullptr;
@@ -90,6 +99,8 @@ private:
     int activeRuleIndex = -1;
     int activeQueryStart = -1;
     int activeQueryEnd = -1;
+    int queryRuleIndex = -1;
+    QString queryText;
     bool submitOnEnter = false;
     std::function<void()> submitHandler;
 };

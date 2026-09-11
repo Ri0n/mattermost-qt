@@ -33,6 +33,7 @@
 #include "backend/Backend.h"
 #include "backend/MentionGroupService.h"
 #include "backend/Storage.h"
+#include "backend/UserProfileService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendTeam.h"
 #include "backend/types/BackendUser.h"
@@ -46,6 +47,41 @@ namespace {
 constexpr int LoadingIndicatorDelayMs = 150;
 constexpr int ActionButtonExtent = 30;
 constexpr int ActionIconExtent = 24;
+constexpr int MentionSearchDelayMs = 200;
+constexpr int MentionSearchLimit = 100;
+
+class MentionSearchState : public QObject
+{
+public:
+    explicit MentionSearchState(QObject* parent)
+        : QObject(parent)
+        , timer(this)
+    {
+        timer.setSingleShot(true);
+        timer.setInterval(MentionSearchDelayMs);
+    }
+
+    QTimer timer;
+    QString query;
+    QVector<const BackendUser*> remoteUsers;
+    quint64 generation = 0;
+};
+
+QString userSortName(const BackendUser* user)
+{
+    if (!user) {
+        return {};
+    }
+    const QString displayName = user->getDisplayName();
+    return displayName.isEmpty() ? user->username : displayName;
+}
+
+void sortMentionUsers(QVector<const BackendUser*>& users)
+{
+    std::sort(users.begin(), users.end(), [](const BackendUser* lhs, const BackendUser* rhs) {
+        return QString::localeAwareCompare(userSortName(lhs), userSortName(rhs)) < 0;
+    });
+}
 
 } // namespace
 
@@ -126,9 +162,57 @@ void ChatArea::setupComposerUi()
         2, ui->outgoingPostCreator->fontMetrics().lineSpacing() * 2 / 5);
     ui->composerLayout->setContentsMargins(0, verticalPadding, 0, verticalPadding);
 
+    auto* mentionSearch = new MentionSearchState(ui->outgoingPostCreator);
+    QPointer<MentionSearchState> mentionSearchGuard(mentionSearch);
+    QPointer<OutgoingPostCreator> mentionEditorGuard(ui->outgoingPostCreator);
+    connect(&mentionSearch->timer, &QTimer::timeout, this,
+            [this, mentionSearchGuard, mentionEditorGuard] {
+        if (!mentionSearchGuard || !mentionEditorGuard
+            || mentionSearchGuard->query.isEmpty()) {
+            return;
+        }
+
+        const QString query = mentionSearchGuard->query;
+        const quint64 generation = mentionSearchGuard->generation;
+        UserSearchOptions options;
+        options.term = query;
+        options.limit = MentionSearchLimit;
+
+        QPointer<ChatArea> areaGuard(this);
+        UserProfileService::instance(backend).searchUsers(
+            options,
+            [areaGuard, mentionSearchGuard, mentionEditorGuard,
+             query, generation](QVector<const BackendUser*> users) mutable {
+                if (!areaGuard || !mentionSearchGuard || !mentionEditorGuard
+                    || generation != mentionSearchGuard->generation
+                    || query != mentionSearchGuard->query) {
+                    return;
+                }
+
+                mentionSearchGuard->remoteUsers = std::move(users);
+                mentionEditorGuard->refreshCompletions();
+            });
+    });
+
     InteractiveTextEdit::CompletionRule mentionRule;
     mentionRule.prefix = QStringLiteral("@");
-    mentionRule.provider = [this] {
+    mentionRule.queryChanged = [mentionSearchGuard](const QString& query) {
+        if (!mentionSearchGuard) {
+            return;
+        }
+
+        mentionSearchGuard->timer.stop();
+        ++mentionSearchGuard->generation;
+        mentionSearchGuard->query = query;
+        mentionSearchGuard->remoteUsers.clear();
+
+        // A bare '@' still shows local channel/known users immediately. Start
+        // server-wide discovery only once there is an actual search term.
+        if (!query.isEmpty()) {
+            mentionSearchGuard->timer.start();
+        }
+    };
+    mentionRule.provider = [this, mentionSearchGuard] {
         using Candidate = InteractiveTextEdit::CompletionCandidate;
         QVector<Candidate> candidates;
         QSet<QString> seen;
@@ -187,25 +271,11 @@ void ChatArea::setupComposerUi()
             }
         }
 
-        QVector<const BackendUser*> users;
-        const auto& storedUsers = backend.getStorage().getAllUsers();
-        users.reserve(static_cast<int>(storedUsers.size()));
-        for (const auto& entry : storedUsers) {
-            if (!entry.second.username.isEmpty()) {
-                users.push_back(&entry.second);
+        const auto appendUser = [&appendCandidate](const BackendUser* user) {
+            if (!user || user->username.isEmpty()) {
+                return;
             }
-        }
-        std::sort(users.begin(), users.end(), [](const BackendUser* lhs, const BackendUser* rhs) {
-            const QString lhsName = lhs->getDisplayName().isEmpty()
-                ? lhs->username : lhs->getDisplayName();
-            const QString rhsName = rhs->getDisplayName().isEmpty()
-                ? rhs->username : rhs->getDisplayName();
-            return QString::localeAwareCompare(lhsName, rhsName) < 0;
-        });
-        for (const BackendUser* user : users) {
-            if (!user) {
-                continue;
-            }
+
             Candidate candidate;
             candidate.displayText = user->getDisplayName();
             if (candidate.displayText.isEmpty()) {
@@ -213,6 +283,7 @@ void ChatArea::setupComposerUi()
             }
             candidate.insertText = user->username;
             candidate.detailText = QStringLiteral("@") + user->username;
+            candidate.filterKeys.push_back(user->username);
             if (!user->nickname.isEmpty()) {
                 candidate.filterKeys.push_back(user->nickname);
             }
@@ -222,7 +293,52 @@ void ChatArea::setupComposerUi()
             if (!user->last_name.isEmpty()) {
                 candidate.filterKeys.push_back(user->last_name);
             }
+            if (!user->email.isEmpty()) {
+                candidate.filterKeys.push_back(user->email);
+            }
             appendCandidate(std::move(candidate));
+        };
+
+        // Channel members are the highest-value local candidates. Keep them at
+        // the front, but do not constrain the remote search to the channel.
+        QVector<const BackendUser*> channelUsers;
+        QSet<QString> channelUserIds;
+        channelUsers.reserve(static_cast<int>(channel.members.size()));
+        for (const auto& member : channel.members) {
+            if (!member.user || member.user->username.isEmpty()) {
+                continue;
+            }
+            channelUsers.push_back(member.user);
+            channelUserIds.insert(member.user->id);
+        }
+        sortMentionUsers(channelUsers);
+        for (const BackendUser* user : channelUsers) {
+            appendUser(user);
+        }
+
+        // Server search preserves Mattermost's own relevance ordering and
+        // augments the channel set with users from the visible server directory.
+        if (mentionSearchGuard) {
+            for (const BackendUser* user : mentionSearchGuard->remoteUsers) {
+                appendUser(user);
+            }
+        }
+
+        // Already-known non-members are useful while the debounce/HTTP request
+        // is still pending. They are a cache, not the authority for directory
+        // membership, so keep them behind channel and server results.
+        QVector<const BackendUser*> knownUsers;
+        const auto& storedUsers = backend.getStorage().getAllUsers();
+        knownUsers.reserve(static_cast<int>(storedUsers.size()));
+        for (const auto& entry : storedUsers) {
+            const BackendUser* user = &entry.second;
+            if (!user->username.isEmpty() && !channelUserIds.contains(user->id)) {
+                knownUsers.push_back(user);
+            }
+        }
+        sortMentionUsers(knownUsers);
+        for (const BackendUser* user : knownUsers) {
+            appendUser(user);
         }
 
         return candidates;
