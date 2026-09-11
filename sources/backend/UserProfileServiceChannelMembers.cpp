@@ -82,12 +82,13 @@ void UserProfileService::loadChannelMembersPage(
 
             ensureUsers(userIds,
                 [this, userIds, callback = std::move(callback)]() mutable {
-                    ensureStatuses(userIds,
-                        [userIds, callback = std::move(callback)]() mutable {
-                            if (callback) {
-                                callback(userIds);
-                            }
-                        });
+                    // Profiles are enough to materialize the page. Presence is
+                    // independent presentation state and updates live rows via
+                    // BackendUser::onStatusChanged when this batch completes.
+                    if (callback) {
+                        callback(userIds);
+                    }
+                    ensureStatuses(userIds);
                 });
         }));
 }
