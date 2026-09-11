@@ -1,7 +1,7 @@
 /**
  * @file ViewChannelMembersListDialog.h
  * @brief 'View Channel Members' context menu item dialog
- * @author Lyubir Filipov
+ * @author Lyubomir Filipov
  * @date Apr 17, 2023
  *
  * Copyright 2021, 2022 Lyubomir Filipov
