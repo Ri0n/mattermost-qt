@@ -107,7 +107,6 @@ void AttentionList::mousePressEvent(QMouseEvent* event)
 void AttentionList::retainSelection(QTreeWidgetItem* item)
 {
     retainedEntry_.reset();
-    retainedPostId_.clear();
     if (!item || !model_) {
         return;
     }
@@ -122,7 +121,6 @@ void AttentionList::retainSelection(QTreeWidgetItem* item)
 void AttentionList::releaseSelectionRetention()
 {
     retainedEntry_.reset();
-    retainedPostId_.clear();
     {
         const QSignalBlocker blocker(this);
         setCurrentItem(nullptr);
@@ -150,14 +148,25 @@ void AttentionList::activateItem(QTreeWidgetItem* item)
         return;
     }
 
-    const FollowingModel::Entry* current = model_->findEntry(channelId, threadId);
-    const FollowingModel::Entry* entry = current;
-    if (retainedEntry_
-        && retainedEntry_->channelId == channelId
-        && retainedEntry_->threadId == threadId) {
-        entry = &*retainedEntry_;
-    }
+    const FollowingModel::Entry* entry = model_->findEntry(channelId, threadId);
     if (!entry) {
+        // The row can outlive its attention entry, but its old cursor cannot.
+        if (!retainedEntry_
+            || retainedEntry_->channelId != channelId
+            || retainedEntry_->threadId != threadId) {
+            return;
+        }
+
+        if (retainedEntry_->isThread()) {
+            if (retainedEntry_->synthetic) {
+                model_->ensureThreadsFresh();
+                AppNavigationService::instance(*backend_).openPost(threadId);
+            } else {
+                AppNavigationService::instance(*backend_).openThread(channelId, threadId);
+            }
+        } else {
+            AppNavigationService::instance(*backend_).openChannel(channelId);
+        }
         return;
     }
 
@@ -166,15 +175,9 @@ void AttentionList::activateItem(QTreeWidgetItem* item)
         return;
     }
 
-    if (!retainedPostId_.isEmpty()) {
-        AppNavigationService::instance(*backend_).openPost(retainedPostId_);
-        return;
-    }
-
     if (entry->resumeState == FollowingModel::ResumeState::FirstUnread
         && !entry->firstUnreadPostId.isEmpty()) {
-        retainedPostId_ = entry->firstUnreadPostId;
-        AppNavigationService::instance(*backend_).openPost(retainedPostId_);
+        AppNavigationService::instance(*backend_).openPost(entry->firstUnreadPostId);
         return;
     }
     if (entry->resumeState == FollowingModel::ResumeState::AtEnd) {
@@ -191,13 +194,25 @@ void AttentionList::activateItem(QTreeWidgetItem* item)
     QPointer<AttentionList> guard(this);
     backend_->retrieveChannelUnreadPost(*channel,
         [guard, channelId](const QString& postId) {
-            if (!guard || !guard->backend_ || !guard->retainedEntry_
+            if (!guard || !guard->backend_ || !guard->model_ || !guard->retainedEntry_
                 || guard->retainedEntry_->channelId != channelId
                 || !guard->retainedEntry_->threadId.isEmpty()) {
                 return;
             }
+
+            const FollowingModel::Entry* current = guard->model_->findEntry(channelId);
+            if (!current || current->resumeState == FollowingModel::ResumeState::AtEnd) {
+                AppNavigationService::instance(*guard->backend_).openChannel(channelId);
+                return;
+            }
+            if (current->resumeState == FollowingModel::ResumeState::FirstUnread
+                && !current->firstUnreadPostId.isEmpty()) {
+                AppNavigationService::instance(*guard->backend_).openPost(
+                    current->firstUnreadPostId);
+                return;
+            }
+
             if (!postId.isEmpty()) {
-                guard->retainedPostId_ = postId;
                 AppNavigationService::instance(*guard->backend_).openPost(postId);
             } else {
                 AppNavigationService::instance(*guard->backend_).openChannel(channelId);
@@ -234,6 +249,11 @@ void AttentionList::openThread(const FollowingModel::Entry& entry)
         // reconcile the shared Following model afterwards.
         model_->ensureThreadsFresh();
         AppNavigationService::instance(*backend_).openPost(entry.threadId);
+        return;
+    }
+
+    if (entry.resumeState == FollowingModel::ResumeState::AtEnd) {
+        AppNavigationService::instance(*backend_).openThread(entry.channelId, entry.threadId);
         return;
     }
 

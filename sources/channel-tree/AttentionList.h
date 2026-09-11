@@ -55,8 +55,11 @@ private:
 
     Backend* backend_ = nullptr;
     FollowingModel* model_ = nullptr;
+
+    // Presentation-only snapshot for keeping the selected row visible.
+    // Navigation always resolves the current cursor from FollowingModel.
     std::optional<FollowingModel::Entry> retainedEntry_;
-    QString retainedPostId_;
+
     bool refreshing_ = false;
     int lastAttentionCount_ = -1;
 };
