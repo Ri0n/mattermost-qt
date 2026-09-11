@@ -29,9 +29,13 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QEvent>
+#include <QLineEdit>
 #include <QMenu>
 #include <QPalette>
+#include <QScrollBar>
+#include <QTimer>
 
+#include "backend/UserProfileService.h"
 #include "backend/types/BackendChannelMember.h"
 #include "backend/types/BackendTeamMember.h"
 #include "backend/types/BackendUser.h"
@@ -155,6 +159,24 @@ const BackendUser* UserListDialog::getSelectedUser ()
 	return selection.first()->data(Qt::UserRole).value<BackendUser*>();
 }
 
+void UserListDialog::setProfileBackend(Backend* backend)
+{
+    profileBackend = backend;
+    if (!profileBackend || avatarViewportTrackingInstalled) {
+        return;
+    }
+
+    avatarViewportTrackingInstalled = true;
+    connect(ui->tableWidget->verticalScrollBar(), &QScrollBar::valueChanged,
+            this, [this](int) { ensureVisibleAvatars(); });
+    connect(ui->filterLineEdit, &QLineEdit::textChanged,
+            this, [this](const QString&) {
+        // FilterListDialog updates row visibility in the same signal turn.
+        // Defer until that work has completed, then fetch only the new viewport.
+        QTimer::singleShot(0, this, [this] { ensureVisibleAvatars(); });
+    });
+}
+
 void UserListDialog::changeEvent(QEvent* event)
 {
     FilterListDialog::changeEvent(event);
@@ -235,6 +257,7 @@ void UserListDialog::create (const FilterListDialogConfig& cfg, const std::set<U
 	ui->tableWidget->horizontalHeader()->setSectionResizeMode (0, QHeaderView::Stretch);
 
 	setItemCountLabel (static_cast<uint32_t>(usersCount));
+    QTimer::singleShot(0, this, [this] { ensureVisibleAvatars(); });
 }
 
 void UserListDialog::clearVisualConnections()
@@ -265,6 +288,31 @@ void UserListDialog::refreshUserVisual(const BackendUser* user)
         if (QTableWidgetItem* statusItem = ui->tableWidget->item(
                 row, UserListEntry::userStatus)) {
             statusItem->setText(user->status);
+        }
+    }
+}
+
+void UserListDialog::ensureVisibleAvatars()
+{
+    if (!profileBackend || !ui || !ui->tableWidget || !ui->tableWidget->viewport()) {
+        return;
+    }
+
+    const QRect viewportRect = ui->tableWidget->viewport()->rect();
+    auto& profiles = UserProfileService::instance(*profileBackend);
+    for (int row = 0; row < ui->tableWidget->rowCount(); ++row) {
+        if (ui->tableWidget->isRowHidden(row)) {
+            continue;
+        }
+
+        QTableWidgetItem* item = ui->tableWidget->item(row, 0);
+        if (!item || !ui->tableWidget->visualItemRect(item).intersects(viewportRect)) {
+            continue;
+        }
+
+        BackendUser* user = item->data(Qt::UserRole).value<BackendUser*>();
+        if (user) {
+            profiles.ensureAvatar(*user);
         }
     }
 }
