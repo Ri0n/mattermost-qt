@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <utility>
 
 #include <QVector>
 
@@ -21,6 +22,8 @@ public:
     struct Range {
         int first = -1;
         int last = -1;
+
+        bool isValid() const { return first >= 0 && last >= first; }
     };
 
     bool isActive() const { return expected.isValid(); }
@@ -57,19 +60,12 @@ public:
     {
         QVector<Range> result = std::move(waiters);
         waiters.clear();
-        expected = InternalRange {};
+        expected = Range {};
         return result;
     }
 
 private:
-    struct InternalRange {
-        int first = -1;
-        int last = -1;
-
-        bool isValid() const { return first >= 0 && last >= first; }
-    };
-
-    InternalRange expected;
+    Range expected;
     QVector<Range> waiters;
 };
 
