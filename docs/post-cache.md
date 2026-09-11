@@ -54,7 +54,7 @@ Cache interest is driven only by the most recent **channel open** observation:
 
 - resident-memory admission horizon: **1 hour** by default;
 - persistent-disk admission horizon: **10 hours** by default, approximately one working day;
-- opening a thread counts as opening its parent channel;
+- opening a thread counts as opening its parent channel at that moment;
 - notification/permalink/Attention navigation counts once it actually opens the channel;
 - incoming posts, mentions, unread state, typing and reactions never refresh cache interest;
 - the currently open channel is always hot because activation records a fresh open observation.
@@ -73,8 +73,15 @@ channel opened <= 1 h ago
 channel opened <= 10 h ago
         -> eligible for durable post storage
 older / never opened
-        -> metadata/unread processing only; no post-body cache admission
+        -> metadata/unread processing only; no general post-body cache admission
 ```
+
+An open thread has one deliberately narrower lifetime rule. `ThreadPostSource` leases its root post.
+If the parent channel later ages past the one-hour resident horizon while that thread remains open,
+a WebSocket `posted` reply whose `root_id` matches the leased root is still admitted into
+`BackendChannel` so the open thread can consume the live body through its normal `onNewPost` signal.
+This is **not** a channel-interest refresh: unrelated posts in that cold channel remain transient, the
+channel-open timestamp does not move, and disk admission still follows the normal ten-hour policy.
 
 A channel crossing the one-hour memory horizon makes all of its unleased resident posts immediately
 eligible for eviction even if the channel is busy. A channel crossing the ten-hour disk horizon is
@@ -253,14 +260,15 @@ the single SQLite file compact without creating a second ~5 GiB working copy.
 ## Cache authority
 
 A cached post identity/payload is useful data, but cached timestamps are **not** sufficient evidence
-for an absolute Mattermost page number. New posts can shift all absolute page boundaries.
+for an absolute Mattermost page number or cursor adjacency. New posts can shift absolute page
+boundaries, and an arbitrary bag of cached IDs does not prove a contiguous server window.
 
 Therefore:
 
 - direct post lookup may eventually be satisfied from SQLite immediately;
 - a bounded newest suffix may eventually seed a channel/thread resident model;
-- HTTP remains authoritative for absolute channel page placement and for proving oldest/newest
-  boundaries;
+- HTTP remains authoritative for channel/thread edge placement, cursor adjacency and for proving
+  oldest/newest boundaries;
 - stale successful work may populate SQLite only when the channel remains cache-eligible, but it
   never gains viewport authority by itself.
 
@@ -297,6 +305,10 @@ WebSocket handling follows the same durable rules:
 - reaction added/removed: invalidate the cached row regardless of eligibility because these events
   do not contain a lossless full replacement post object.
 
+The open-thread root-lease exception affects **resident delivery only**. It does not bypass the disk
+admission rule: a live reply delivered to an open thread in a disk-cold channel is not persisted merely
+because the root is leased.
+
 Deleting/invalidation is preferable to keeping a known-stale reaction/deletion snapshot. A later
 REST fetch can repopulate that row only if the channel is still eligible.
 
@@ -304,7 +316,7 @@ REST fetch can repopulate that row only if the channel is still eligible.
 
 The persistent cache makes a large resident history unnecessary. The target resident policy is:
 
-- only channels opened within **1 hour** are eligible for resident post bodies;
+- only channels opened within **1 hour** are generally eligible for resident post bodies;
 - **500 MiB hard accounted maximum** across all materialized post models;
 - trim back to roughly **400 MiB** after crossing the hard limit to avoid immediate churn;
 - cold-post idle TTL: **5 minutes** by default inside still-eligible channels;
@@ -315,8 +327,10 @@ The persistent cache makes a large resident history unnecessary. The target resi
 
 The one-hour horizon is based on channel-open time, not last message activity. WebSocket traffic for
 a cold channel may still update unread/mention/notification metadata, but the event's full post body
-must not become a durable `BackendPost` merely because the server delivered it. Reconnect recovery
-must likewise avoid fetching/materializing post pages for every joined channel.
+must not become a durable `BackendPost` merely because the server delivered it. The narrow exception
+is a reply to the root leased by an actually open thread: that reply is admitted so the visible thread
+receives its live body, without making the parent channel hot or admitting unrelated roots/replies.
+Reconnect recovery must likewise avoid fetching/materializing post pages for every joined channel.
 
 The 500 MiB value is cache-accounted memory, not process RSS: portable C++ cannot reliably attribute
 allocator arenas and Qt internals to one cache. Each resident post will carry an estimated retained
@@ -339,6 +353,7 @@ particular:
 
 - `BackendPost::rootPost` cannot be a durable owning/reference mechanism; `root_id` is authoritative;
 - a visible `PostWidget` must hold a lease preventing its backing post from disappearing;
+- an open `ThreadPostSource` holds a lease on its root so its live reply admission remains valid;
 - sources keep post IDs, not permanent raw pointers;
 - an evicted ID must be rematerializable from SQLite or HTTP without changing its logical identity.
 
@@ -396,6 +411,8 @@ Implemented/in progress in this PR:
 - write successful HTTP post objects through to SQLite;
 - WebSocket new/edit write-through and delete/reaction invalidation;
 - channel-open admission policy: one hour for memory, ten hours for disk;
+- precise root-lease resident admission for replies to an actually open thread even after its parent
+  channel becomes memory-cold;
 - seed channel-open time from Mattermost preferences and refresh it on local activation;
 - dedicated Cache settings tab for all user-facing limits.
 
@@ -414,7 +431,8 @@ Read-side status:
 ### Phase 3 — bounded resident cache
 
 - replace durable raw-pointer assumptions with explicit resident leases/ID resolution;
-- separate transient WebSocket notification/unread processing from durable post materialization;
+- keep transient WebSocket processing for cold channels while admitting only the narrow open-thread
+  root/reply case required by an active lease;
 - stop reconnect post-page materialization for channels outside the memory horizon;
 - add per-post memory-cost accounting;
 - 30-second sweeper, 5-minute cold TTL, one-hour channel horizon, 500 MiB hard / ~400 MiB target;
@@ -427,50 +445,52 @@ Read-side status:
 - validate in the background without moving the viewport;
 - expose cache statistics/logging for tuning limits and vacuum thresholds.
 
-
 ## Timeline authority and reconnect validation
 
 Persistent caching must not make Mattermost's approximate message counts an
-authority for post identity. `total_msg_count_root` is useful for scrollbar scale and for choosing an initial random-seek
-page, but it is not `/posts` row count: deleted roots can make it too large, while join/leave and
-other count-excluded system roots can make it too small. Concurrent server changes can add another
-source of disagreement.
+authority for post identity. `total_msg_count_root` is useful for scrollbar scale and for choosing an
+initial disconnected seek position, but it is not `/posts` row count: deleted roots can make it too
+large, while join/leave and other count-excluded system roots can make it too small. Concurrent server
+changes can add another source of disagreement.
 
-The channel source keeps two separate concepts:
+The channel source keeps separate transport paths with explicit authority:
 
-1. ordinary channel range loading uses absolute `/posts?page=N&per_page=10` pages only;
-2. known post identities and timestamps help estimate semantic targets and reconcile overlap, but
-   are not promoted into `before=<post_id>` / `after=<post_id>` boundaries for ordinary scrolling.
+1. demand touching the known newest edge uses one `page=0` request sized for that contiguous demand;
+2. ordinary sequential scrolling from an authoritative identity uses `before=<post_id>` /
+   `after=<post_id>` cursor requests;
+3. genuinely disconnected random positioning may use absolute `/posts?page=N&per_page=10` pages;
+4. oldest-boundary repair uses absolute-page probes because that is the evidence needed to correct the
+   approximate `total_msg_count_root` coordinate space.
 
-The ten-post page size is invariant. Logical request blocks are oldest-aligned while Mattermost
-pages are newest-aligned, so a ten-item logical block can cross a server-page boundary. In that
-case the source requests both intersecting pages and places each with `placePage()`. Remote thumb
-seek, normal scrolling and initial tail materialization therefore share exactly the same paging
-path instead of switching between page arithmetic and cursor walks. A successful empty absolute
-page is also authoritative boundary evidence. `total_msg_count_root` can overstate `/posts` when
-deleted roots disappear, but it can also understate it because join/leave and other count-excluded
-system roots remain visible in channel history. A large top-edge request starts with a one-root probe
-3% inside the estimate. Empty results search inward; existing data searches outward to the estimate
-and, when the reported oldest page is full, continues beyond it until `/posts` proves the real edge.
-Small estimates use a normal ten-post page first and expand outward if that page disproves the count.
-Exact reconciliation removes or inserts an oldest logical prefix while preserving newest-anchored page
-mapping. The 3% value is a latency heuristic, never a correctness assumption.
+The ten-post page size remains a useful minimum/fallback for cursor and absolute-page work, but it is
+not a `LongListWidget` request-block invariant. The view may ask for a larger contiguous range (for
+example a full viewport plus prefetch); the source chooses one efficient edge/cursor request rather
+than turning every ten logical indices into a separate HTTP job.
 
-Every successful range request ends in
-one of three states: new identities were placed, a real boundary removed stale
-logical slots, or the request made no progress and is finished without an
-immediate retry loop.
+Absolute pages remain newest-anchored for disconnected placement and boundary repair. A successful
+empty absolute page is authoritative boundary evidence. A large top-edge request starts with a
+one-root probe 3% inside the estimate. Empty results search inward; existing data searches outward to
+the estimate and, when the reported oldest page is full, continues beyond it until `/posts` proves the
+real edge. Small estimates use a normal ten-post page first and expand outward if that page disproves
+the count. Exact reconciliation removes or inserts an oldest logical prefix while preserving already
+known newest identities. The 3% value is a latency heuristic, never a correctness assumption.
 
-WebSocket reconnect uses the same bounded-working-set rule. A successful
-Mattermost sequence resume requires no HTTP history replay. If reliable replay
-explicitly fails, only the currently viewed conversation is validated
-immediately; inactive joined channels are left lazy and are validated when
-opened. This prevents a reconnect from filling either the network queue or the
-post cache with channels the user is not reading.
+Every successful range request ends in one of three states: new identities were placed, a real
+boundary removed stale logical slots, or the request made no progress and is finished without an
+immediate retry loop. Overlapping/adjacent logical demand may attach to a compatible exact in-flight
+source request, but that attachment does not grow into a FIFO prefetch chain; a distant fast-scroll
+request remains free to start independently.
 
-Cache admission follows user interest rather than membership. By default a
-channel is eligible for resident-memory post caching for one hour after it was
-viewed, and for persistent SQLite post caching for ten hours after it was
-viewed. The current channel is always considered interested. These intervals,
-memory/disk limits, maintenance cadence, TTLs and vacuum controls are exposed
-on the cache settings page and are policy inputs rather than timeline geometry.
+WebSocket reconnect uses the same bounded-working-set rule. A successful Mattermost sequence resume
+requires no HTTP history replay. If reliable replay explicitly fails, only the currently viewed
+conversation is validated immediately; inactive joined channels are left lazy and are validated when
+opened. This prevents a reconnect from filling either the network queue or the post cache with
+channels the user is not reading.
+
+Cache admission follows user interest rather than membership. By default a channel is eligible for
+resident-memory post caching for one hour after it was viewed, and for persistent SQLite post caching
+for ten hours after it was viewed. The current channel is always considered interested. An open thread
+may keep only its leased root and newly arriving replies for that root resident after the parent
+channel ages cold; this does not refresh the channel's interest horizon. These intervals, memory/disk
+limits, maintenance cadence, TTLs and vacuum controls are exposed on the cache settings page and are
+policy inputs rather than timeline geometry.
