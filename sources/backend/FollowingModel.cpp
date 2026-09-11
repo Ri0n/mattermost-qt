@@ -62,7 +62,12 @@ FollowingModel::FollowingModel(Backend& backend)
         clearSyntheticMentions(channel.id);
         syncConversations();
         emit changed();
-        scheduleThreadRefresh();
+
+        // Channel read/view state is already represented by SidebarService and
+        // synthetic root mentions are reconciled locally above. A channel view
+        // does not change followed-thread membership, so refreshing the CRT
+        // snapshot here would turn every channel acknowledgement into two
+        // unnecessary HTTP requests (followed + unread).
     });
 
     connect(&backend_, &Backend::onWebSocketConnect,

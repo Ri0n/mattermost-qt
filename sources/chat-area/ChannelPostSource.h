@@ -8,6 +8,7 @@
 #include <QVector>
 
 #include "IndexedPostSource.h"
+#include "PostSourceRequestGate.h"
 
 namespace Mattermost {
 
@@ -46,10 +47,9 @@ public:
     void requestBeforeFirst(RequestReason reason, quint64 generation) override;
 
 private:
-    // Visible/prefetch channel ranges use Mattermost's ten-post absolute pages.
-    // Distant boundary discovery probes candidate page starts with per_page=1;
-    // once at most two candidate pages remain, normal ten-post requests double
-    // as both boundary evidence and useful viewport/prefetch materialization.
+    // Absolute page fallback and boundary discovery use ten-post units. Normal
+    // sequential scrolling is cursor-based and newest-edge bootstrap is sized
+    // from LongList's contiguous viewport demand instead of this transport unit.
     static constexpr int ServerPageSize = 10;
     // Large-channel top-edge search starts this far inside the estimated count.
     // This is a latency heuristic only; inward/outward boundary search keeps
@@ -83,6 +83,7 @@ private:
                             int windowSize,
                             int preferredFirst) const;
     bool isAuthoritativePost(const QString& postId) const;
+    bool isCursorReadyIndex(int index) const;
     bool placeNavigationContext(const QString& targetPostId,
                                 const QStringList& chronologicalIds,
                                 bool reachedOldest,
@@ -101,6 +102,7 @@ private:
     void probeOldestBoundary();
     void loadOldestBoundaryPage(int page);
     void finishOldestBoundaryProbe();
+    void finishBoundaryRequest();
     void reconcileRootCount(int actualCount);
     void ensureMinimumRootCount(int minimumCount);
     void insertLogicalPrefix(int count);
@@ -131,6 +133,7 @@ private:
 
     ProvisionalWindow provisionalWindow;
     QSet<QString> provisionalPostIds;
+    PostSourceRequestGate boundaryRequestGate;
 };
 
 } // namespace Mattermost

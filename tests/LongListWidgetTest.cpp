@@ -94,24 +94,29 @@ private slots:
                  "A uniform 10k list must map the middle of the scrollbar near logical item 5000");
     }
 
-    void missingItemsRequestWholeBlocksWithoutGapWidgets()
+    void missingItemsRequestContiguousViewportDemand()
     {
         TestLongListWidget list;
         list.resize(480, 360);
         list.setDefaultItemHeight(90);
-        list.setRequestBlockSize(10);
+        // requestBlockSize is a random-seek window hint, not transport paging.
+        // Ordinary viewport demand must therefore be allowed to exceed it.
+        list.setRequestBlockSize(3);
         list.setItemCount(1000);
         QSignalSpy requests(&list, &Mattermost::LongListWidget::rangeRequested);
         list.show();
         settleEvents();
 
-        QVERIFY2(requests.count() > 0,
-                 "An unavailable visible range must request data");
-        const QList<QVariant> first = requests.takeFirst();
-        const int requestedFirst = first.at(0).toInt();
-        const int requestedLast = first.at(1).toInt();
-        QCOMPARE(requestedFirst % 10, 0);
-        QCOMPARE(requestedLast - requestedFirst + 1, 10);
+        QCOMPARE(requests.count(), 1);
+        const QList<QVariant> request = requests.takeFirst();
+        const int requestedFirst = request.at(0).toInt();
+        const int requestedLast = request.at(1).toInt();
+        const auto visible = list.visibleRange();
+        QVERIFY(visible.isValid());
+        QVERIFY(requestedFirst <= visible.first);
+        QVERIFY(requestedLast >= visible.last);
+        QVERIFY2(requestedLast - requestedFirst + 1 > 3,
+                 "Viewport demand must not be subdivided by the random-seek block size");
         QCOMPARE(list.materializedCount(), 0);
     }
 
@@ -136,23 +141,23 @@ private slots:
         QCOMPARE(requests.count(), 0);
 
         // Moving one item upward leaves only four known rows (50..53) before
-        // the gap. The desired range must now include index 49 and therefore
-        // request its whole 10-item block before the viewport reaches the gap.
+        // the gap. The desired range must now include index 49 and request that
+        // actual missing run before the viewport reaches it.
         list.scrollToIndex(54, Mattermost::LongListWidget::Alignment::Top);
         settleEvents(12);
         QVERIFY2(requests.count() > 0,
                  "A gap must be requested before fewer than five known items remain");
 
-        bool requestedPreviousBlock = false;
+        bool requestedGap = false;
         for (int i = 0; i < requests.count(); ++i) {
             const QList<QVariant> request = requests.at(i);
-            if (request.at(0).toInt() == 40 && request.at(1).toInt() == 49) {
-                requestedPreviousBlock = true;
+            if (request.at(0).toInt() <= 49 && request.at(1).toInt() >= 49) {
+                requestedGap = true;
                 break;
             }
         }
-        QVERIFY2(requestedPreviousBlock,
-                 "The five-item logical prefetch margin must request block 40..49");
+        QVERIFY2(requestedGap,
+                 "The five-item logical prefetch margin must request the adjacent missing item");
     }
 
     void materializationIsBoundedWithoutPlaceholderRows()
@@ -537,7 +542,7 @@ private slots:
                  "Dropping stale provisional geometry must preserve the active viewport lock");
     }
 
-    void bodyAvailabilityDropRerequestsSameLogicalBlock()
+    void bodyAvailabilityDropRerequestsSameLogicalIdentity()
     {
         TestLongListWidget list;
         list.resize(480, 320);
@@ -560,16 +565,16 @@ private slots:
         QVERIFY(!list.isItemAvailable(55));
         QCOMPARE(list.itemWidget(55), nullptr);
 
-        bool requestedIdentityBlock = false;
+        bool requestedIdentity = false;
         for (int i = 0; i < requests.count(); ++i) {
             const QList<QVariant> request = requests.at(i);
-            if (request.at(0).toInt() == 50 && request.at(1).toInt() == 59) {
-                requestedIdentityBlock = true;
+            if (request.at(0).toInt() == 55 && request.at(1).toInt() == 55) {
+                requestedIdentity = true;
                 break;
             }
         }
-        QVERIFY2(requestedIdentityBlock,
-                 "Dropping only a resident body must re-request its existing 10-item logical block");
+        QVERIFY2(requestedIdentity,
+                 "Dropping only a resident body must re-request that logical identity without artificial block expansion");
 
         // Rematerialization restores body availability only. No item-count or
         // structural mutation is needed for the same semantic source identity.

@@ -36,6 +36,23 @@ target_link_libraries(long-list-widget-removal-test
 add_test(NAME long-list-widget-removal-test COMMAND long-list-widget-removal-test)
 set_tests_properties(long-list-widget-removal-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+add_executable(post-source-request-gate-test
+    PostSourceRequestGateTest.cpp
+)
+
+target_include_directories(post-source-request-gate-test
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/sources"
+)
+
+target_link_libraries(post-source-request-gate-test
+    PRIVATE
+        Qt${QT_VERSION_MAJOR}::Test
+        Qt${QT_VERSION_MAJOR}::Core
+)
+
+add_test(NAME post-source-request-gate-test COMMAND post-source-request-gate-test)
+
 add_executable(message-formatter-test
     MessageFormatterTest.cpp
     "${CMAKE_SOURCE_DIR}/sources/chat-area/post/MessageFormatter.cpp"

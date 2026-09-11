@@ -121,11 +121,19 @@ void WebSocketEventHandler::deliverPost(const QString& channelId,
 	const uint64_t createAt = postObject.value(QStringLiteral("create_at"))
 		.toVariant().toULongLong();
 	channel->last_post_at = std::max(channel->last_post_at, createAt);
-	if (postObject.value(QStringLiteral("root_id")).toString().isEmpty()) {
+	const QString rootId = postObject.value(QStringLiteral("root_id")).toString();
+	if (rootId.isEmpty()) {
 		channel->last_root_post_at = std::max(channel->last_root_post_at, createAt);
 	}
 
-	if (!repository.shouldRetainChannelInMemory(channelId)) {
+	// A detached/docked thread can remain visible while its parent channel is no
+	// longer Backend::currentChannel and its channel-open horizon has expired.
+	// ThreadPostSource already leases its root post for exactly that lifetime.
+	// Admit replies to such a leased root without turning the entire cold channel
+	// into a resident working set.
+	const bool openThreadReply = !rootId.isEmpty()
+		&& repository.isPostLeased(channelId, rootId);
+	if (!repository.shouldRetainChannelInMemory(channelId) && !openThreadReply) {
 		// Global unread/mention/desktop-notification consumers still need the
 		// event, but an inactive cold channel must not gain a durable BackendPost.
 		// Backend::onNewPost is currently a same-thread direct signal, so this

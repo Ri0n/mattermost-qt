@@ -6,6 +6,7 @@
 #include <QString>
 
 #include "IndexedPostSource.h"
+#include "PostSourceRequestGate.h"
 #include "ThreadNavigationPlacement.h"
 #include "backend/PostResidencyLease.h"
 
@@ -60,12 +61,14 @@ private:
     uint64_t estimatedCreateAt(int logicalIndex) const;
     int estimatedIndexForPost(const BackendPost& post) const;
     void appendLiveReply(BackendPost& post);
+    void finishBoundaryRequest();
 
     Backend& backend;
     QString rootId;
     PostResidencyLease rootResidencyLease;
     QSet<QString> provisionalPostIds;
     ThreadNavigationPlacement navigationPlacement;
+    PostSourceRequestGate boundaryRequestGate;
 };
 
 } // namespace Mattermost

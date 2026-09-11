@@ -282,14 +282,16 @@ void ThreadPostSource::requestRange(int first,
     QPointer<ThreadPostSource> guard(this);
     BackendPost* root = rootPost();
 
-    // The oldest edge is authoritative. Fetch it directly even if the same
-    // logical block also overlaps the tail of a short thread.
+    // The oldest edge is authoritative too. When LongList explicitly asks for a
+    // contiguous start window, satisfy that demand in one server request instead
+    // of exposing another transport-sized subdivision to the view.
     if (requestedFirst <= 1) {
+        const int fetchCount = std::max(ServerBlockSize, requestedLast + 1);
         qCDebug(lcThreadTimelineTrace).nospace()
             << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
-            << " branch=initial";
+            << " branch=initial perPage=" << fetchCount;
         PostTimelineService::instance(backend).loadThreadPage(
-            channel, rootId, ServerBlockSize, QString(), 0,
+            channel, rootId, fetchCount, QString(), 0,
             [guard, first, last](const PostTimelineService::Page& result) {
                 if (!guard) {
                     return;
@@ -337,6 +339,19 @@ void ThreadPostSource::requestRange(int first,
         << " requested=[" << requestedFirst << ',' << requestedLast << ']'
         << " missing=[" << firstMissing << ',' << lastMissing << ']';
 
+    const int missingCount = lastMissing - firstMissing + 1;
+
+    if (boundaryRequestGate.isActive() && reason != RequestReason::Seek
+        && boundaryRequestGate.canAttach(firstMissing, lastMissing)) {
+        const PostSourceRequestGate::Range expected = boundaryRequestGate.expectedRange();
+        qCDebug(lcThreadTimelineTrace).nospace()
+            << "THREAD_REQUEST_ATTACH source=" << static_cast<const void*>(this)
+            << " requested=[" << first << ',' << last << ']'
+            << " expected=[" << expected.first << ',' << expected.last << ']';
+        boundaryRequestGate.attach(first, last);
+        return;
+    }
+
     // Once either side of a gap is known, that identity is a stronger anchor
     // than a timestamp estimate. Fill sequentially from the adjacent cursor.
     if (firstMissing > 0 && isCursorReadyIndex(firstMissing - 1)) {
@@ -344,14 +359,25 @@ void ThreadPostSource::requestRange(int first,
         const QString anchorId = postIds.at(anchorIndex);
         BackendPost* anchorPost = channel.postIdToPost.value(anchorId, nullptr);
         const uint64_t anchorCreateAt = anchorPost ? anchorPost->create_at : 0;
+        const int fetchCount = std::max(ServerBlockSize, missingCount);
+        const bool gated = reason != RequestReason::Seek && !boundaryRequestGate.isActive();
+        if (gated) {
+            boundaryRequestGate.begin(
+                anchorIndex + 1,
+                std::min(static_cast<int>(postIds.size()) - 1, anchorIndex + fetchCount),
+                first, last);
+        }
         qCDebug(lcThreadTimelineTrace).nospace()
             << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
             << " branch=cursor-forward anchorIndex=" << anchorIndex
             << " anchor=" << shortId(anchorId)
-            << " firstMissing=" << firstMissing;
+            << " firstMissing=" << firstMissing
+            << " perPage=" << fetchCount
+            << " gated=" << gated;
         PostTimelineService::instance(backend).loadThreadAfter(
-            channel, rootId, anchorId, anchorCreateAt, ServerBlockSize,
-            [guard, anchorIndex, anchorId, first, last](const PostTimelineService::Page& result) {
+            channel, rootId, anchorId, anchorCreateAt, fetchCount,
+            [guard, anchorIndex, anchorId, first, last, gated](
+                const PostTimelineService::Page& result) {
                 if (!guard) {
                     return;
                 }
@@ -367,7 +393,11 @@ void ThreadPostSource::requestRange(int first,
                 if (result.success && !result.postIds.isEmpty()) {
                     guard->placeExactWindow(anchorIndex + 1, result.postIds);
                 }
-                emit guard->rangeRequestFinished(first, last);
+                if (gated) {
+                    guard->finishBoundaryRequest();
+                } else {
+                    emit guard->rangeRequestFinished(first, last);
+                }
             });
         return;
     }
@@ -379,14 +409,25 @@ void ThreadPostSource::requestRange(int first,
         const QString anchorId = postIds.at(anchorIndex);
         BackendPost* anchorPost = channel.postIdToPost.value(anchorId, nullptr);
         const uint64_t anchorCreateAt = anchorPost ? anchorPost->create_at : 0;
+        const int fetchCount = std::max(ServerBlockSize, missingCount);
+        const bool gated = reason != RequestReason::Seek && !boundaryRequestGate.isActive();
+        if (gated) {
+            boundaryRequestGate.begin(
+                std::max(1, anchorIndex - fetchCount),
+                anchorIndex - 1,
+                first, last);
+        }
         qCDebug(lcThreadTimelineTrace).nospace()
             << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
             << " branch=cursor-backward anchorIndex=" << anchorIndex
             << " anchor=" << shortId(anchorId)
-            << " lastMissing=" << lastMissing;
+            << " lastMissing=" << lastMissing
+            << " perPage=" << fetchCount
+            << " gated=" << gated;
         PostTimelineService::instance(backend).loadThreadBefore(
-            channel, rootId, anchorId, anchorCreateAt, ServerBlockSize,
-            [guard, anchorIndex, anchorId, first, last](const PostTimelineService::Page& result) {
+            channel, rootId, anchorId, anchorCreateAt, fetchCount,
+            [guard, anchorIndex, anchorId, first, last, gated](
+                const PostTimelineService::Page& result) {
                 if (!guard) {
                     return;
                 }
@@ -407,19 +448,40 @@ void ThreadPostSource::requestRange(int first,
                         guard->placeExactWindow(anchorIndex - pageCount, page);
                     }
                 }
-                emit guard->rangeRequestFinished(first, last);
+                if (gated) {
+                    guard->finishBoundaryRequest();
+                } else {
+                    emit guard->rangeRequestFinished(first, last);
+                }
             });
         return;
     }
 
-    // With no adjacent known identity, the newest boundary is still exact.
-    if (requestedLast >= static_cast<int>(postIds.size()) - ServerBlockSize) {
+    // The newest edge is exact. If the demand reaches it, bootstrap the whole
+    // requested suffix with one tail request. This is deliberately sized from
+    // viewport demand rather than ServerBlockSize so FullHD/UHD viewports do not
+    // fan out into several concurrent ten-message transport decisions.
+    if (requestedLast == static_cast<int>(postIds.size()) - 1) {
+        const int fetchCount = std::max(
+            ServerBlockSize, static_cast<int>(postIds.size()) - firstMissing);
+        const int expectedFirst = std::max(
+            1, static_cast<int>(postIds.size()) - fetchCount);
+        const bool gated = reason != RequestReason::Seek && !boundaryRequestGate.isActive();
+        if (gated) {
+            boundaryRequestGate.begin(expectedFirst,
+                                      static_cast<int>(postIds.size()) - 1,
+                                      first, last);
+        }
+
         qCDebug(lcThreadTimelineTrace).nospace()
             << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
-            << " branch=tail lastReplyAt=" << root->last_reply_at;
+            << " branch=tail lastReplyAt=" << root->last_reply_at
+            << " perPage=" << fetchCount
+            << " expectedFirst=" << expectedFirst
+            << " gated=" << gated;
         PostTimelineService::instance(backend).loadThreadTail(
-            channel, rootId, ServerBlockSize, root->last_reply_at,
-            [guard, first, last](const PostTimelineService::Page& result) {
+            channel, rootId, fetchCount, root->last_reply_at,
+            [guard, first, last, gated](const PostTimelineService::Page& result) {
                 if (!guard) {
                     return;
                 }
@@ -433,7 +495,11 @@ void ThreadPostSource::requestRange(int first,
                 if (result.success && !result.postIds.isEmpty()) {
                     guard->placeTail(result.postIds);
                 }
-                emit guard->rangeRequestFinished(first, last);
+                if (gated) {
+                    guard->finishBoundaryRequest();
+                } else {
+                    emit guard->rangeRequestFinished(first, last);
+                }
             });
         return;
     }
@@ -441,12 +507,14 @@ void ThreadPostSource::requestRange(int first,
     // Only a genuinely disconnected random middle window needs timestamp seek.
     const int target = (requestedFirst + requestedLast) / 2;
     const uint64_t estimatedTime = estimatedCreateAt(target);
+    const int fetchCount = std::max(ServerBlockSize, missingCount);
     qCDebug(lcThreadTimelineTrace).nospace()
         << "THREAD_REQUEST_BRANCH source=" << static_cast<const void*>(this)
         << " branch=approx target=" << target
-        << " fromCreateAt=" << estimatedTime;
+        << " fromCreateAt=" << estimatedTime
+        << " perPage=" << fetchCount;
     PostTimelineService::instance(backend).loadThreadFromTime(
-        channel, rootId, ServerBlockSize, estimatedTime,
+        channel, rootId, fetchCount, estimatedTime,
         [guard, target, first, last](const PostTimelineService::Page& result) {
             if (!guard) {
                 return;
@@ -464,6 +532,14 @@ void ThreadPostSource::requestRange(int first,
             }
             emit guard->rangeRequestFinished(first, last);
         });
+}
+
+void ThreadPostSource::finishBoundaryRequest()
+{
+    const QVector<PostSourceRequestGate::Range> waiters = boundaryRequestGate.finish();
+    for (const PostSourceRequestGate::Range& waiter : waiters) {
+        emit rangeRequestFinished(waiter.first, waiter.last);
+    }
 }
 
 BackendPost* ThreadPostSource::rootPost() const

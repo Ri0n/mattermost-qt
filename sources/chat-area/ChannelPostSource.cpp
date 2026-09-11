@@ -241,7 +241,6 @@ void ChannelPostSource::requestRange(int first,
                                      RequestReason reason,
                                      quint64 generation)
 {
-    Q_UNUSED(reason)
     Q_UNUSED(generation)
 
     if (!hasRootCountEstimate || postIds.isEmpty()) {
@@ -273,27 +272,189 @@ void ChannelPostSource::requestRange(int first,
         return;
     }
 
-    int firstMissing = requestedFirst;
-    while (firstMissing <= requestedLast && isAvailable(firstMissing)) {
-        ++firstMissing;
+    // Select one contiguous unavailable run. If random navigation left an
+    // authoritative island inside this viewport demand, the next sync will ask
+    // for the other side after this physical request completes.
+    int firstMissing = -1;
+    int lastMissing = -1;
+    for (int index = requestedFirst; index <= requestedLast; ++index) {
+        if (isAvailable(index)) {
+            if (firstMissing >= 0) {
+                break;
+            }
+            continue;
+        }
+        if (firstMissing < 0) {
+            firstMissing = index;
+        }
+        lastMissing = index;
     }
-    if (firstMissing > requestedLast) {
+    if (firstMissing < 0) {
         emit rangeRequestFinished(first, last);
         return;
     }
 
-    int lastMissing = requestedLast;
-    while (lastMissing > firstMissing && isAvailable(lastMissing)) {
-        --lastMissing;
+    const int missingCount = lastMissing - firstMissing + 1;
+    const bool exactPagingAllowed = !provisionalWindow.isValid();
+
+    // Attach only demand that the current exact request is expected to satisfy
+    // or directly extend. We deliberately do not extend the gate itself: if the
+    // user scrolls farther before the response arrives, that distant demand is
+    // free to start independently rather than forming a stale request queue.
+    if (exactPagingAllowed && boundaryRequestGate.isActive()
+        && reason != RequestReason::Seek
+        && boundaryRequestGate.canAttach(firstMissing, lastMissing)) {
+        const PostSourceRequestGate::Range expected = boundaryRequestGate.expectedRange();
+        qCDebug(lcTimelineChannel).nospace()
+            << "RANGE_ATTACH requested=[" << first << ',' << last
+            << "] expected=[" << expected.first << ',' << expected.last << ']';
+        boundaryRequestGate.attach(first, last);
+        return;
     }
 
-    // Mattermost channel history has one paging unit here: ten root posts.
-    // Logical list blocks are anchored at the oldest end while Mattermost page
-    // numbers are anchored at the newest end, so one ten-item logical request
-    // can straddle two server pages. Load every absolute page intersecting the
-    // missing range; do not turn already known post identities into paging
-    // cursors. Those identities are useful for semantic-position estimation and
-    // overlap reconciliation, not for choosing the next HTTP request boundary.
+    QPointer<ChannelPostSource> guard(this);
+
+    // Sequential history walking should use an exact resident identity, not an
+    // absolute page derived from the approximate channel row count. This also
+    // keeps join/leave and other count-excluded roots from influencing ordinary
+    // wheel scrolling once an exact neighbourhood has been established.
+    if (exactPagingAllowed && firstMissing > 0
+        && isCursorReadyIndex(firstMissing - 1)) {
+        const int anchorIndex = firstMissing - 1;
+        const QString anchorId = postIds.at(anchorIndex);
+        const int fetchCount = std::max(ServerPageSize, missingCount);
+        const bool gated = reason != RequestReason::Seek && !boundaryRequestGate.isActive();
+        if (gated) {
+            boundaryRequestGate.begin(
+                anchorIndex + 1,
+                std::min(static_cast<int>(postIds.size()) - 1, anchorIndex + fetchCount),
+                first, last);
+        }
+        qCDebug(lcTimelineChannel).nospace()
+            << "RANGE_CURSOR direction=after requested=[" << requestedFirst << ','
+            << requestedLast << "] anchorIndex=" << anchorIndex
+            << " anchor=" << anchorId << " perPage=" << fetchCount
+            << " gated=" << gated;
+        PostTimelineService::instance(backend).loadChannelAfter(
+            channel, anchorId, fetchCount,
+            [guard, anchorIndex, first, last, gated](
+                const PostTimelineService::Page& result) {
+                if (!guard) {
+                    return;
+                }
+                if (result.success && !result.postIds.isEmpty()) {
+                    const int capacity = std::max(
+                        0, static_cast<int>(guard->postIds.size()) - anchorIndex - 1);
+                    const int count = std::min(
+                        static_cast<int>(result.postIds.size()), capacity);
+                    if (count > 0) {
+                        guard->publishExactWindow(guard->assignExactWindow(
+                            anchorIndex + 1, result.postIds.mid(0, count)));
+                    }
+                }
+                if (gated) {
+                    guard->finishBoundaryRequest();
+                } else {
+                    emit guard->rangeRequestFinished(first, last);
+                }
+            });
+        return;
+    }
+
+    if (exactPagingAllowed
+        && lastMissing + 1 < static_cast<int>(postIds.size())
+        && isCursorReadyIndex(lastMissing + 1)) {
+        const int anchorIndex = lastMissing + 1;
+        const QString anchorId = postIds.at(anchorIndex);
+        const int fetchCount = std::max(ServerPageSize, missingCount);
+        const bool gated = reason != RequestReason::Seek && !boundaryRequestGate.isActive();
+        if (gated) {
+            boundaryRequestGate.begin(
+                std::max(0, anchorIndex - fetchCount),
+                anchorIndex - 1,
+                first, last);
+        }
+        qCDebug(lcTimelineChannel).nospace()
+            << "RANGE_CURSOR direction=before requested=[" << requestedFirst << ','
+            << requestedLast << "] anchorIndex=" << anchorIndex
+            << " anchor=" << anchorId << " perPage=" << fetchCount
+            << " gated=" << gated;
+        PostTimelineService::instance(backend).loadChannelBefore(
+            channel, anchorId, fetchCount,
+            [guard, anchorIndex, first, last, gated](
+                const PostTimelineService::Page& result) {
+                if (!guard) {
+                    return;
+                }
+                if (result.success && !result.postIds.isEmpty()) {
+                    const int count = std::min(
+                        static_cast<int>(result.postIds.size()), anchorIndex);
+                    if (count > 0) {
+                        const QStringList page = result.postIds.mid(
+                            result.postIds.size() - count);
+                        guard->publishExactWindow(guard->assignExactWindow(
+                            anchorIndex - count, page));
+                    }
+                }
+                if (gated) {
+                    guard->finishBoundaryRequest();
+                } else {
+                    emit guard->rangeRequestFinished(first, last);
+                }
+            });
+        return;
+    }
+
+    // The newest channel edge is authoritative and page zero is the cheapest
+    // bootstrap. Size it to the contiguous viewport demand instead of issuing
+    // several ten-post page requests just because LongList wants two screens of
+    // prefetched rows.
+    if (requestedLast == static_cast<int>(postIds.size()) - 1) {
+        const int fetchCount = std::max(
+            ServerPageSize, static_cast<int>(postIds.size()) - firstMissing);
+        const int expectedFirst = std::max(
+            0, static_cast<int>(postIds.size()) - fetchCount);
+        const bool gated = exactPagingAllowed && reason != RequestReason::Seek
+            && !boundaryRequestGate.isActive();
+        if (gated) {
+            boundaryRequestGate.begin(expectedFirst,
+                                      static_cast<int>(postIds.size()) - 1,
+                                      first, last);
+        }
+        qCDebug(lcTimelineChannel).nospace()
+            << "RANGE_TAIL requested=[" << requestedFirst << ',' << requestedLast
+            << "] perPage=" << fetchCount << " expectedFirst=" << expectedFirst
+            << " gated=" << gated;
+        PostTimelineService::instance(backend).loadChannelPage(
+            channel, 0, fetchCount,
+            [guard, first, last, gated](const PostTimelineService::Page& result) {
+                if (!guard) {
+                    return;
+                }
+                if (result.success) {
+                    if (result.postIds.empty()) {
+                        guard->reconcileRootCount(0);
+                    } else {
+                        // placePage() normally grows by its fixed absolute-page
+                        // unit. A viewport-sized page zero can be larger, so make
+                        // room first while still keeping the newest edge fixed.
+                        guard->ensureMinimumRootCount(
+                            static_cast<int>(result.postIds.size()));
+                        guard->placePage(0, result.postIds);
+                    }
+                }
+                if (gated) {
+                    guard->finishBoundaryRequest();
+                } else {
+                    emit guard->rangeRequestFinished(first, last);
+                }
+            });
+        return;
+    }
+
+    // Disconnected/random positions and provisional navigation reconciliation
+    // still use absolute pages. They are intentionally independent from an
+    // unrelated in-flight exact scroll request.
     const int newestPage = pageForIndex(lastMissing);
     const int oldestPage = pageForIndex(firstMissing);
     const int pageCount = oldestPage - newestPage + 1;
@@ -302,7 +463,6 @@ void ChannelPostSource::requestRange(int first,
         return;
     }
 
-    QPointer<ChannelPostSource> guard(this);
     auto pending = std::make_shared<int>(pageCount);
     const auto finishPage = [guard, pending, first, last] {
         if (!guard) {
@@ -570,7 +730,7 @@ void ChannelPostSource::probeOldestBoundary()
 
             const bool exists = !result.postIds.isEmpty();
             qCDebug(lcTimelineChannel).nospace()
-                << "OLDEST_BOUNDARY_RESULT page=" << page
+                << "OLDEST_BOUNDARY_INITIAL_RESULT page=" << page
                 << " offset=" << offset
                 << " exists=" << exists;
 
@@ -696,6 +856,14 @@ void ChannelPostSource::finishOldestBoundaryProbe()
         if (waiter) {
             waiter();
         }
+    }
+}
+
+void ChannelPostSource::finishBoundaryRequest()
+{
+    const QVector<PostSourceRequestGate::Range> waiters = boundaryRequestGate.finish();
+    for (const PostSourceRequestGate::Range& waiter : waiters) {
+        emit rangeRequestFinished(waiter.first, waiter.last);
     }
 }
 
@@ -965,6 +1133,14 @@ bool ChannelPostSource::isAuthoritativePost(const QString& postId) const
 {
     return !postId.isEmpty() && postIndexes.contains(postId)
         && !provisionalPostIds.contains(postId);
+}
+
+bool ChannelPostSource::isCursorReadyIndex(int index) const
+{
+    if (index < 0 || index >= static_cast<int>(postIds.size())) {
+        return false;
+    }
+    return isAuthoritativePost(postIds.at(index)) && isAvailable(index);
 }
 
 bool ChannelPostSource::placeNavigationContext(const QString& targetPostId,
