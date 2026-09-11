@@ -65,8 +65,6 @@ public:
 
     void ensureTeamMembers(BackendTeam& team,
                            std::function<void()> callback = {});
-    void ensureChannelMembers(BackendChannel& channel,
-                              std::function<void()> callback = {});
     /** Load a group DM's small member set and rebuild its client-side title. */
     void ensureGroupChannelMembers(BackendChannel& channel,
                                    std::function<void()> callback = {});
