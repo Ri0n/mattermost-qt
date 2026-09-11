@@ -20,13 +20,21 @@ void UserProfileService::queryChannelMemberCount(
     BackendChannel& channel,
     std::function<void(int)> callback)
 {
+    if (channel.member_count >= 0) {
+        if (callback) {
+            callback(channel.member_count);
+        }
+        return;
+    }
+
     NetworkRequest request(
         QStringLiteral("channels/") + channel.id + QStringLiteral("/stats"));
     httpConnector.get(request, HttpResponseCallback(
-        [callback = std::move(callback)](const QJsonDocument& doc) mutable {
+        [&channel, callback = std::move(callback)](const QJsonDocument& doc) mutable {
+            channel.member_count = std::max(0,
+                doc.object().value(QStringLiteral("member_count")).toInt());
             if (callback) {
-                callback(std::max(0,
-                    doc.object().value(QStringLiteral("member_count")).toInt()));
+                callback(channel.member_count);
             }
         }));
 }
