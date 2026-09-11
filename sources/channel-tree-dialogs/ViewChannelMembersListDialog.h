@@ -1,7 +1,7 @@
 /**
  * @file ViewChannelMembersListDialog.h
  * @brief 'View Channel Members' context menu item dialog
- * @author Lyubomir Filipov
+ * @author Lyubir Filipov
  * @date Apr 17, 2023
  *
  * Copyright 2021, 2022 Lyubomir Filipov
@@ -88,6 +88,7 @@ private:
 
     QString searchTerm;
     int memberCount = 0;
+    int memberGeneration = 0;
     int searchGeneration = 0;
     bool searchMode = false;
 };
