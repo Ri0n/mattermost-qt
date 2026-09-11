@@ -5,7 +5,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -464,6 +464,10 @@ void ChatArea::init()
         return;
     }
 
+    if (!isThread && channel.member_count >= 0) {
+        channelMemberCount = channel.member_count;
+    }
+
     setupPostSource();
 
     // The semantic source object remains alive while a channel page is inactive,
@@ -494,8 +498,8 @@ void ChatArea::init()
 
         signalConnections.push_back(connect(&channel, &BackendChannel::onUserAdded,
                                             this, [this](const BackendUser&) {
-            if (channelMemberCount >= 0) {
-                ++channelMemberCount;
+            if (channel.member_count >= 0) {
+                channelMemberCount = channel.member_count;
                 updateUsersButton();
             } else {
                 requestChannelMemberCount();
@@ -503,8 +507,8 @@ void ChatArea::init()
         }));
         signalConnections.push_back(connect(&channel, &BackendChannel::onUserRemoved,
                                             this, [this](const BackendUser&) {
-            if (channelMemberCount >= 0) {
-                channelMemberCount = std::max(0, channelMemberCount - 1);
+            if (channel.member_count >= 0) {
+                channelMemberCount = channel.member_count;
                 updateUsersButton();
             } else {
                 requestChannelMemberCount();
