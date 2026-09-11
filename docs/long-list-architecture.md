@@ -49,13 +49,14 @@ QAbstractScrollArea
 locks. `ChatLogWidget` owns post-specific presentation, actions and semantic post-ID identity.
 `AbstractPostSource` is the view/source interface; `IndexedPostSource` owns the transport-agnostic
 logical ID slot map, exact-window mutation and structural source signals shared by channel/thread
-sources. Concrete sources alone decide what server evidence makes a placement exact.
-`PostTimelineService` owns range retrieval, in-flight request coalescing and cache tiers. See
-`post-source-architecture.md` for the complete source-layer contract.
+sources. Concrete sources alone decide what server evidence makes a placement exact and how current
+logical demand maps to edge/cursor/page transport. `PostTimelineService` owns retrieval, physical HTTP
+request coalescing and cache tiers. See `post-source-architecture.md` for the complete source-layer
+contract.
 
 Channel and thread logs share the same widget and therefore the same scrollbar, materialization,
-seek, resize and pruning semantics. Their only meaningful difference is how a logical range is
-resolved/fetched.
+seek, resize and pruning semantics. Their meaningful differences are how logical ranges are
+resolved/fetched and how their server-side counts prove sequence boundaries.
 
 ## LongListWidget responsibilities
 
@@ -70,7 +71,7 @@ resolved/fetched.
 - the current ordinary logical viewport anchor;
 - an optional persistent logical-item viewport lock;
 - random-thumb-seek generation/debounce state;
-- pending block requests;
+- pending logical range requests;
 - asynchronous item-geometry dirtiness;
 - recognition of direct user scroll intent.
 
@@ -228,7 +229,8 @@ user intent belongs entirely to `LongListWidget`; domain subclasses do not overr
 inspect scrollbar signals.
 
 After the scrollbar value changes, `LongListWidget` computes the visible logical range plus a
-configurable buffer. Missing data is requested in whole blocks.
+configurable buffer. For ordinary scrolling it reports each contiguous missing run as logical demand;
+it does not split that run into arbitrary transport-sized ten-item blocks.
 
 ```text
 user scroll gesture
@@ -236,9 +238,14 @@ user scroll gesture
   -> change scrollbar value
   -> compute logical visible + buffer range
   -> materialize available items
-  -> request unavailable blocks
+  -> request contiguous unavailable demand
   -> emit userViewportChanged(atEnd)
 ```
+
+This distinction is important: a desired tail such as `131..161` should reach the source as one range.
+The source may then satisfy it with one exact newest-edge request rather than treating `130..139`,
+`140..149`, `150..159`, and `160..161` as independent transport jobs. The widget describes **what it
+needs**; the source decides **how to fetch it**.
 
 Loading adjacent data never recenters the viewport.
 
@@ -283,20 +290,19 @@ center TARGET using the new geometry
         |
 calculate actual viewport + buffer coverage
         |
-request additional whole blocks only where coverage is missing
+request additional contiguous missing demand
 ```
 
 A new seek target increments the seek generation. Results from an older generation may still enter
 the memory/disk cache, but `LongListWidget` only materializes what the current viewport/seek needs,
 so stale results have no authority to move the viewport.
 
-Channel history range loading uses a single paging contract: Mattermost absolute pages with
-`per_page=10`. Already known post identities are not reused as `before`/`after` paging boundaries.
-They are inputs to semantic-position estimation and overlap reconciliation only. Because logical
-blocks are aligned from the oldest end while Mattermost pages are aligned from the newest end, one
-ten-item logical request may intersect two server pages; the source loads both and places each via
-its absolute page number. Once the oldest boundary is known, a jump to any scrollbar position is
-therefore O(1) page requests rather than an identity-cursor walk through history.
+For channel history the newest edge and known post identities are preferred over absolute-page
+arithmetic during ordinary reading. A demand touching the known newest edge is bootstrapped with one
+`page=0` request sized for that demand; after that, adjacent gaps are filled through `before`/`after`
+post identities. Absolute pages remain useful for genuinely disconnected random positioning and for
+the oldest-boundary repair described below. This prevents an approximate channel row count from
+influencing every wheel-scroll request after exact identities already exist.
 
 `total_msg_count_root` is only an initial coordinate estimate for `/posts`, not its row count.
 Deleted roots can make the counter larger than visible history, while join/leave and other system
@@ -318,28 +324,39 @@ Near a bounded edge, when at most two unknown ten-post pages remain, the source 
 one-root probes and materializes the first unknown page with `per_page=10`. A short page proves the
 exact count; a full page adjacent to known emptiness proves an exact multiple of ten. Exact
 reconciliation may therefore remove a phantom prefix or insert a missing oldest prefix. The 3% value
-changes latency only, never correctness, and no identity cursor is introduced by this repair path.
+changes latency only, never correctness.
 
 This replaces the old controller-level `TimelineSeekState` state machine.
 
-## Request block policy
+## Request demand policy
 
-A request is rounded to a normal block size (initially 10 for interactive seek/prefetch). Asking for
-one missing logical item therefore still produces an efficient block request.
+Ordinary viewport/prefetch demand is not rounded to a fixed block size by `LongListWidget`. The list
+emits a contiguous missing logical range and lets the source choose an efficient physical request.
+Sources may impose a minimum transport page size; for example a two-item cursor gap can still fetch ten
+rows and make the next scroll free.
 
-`LongListWidget` only deduplicates logical items already requested but not yet reported available.
-Every `rangeRequested(first,last,...)` must eventually be paired with
+Random seek remains deliberately bounded. A disconnected thumb jump asks for a small seed around the
+target before real geometry is known, rather than turning an estimated screen-wide range into a large
+speculative request.
+
+`LongListWidget` deduplicates logical items already requested but not yet reported available. Every
+`rangeRequested(first,last,...)` must eventually be paired with
 `finishRangeRequest(first,last)`, including failures and differently aligned server responses. A
 failure releases suppression but does not immediately reschedule itself, avoiding a tight retry
 loop.
 
-Network-level coalescing remains in `PostTimelineService`; the widget must not know whether a result
-came from an already materialized model object, RAM cache, SQLite or HTTP.
+Concrete post sources may additionally attach overlapping/adjacent logical waiters to an exact
+in-flight edge/cursor request through `PostSourceRequestGate`. That gate does not expand the expected
+coverage or create a FIFO prefetch queue; demand that has moved farther away is free to start
+independently. Physical-equivalent HTTP coalescing remains in `PostTimelineService`.
+
+The widget must not know whether a result came from an already materialized model object, RAM cache,
+SQLite or HTTP.
 
 ## Materialization and eviction
 
 The desired viewport window plus buffer defines what must be materialized **now** and which missing
-blocks should be requested. It is not the destruction boundary for already-created widgets.
+ranges should be requested. It is not the destruction boundary for already-created widgets.
 
 `maxMaterializedItems` is a resident widget budget (initially 200). Already-created widgets are kept
 while the total remains within that budget. Consequently a short chat with, for example, 21 posts can
@@ -392,9 +409,9 @@ logical index. This matters because a cached context may know the target post be
 its authoritative server page boundary.
 
 `AbstractPostSource::ensurePostIndex(postId)` may therefore adopt an already cached target into an
-estimated empty logical slot when the source has an exact logical coordinate space. This slot is
-provisional. When an authoritative page arrives, the source is allowed to remove that provisional
-occurrence and map the same post ID to its real index.
+estimated empty logical slot when the source has a usable estimated logical coordinate space. This
+slot is provisional. When an authoritative server window arrives, the source is allowed to remove
+that provisional occurrence and map the same post ID to its real index.
 
 The ownership split is:
 
@@ -438,6 +455,7 @@ public:
 signals:
     itemCountChanged(count);
     itemsInserted(first, count);
+    itemsRemoved(first, count);
     rangeAvailable(first, last);
     itemsChanged(first, last);
     rangeRequestFinished(first, last);
@@ -445,9 +463,10 @@ signals:
 ```
 
 `ChannelPostSource` and `ThreadPostSource` adapt different Mattermost endpoints into the same logical
-contract. Their common index-to-ID bookkeeping lives in `IndexedPostSource`; absolute channel pages,
-channel count repair, thread root/cursor semantics and endpoint-specific boundary proofs remain in the
-concrete source. They do not manipulate widgets or scrollbars.
+contract. Their common index-to-ID bookkeeping lives in `IndexedPostSource`; channel count repair,
+thread root/cursor semantics and endpoint-specific boundary proofs remain in the concrete source. A
+small shared `PostSourceRequestGate` handles only attachment of compatible logical waiters to one
+exact in-flight boundary request. None of these source objects manipulate widgets or scrollbars.
 
 `BackendPost::hidden` is a channel-root-list concern: replies are intentionally marked hidden by
 `BackendChannel` so they do not appear as root rows. `ThreadPostSource` must still expose posts whose
@@ -463,9 +482,15 @@ permalink/Attention/Recent -> semantic post-ID identity + LongListWidget viewpor
 
 ### Exact versus unknown logical count
 
-`LongListWidget::itemCount()` describes actual logical items, not spare capacity and not a UI gap.
-When `total_msg_count_root` is available, `ChannelPostSource` can provide exact oldest-to-newest
-indices immediately and may use provisional empty slots for cached semantic targets.
+`LongListWidget::itemCount()` is the source's current logical coordinate space, not spare UI capacity.
+For threads, `reply_count + 1` normally gives a reliable logical size because deleted replies are
+excluded from `ReplyCount`.
+
+For channels, `total_msg_count_root` is only an **estimate** used to initialize the oldest-to-newest
+coordinate space. It can be too small because count-excluded system roots are returned by `/posts`, or
+too large because soft-deleted normal roots remain represented in the historical counter. Empty slots
+in that estimated coordinate space are therefore unresolved source positions, not proof that a
+particular absolute index is already authoritative.
 
 Some Mattermost versions do not provide `total_msg_count_root`. A cached newest suffix is then **not**
 an exact complete channel and must not silently become one, otherwise index 0 falsely looks like the
@@ -483,9 +508,9 @@ PostSource::itemsInserted(0, count)
 ```
 
 No spare logical capacity and no fake placeholder rows are introduced. Outstanding view-side pending
-range bits are discarded on a structural index shift; the service layer still coalesces equivalent
-HTTP work. If the server reports no older cursor/data, the source marks the oldest boundary reached
-and stops repeating that request.
+range bits are discarded on a structural index shift; repository-level physical HTTP coalescing still
+prevents duplicate equivalent transport work. If the server reports no older cursor/data, the source
+marks the oldest boundary reached and stops repeating that request.
 
 Do not substitute `total_msg_count` for the missing root count: it may include thread replies and
 would create phantom logical rows.
@@ -495,9 +520,12 @@ would create phantom logical rows.
 `PostTimelineService` remains below sources and is responsible for:
 
 1. already present BackendChannel data;
-2. equivalent in-flight request coalescing;
+2. equivalent physical in-flight HTTP request coalescing;
 3. future SQLite post cache;
-4. HTTP for the remaining missing range.
+4. HTTP for the remaining missing data.
+
+Logical request planning and attachment are intentionally above that layer in the concrete post
+sources because they depend on source indices, known edges and current viewport demand.
 
 A successful stale request is still useful cache population. Cache success and viewport authority
 are deliberately separate concepts.
@@ -553,7 +581,9 @@ headers.
 `LongListWidget` is tested first with a synthetic source, without Mattermost objects:
 
 - 10,000 uniform items: middle scrollbar position maps near item 5,000;
-- missing visible items request whole blocks;
+- missing ordinary viewport items are requested as contiguous logical demand rather than arbitrary
+  transport blocks;
+- random unavailable thumb seek uses a bounded seed window;
 - no gap/placeholder widgets exist;
 - materialized QWidget count never exceeds the configured budget;
 - delayed sizeHint growth above the viewport preserves the logical anchor;
@@ -572,6 +602,11 @@ headers.
 
 Domain integration additionally needs tests that:
 
+- an ordinary channel/thread open at the newest edge can satisfy a multi-block-sized desired range
+  with one demand-sized edge request;
+- a following adjacent range continues from an authoritative before/after cursor;
+- an overlapping/adjacent request can attach to compatible in-flight boundary work while a distant
+  fast-scroll request remains independent;
 - a provisional permalink target can move to an authoritative index without moving the semantic
   viewport away from that post;
 - clearing a provisional source slot clears list availability even if no widget existed there;
