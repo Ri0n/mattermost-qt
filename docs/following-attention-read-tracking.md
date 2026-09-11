@@ -183,6 +183,43 @@ This is an important invariant: **Following and Attention must never differ in
 what counts as read.** If clicking the same semantic entry in one projection
 changes unread state while the other does not, the implementation is wrong.
 
+## Thread snapshot refresh policy
+
+`FollowingModel` keeps a shared server snapshot of followed CRT threads. Refreshing
+that snapshot is not free: `ThreadFollowService::queryFollowingThreads()` first
+requests the normal followed page and then requests the authoritative unread
+snapshot before merging them. A refresh therefore normally means at least two
+HTTP requests per team.
+
+The 300 ms `threadRefreshTimer_` is a **single-shot debounce**, not a periodic
+polling timer. It should only be scheduled when an event can make the CRT snapshot
+stale, for example:
+
+- initial/team population or WebSocket reconnect;
+- follow/unfollow membership changes;
+- incoming thread replies or root mentions that may affect Following/Attention;
+- completion/failure of an explicit CRT read acknowledgement that needs server
+  reconciliation.
+
+Ordinary channel acknowledgement is deliberately different. `Backend::onChannelViewed`
+updates channel unread state through `SidebarService`; `FollowingModel` can also
+remove synthetic root-mention entries and resynchronize DM/GM conversation rows
+entirely from local state. Viewing a channel does **not** change followed-thread
+membership and must not schedule a full CRT snapshot refresh merely because the
+channel became read.
+
+```text
+channel viewed
+    -> clear synthetic mentions for that channel
+    -> sync local DM/GM conversation projection
+    -> emit changed
+    -> no queryFollowingThreads()
+```
+
+If a future event handler schedules a refresh, it should be because the thread
+snapshot itself may have changed, not as a generic way to make the sidebar catch
+up after any read-state event.
+
 ## Thread end and server acknowledgement
 
 A followed thread can only be considered fully read when the lower-edge cursor
@@ -289,8 +326,9 @@ A root post that mentions the current user can temporarily appear as a synthetic
 thread-shaped Following/Attention entry before the shared thread snapshot has a
 real CRT object for it. Synthetic entries obey the same rule as every other
 entry: clicking one only navigates to the post. It must not be consumed on click.
-Once the containing channel is genuinely acknowledged as viewed, normal model
-reconciliation removes the synthetic mention.
+Once the containing channel is genuinely acknowledged as viewed, local model
+reconciliation removes the synthetic mention without requiring a full followed-
+thread refetch.
 
 ## Invariants for future changes
 
@@ -315,6 +353,9 @@ Do not add a second read state machine around navigation. In particular:
 - compare CRT acknowledgement/snapshot ordering only on the server post timeline;
   never compare server `create_at` / `lastReplyAt` values with client wall-clock
   time;
+- do not use `onChannelViewed` as a generic trigger for a full followed-thread
+  snapshot; local channel read projection and CRT snapshot freshness are separate
+  concerns;
 - put changes to the read definition in `ChatLogWidget` and changes to resume /
   shared projection state in `FollowingModel`, rather than duplicating logic in
   sidebar views.
