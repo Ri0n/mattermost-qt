@@ -1086,7 +1086,7 @@ void LongListWidget::evictOutside(const Range& keepRange, int preferredCenter)
 
     QVector<int> candidates;
     const QVector<int> current = materializedIndices();
-    candidates.reserve(current.size());
+    candidates.reserve(materialized.size());
     for (int index : current) {
         if (!keepRange.contains(index)) {
             candidates.push_back(index);
@@ -1221,26 +1221,28 @@ void LongListWidget::requestMissing(const Range& desired,
         return;
     }
 
+    // Express viewport demand, not transport pagination. Concrete sources know
+    // whether a contiguous missing run is best served by page zero, a cursor,
+    // a tail request or a random seek. Splitting it here into blockSize-aligned
+    // chunks can make several source decisions race before the first exact
+    // boundary response has established an anchor.
     int index = desired.first;
     while (index <= desired.last) {
-        if (available.testBit(index) || pendingRequest.testBit(index)) {
+        while (index <= desired.last
+               && (available.testBit(index) || pendingRequest.testBit(index))) {
             ++index;
-            continue;
+        }
+        if (index > desired.last) {
+            break;
         }
 
-        const int requestFirst = std::max(0, (index / blockSize) * blockSize);
-        const int requestLast = std::min(logicalCount - 1, requestFirst + blockSize - 1);
-        bool hasMissing = false;
-        for (int current = requestFirst; current <= requestLast; ++current) {
-            if (!available.testBit(current) && !pendingRequest.testBit(current)) {
-                pendingRequest.setBit(current, true);
-                hasMissing = true;
-            }
+        const int requestFirst = index;
+        while (index <= desired.last
+               && !available.testBit(index) && !pendingRequest.testBit(index)) {
+            pendingRequest.setBit(index, true);
+            ++index;
         }
-        if (hasMissing) {
-            emit rangeRequested(requestFirst, requestLast, reason, generation);
-        }
-        index = requestLast + 1;
+        emit rangeRequested(requestFirst, index - 1, reason, generation);
     }
 }
 
