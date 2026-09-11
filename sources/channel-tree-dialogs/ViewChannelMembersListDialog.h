@@ -80,7 +80,7 @@ private:
     LongListWidget* memberList = nullptr;
     QTimer* searchTimer = nullptr;
 
-    QStringList memberIds;
+    QVector<QString> memberIds;
     QVector<const BackendUser*> searchUsers;
     QVector<PendingRange> pendingRanges;
     QSet<int> loadedPages;
