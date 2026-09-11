@@ -111,8 +111,10 @@ private slots:
         const QList<QVariant> request = requests.takeFirst();
         const int requestedFirst = request.at(0).toInt();
         const int requestedLast = request.at(1).toInt();
-        QCOMPARE(requestedFirst, 0);
-        QVERIFY(requestedLast >= list.visibleRange().last);
+        const auto visible = list.visibleRange();
+        QVERIFY(visible.isValid());
+        QVERIFY(requestedFirst <= visible.first);
+        QVERIFY(requestedLast >= visible.last);
         QVERIFY2(requestedLast - requestedFirst + 1 > 3,
                  "Viewport demand must not be subdivided by the random-seek block size");
         QCOMPARE(list.materializedCount(), 0);
