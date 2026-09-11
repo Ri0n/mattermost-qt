@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -55,7 +55,7 @@ public:
     void addContextMenuActions (QMenu& menu, const QVariant& selectedItemData)	override;
     void setItemCountLabel (uint32_t count) 								override;
     void removeRowByData (const BackendUser& user);
-    void setProfileBackend(Backend* backend) { profileBackend = backend; }
+    void setProfileBackend(Backend* backend);
 protected:
     void changeEvent(QEvent* event) override;
     void create (const FilterListDialogConfig& cfg, const std::set<UserListEntry>& users, const QStringList& columnNames);
@@ -66,8 +66,10 @@ protected:
 private:
     void clearVisualConnections();
     void refreshUserVisual(const BackendUser* user);
+    void ensureVisibleAvatars();
 
     QVector<QMetaObject::Connection> visualConnections;
+    bool avatarViewportTrackingInstalled = false;
 };
 
 using ViewTeamMembersDialog = UserListDialog;
