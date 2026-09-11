@@ -4,6 +4,7 @@
 
 #include <QSet>
 #include <QString>
+#include <QVector>
 
 #include "IndexedPostSource.h"
 #include "ThreadNavigationPlacement.h"
@@ -42,6 +43,11 @@ public:
     }
 
 private:
+    struct PendingRange {
+        int first = -1;
+        int last = -1;
+    };
+
     static constexpr int ServerBlockSize = 10;
 
     BackendPost* rootPost() const;
@@ -60,12 +66,17 @@ private:
     uint64_t estimatedCreateAt(int logicalIndex) const;
     int estimatedIndexForPost(const BackendPost& post) const;
     void appendLiveReply(BackendPost& post);
+    void finishTailRequest();
 
     Backend& backend;
     QString rootId;
     PostResidencyLease rootResidencyLease;
     QSet<QString> provisionalPostIds;
     ThreadNavigationPlacement navigationPlacement;
+
+    bool tailRequestInFlight = false;
+    int tailRequestFirst = -1;
+    QVector<PendingRange> tailRequestWaiters;
 };
 
 } // namespace Mattermost
