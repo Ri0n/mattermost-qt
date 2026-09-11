@@ -9,6 +9,7 @@
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
 
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
@@ -27,14 +28,19 @@ void UserProfileService::queryChannelMemberCount(
         return;
     }
 
+    QPointer<BackendChannel> channelGuard(&channel);
     NetworkRequest request(
         QStringLiteral("channels/") + channel.id + QStringLiteral("/stats"));
     httpConnector.get(request, HttpResponseCallback(
-        [&channel, callback = std::move(callback)](const QJsonDocument& doc) mutable {
-            channel.member_count = std::max(0,
+        [channelGuard, callback = std::move(callback)](
+            const QJsonDocument& doc) mutable {
+            if (!channelGuard) {
+                return;
+            }
+            channelGuard->member_count = std::max(0,
                 doc.object().value(QStringLiteral("member_count")).toInt());
             if (callback) {
-                callback(channel.member_count);
+                callback(channelGuard->member_count);
             }
         }));
 }
@@ -52,14 +58,22 @@ void UserProfileService::loadChannelMembersPage(
         return;
     }
 
+    QPointer<BackendChannel> channelGuard(&channel);
     NetworkRequest request(
         QStringLiteral("channels/") + channel.id
         + QStringLiteral("/members?page=") + QString::number(page)
         + QStringLiteral("&per_page=") + QString::number(perPage));
 
     httpConnector.get(request, HttpResponseCallback(
-        [this, &channel, callback = std::move(callback)](
+        [this, channelGuard, callback = std::move(callback)](
             const QJsonDocument& doc) mutable {
+            if (!channelGuard) {
+                if (callback) {
+                    callback({});
+                }
+                return;
+            }
+
             QStringList userIds;
             userIds.reserve(doc.array().size());
             for (const auto& value : doc.array()) {
@@ -69,7 +83,7 @@ void UserProfileService::loadChannelMembersPage(
                 if (userId.isEmpty()) {
                     continue;
                 }
-                channel.addMember(backend.getStorage(), memberObject);
+                channelGuard->addMember(backend.getStorage(), memberObject);
                 userIds.push_back(userId);
             }
 
