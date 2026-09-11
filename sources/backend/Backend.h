@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -124,9 +124,6 @@ public:
 
 	//get first unread post in a channel (/users/{user_id}/channels/{channel_id}/posts/unread)
 	void retrieveChannelUnreadPost (BackendChannel& channel, std::function<void(const QString&)> responseHandler);
-
-	//get all channel members (/channels/{channel_id}/members)
-	void retrieveChannelMembers (BackendChannel& channel, std::function<void ()> callback);
 
 	//get a single channel member (/channels/{channel_id}/members/{user_id})
 	void retrieveChannelMember (BackendChannel& channel, const BackendUser& user);
