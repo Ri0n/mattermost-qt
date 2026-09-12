@@ -50,6 +50,7 @@ InteractiveTextEdit::~InteractiveTextEdit() = default;
 
 void InteractiveTextEdit::setCompletionRules(QVector<CompletionRule> rules)
 {
+    endCompletionQuery();
     completionRules.clear();
     completionRules.reserve(rules.size());
     for (CompletionRule& rule : rules) {
@@ -72,6 +73,7 @@ void InteractiveTextEdit::addCompletionRule(CompletionRule rule)
 
 void InteractiveTextEdit::clearCompletionRules()
 {
+    endCompletionQuery();
     completionRules.clear();
     hideCompletion();
 }
@@ -143,15 +145,19 @@ InteractiveTextEdit::ActiveCompletion InteractiveTextEdit::activeCompletion() co
 void InteractiveTextEdit::refreshCompletion()
 {
     if (!hasFocus()) {
+        endCompletionQuery();
         hideCompletion();
         return;
     }
 
     const ActiveCompletion active = activeCompletion();
     if (!active.isValid()) {
+        endCompletionQuery();
         hideCompletion();
         return;
     }
+
+    updateCompletionQuery(active.ruleIndex, active.query);
 
     activeRuleIndex = active.ruleIndex;
     activeQueryStart = active.queryStart;
@@ -246,6 +252,42 @@ void InteractiveTextEdit::hideCompletion()
     if (completer && completer->popup()) {
         completer->popup()->hide();
     }
+}
+
+void InteractiveTextEdit::updateCompletionQuery(int ruleIndex, const QString& query)
+{
+    if (queryRuleIndex == ruleIndex && queryText == query) {
+        return;
+    }
+
+    if (queryRuleIndex >= 0 && queryRuleIndex < completionRules.size()
+        && queryRuleIndex != ruleIndex) {
+        const CompletionQueryHandler& previous = completionRules.at(queryRuleIndex).queryChanged;
+        if (previous) {
+            previous(QString());
+        }
+    }
+
+    queryRuleIndex = ruleIndex;
+    queryText = query;
+    if (ruleIndex >= 0 && ruleIndex < completionRules.size()) {
+        const CompletionQueryHandler& handler = completionRules.at(ruleIndex).queryChanged;
+        if (handler) {
+            handler(query);
+        }
+    }
+}
+
+void InteractiveTextEdit::endCompletionQuery()
+{
+    if (queryRuleIndex >= 0 && queryRuleIndex < completionRules.size()) {
+        const CompletionQueryHandler& handler = completionRules.at(queryRuleIndex).queryChanged;
+        if (handler) {
+            handler(QString());
+        }
+    }
+    queryRuleIndex = -1;
+    queryText.clear();
 }
 
 void InteractiveTextEdit::keyPressEvent(QKeyEvent* event)

@@ -15,15 +15,26 @@
 
 namespace Mattermost {
 
+namespace {
+
+constexpr int GroupChannelMembersPageSize = 50;
+
+} // namespace
+
 void UserProfileService::ensureGroupChannelMembers(BackendChannel& channel,
                                                    std::function<void()> callback)
 {
-    ensureChannelMembers(channel, [&channel, callback = std::move(callback)]() mutable {
-        channel.refreshGroupDisplayName();
-        if (callback) {
-            callback();
-        }
-    });
+    // Group DMs are deliberately small, unlike normal channels. Keep their
+    // eager member hydration for display-name reconstruction, but build it on
+    // the same paged primitive used by the virtualized channel-member view.
+    loadChannelMembersPage(
+        channel, 0, GroupChannelMembersPageSize,
+        [&channel, callback = std::move(callback)](QStringList) mutable {
+            channel.refreshGroupDisplayName();
+            if (callback) {
+                callback();
+            }
+        });
 }
 
 } // namespace Mattermost

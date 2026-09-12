@@ -34,17 +34,23 @@
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
 #include "backend/Storage.h"
+#include "backend/UserProfileService.h"
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendDirectChannelsTeam.h"
 #include "backend/types/BackendUser.h"
 #include "navigation/AppNavigationService.h"
 
 namespace Mattermost {
+namespace {
 
-static QString getString(const QString& str)
+constexpr int ProfileAvatarSize = 128;
+
+QString getString(const QString& str)
 {
     return str.isEmpty() ? QStringLiteral("N/A") : str;
 }
+
+} // namespace
 
 UserProfileDialog::UserProfileDialog(const BackendUser& user, QWidget* parent)
     : UserProfileDialog(nullptr, user, parent)
@@ -77,43 +83,64 @@ UserProfileDialog::UserProfileDialog(Backend* backendInstance,
     setWindowTitle(QStringLiteral("Profile for ") + user.getDisplayName()
                    + QStringLiteral(" - Mattermost"));
 
-    constexpr int ProfileAvatarSize = 128;
-    if (!user.avatar.isNull()) {
-        ui->avatar->setPixmap(user.avatar.scaled(ProfileAvatarSize,
-                                                  ProfileAvatarSize,
-                                                  Qt::KeepAspectRatio,
-                                                  Qt::SmoothTransformation));
-    } else {
-        ui->avatar->clear();
-    }
     ui->avatar->setAlignment(Qt::AlignCenter);
 
-    if (!user.id.isEmpty()) {
-        const QString pictureVersion = QString::number(
-            static_cast<qulonglong>(user.last_picture_update));
-        NetworkRequest request(
-            QStringLiteral("users/") + user.id + QStringLiteral("/image?_=")
-                + pictureVersion,
-            true);
-        request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
-                             QNetworkRequest::PreferCache);
+    if (backend && !user.id.isEmpty()) {
+        // Backend-backed profile windows must share the same avatar state as
+        // chat headers, post rows and member lists. The old private GET path
+        // only painted this dialog and left BackendUser::avatar unchanged.
+        if (BackendUser* storedUser = backend->getStorage().getUserById(user.id)) {
+            connect(storedUser, &BackendUser::onAvatarChanged,
+                    this, &UserProfileDialog::refreshSharedAvatar);
+            refreshSharedAvatar();
+            UserProfileService::instance(*backend).ensureAvatar(*storedUser);
+        } else if (!user.avatar.isNull()) {
+            ui->avatar->setPixmap(user.avatar.scaled(ProfileAvatarSize,
+                                                      ProfileAvatarSize,
+                                                      Qt::KeepAspectRatio,
+                                                      Qt::SmoothTransformation));
+        } else {
+            ui->avatar->clear();
+        }
+    } else {
+        // Keep the backend-less constructor functional for legacy callers. It
+        // has no shared Storage/UserProfileService to publish the avatar into.
+        if (!user.avatar.isNull()) {
+            ui->avatar->setPixmap(user.avatar.scaled(ProfileAvatarSize,
+                                                      ProfileAvatarSize,
+                                                      Qt::KeepAspectRatio,
+                                                      Qt::SmoothTransformation));
+        } else {
+            ui->avatar->clear();
+        }
 
-        QPointer<UserProfileDialog> guard(this);
-        avatarConnector.get(request, HttpResponseCallback(
-            [guard](QByteArray avatarData) {
-                if (!guard) {
-                    return;
-                }
-                QPixmap pixmap;
-                if (!pixmap.loadFromData(avatarData)) {
-                    return;
-                }
-                guard->ui->avatar->setPixmap(
-                    pixmap.scaled(ProfileAvatarSize,
-                                  ProfileAvatarSize,
-                                  Qt::KeepAspectRatio,
-                                  Qt::SmoothTransformation));
-            }));
+        if (!user.id.isEmpty()) {
+            const QString pictureVersion = QString::number(
+                static_cast<qulonglong>(user.last_picture_update));
+            NetworkRequest request(
+                QStringLiteral("users/") + user.id + QStringLiteral("/image?_=")
+                    + pictureVersion,
+                true);
+            request.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
+                                 QNetworkRequest::PreferCache);
+
+            QPointer<UserProfileDialog> guard(this);
+            avatarConnector.get(request, HttpResponseCallback(
+                [guard](QByteArray avatarData) {
+                    if (!guard) {
+                        return;
+                    }
+                    QPixmap pixmap;
+                    if (!pixmap.loadFromData(avatarData)) {
+                        return;
+                    }
+                    guard->ui->avatar->setPixmap(
+                        pixmap.scaled(ProfileAvatarSize,
+                                      ProfileAvatarSize,
+                                      Qt::KeepAspectRatio,
+                                      Qt::SmoothTransformation));
+                }));
+        }
     }
 
     ui->fullnameValue->setText(user.first_name + QLatin1Char(' ') + user.last_name);
@@ -134,6 +161,24 @@ UserProfileDialog::UserProfileDialog(Backend* backendInstance,
 UserProfileDialog::~UserProfileDialog()
 {
     delete ui;
+}
+
+void UserProfileDialog::refreshSharedAvatar()
+{
+    if (!backend || !ui || userId.isEmpty()) {
+        return;
+    }
+
+    const BackendUser* user = backend->getStorage().getUserById(userId);
+    if (!user || user->avatar.isNull()) {
+        ui->avatar->clear();
+        return;
+    }
+
+    ui->avatar->setPixmap(user->avatar.scaled(ProfileAvatarSize,
+                                               ProfileAvatarSize,
+                                               Qt::KeepAspectRatio,
+                                               Qt::SmoothTransformation));
 }
 
 UserProfileDialog* UserProfileDialog::showTransient(Backend& backend,

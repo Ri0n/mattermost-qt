@@ -130,6 +130,7 @@ private:
 
 	void setupHeaderUi();
 	void refreshHeaderActionIcons();
+	void requestChannelMemberCount();
 	void updateUsersButton();
 	void setupPinnedPostsView();
 	void showPinnedPosts(bool show);
@@ -156,7 +157,7 @@ private:
 	QStackedWidget* contentStack = nullptr;
 	PostCollectionView* pinnedPostsView = nullptr;
 	int pendingMessageLoads = 0;
-    bool channelMembersLoaded = false;
+    int channelMemberCount = -1;
 
 public:
 	Ui::ChatArea* ui;

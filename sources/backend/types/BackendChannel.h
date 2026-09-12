@@ -184,6 +184,8 @@ public:
     int								total_msg_count;
     int								total_msg_count_root;
     bool								has_total_msg_count_root;
+    /** Authoritative /channels/{id}/stats member_count once loaded; -1 means unknown. */
+    int                                 member_count = -1;
     int								extra_update_at;
     const BackendUser*				creator;
     QMap<QString, BackendChannelMember> 		members;

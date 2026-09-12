@@ -374,6 +374,9 @@ void WebSocketEventHandler::handleEvent (const UserAddedToChannelEvent& event)
 		backend.retrieveChannel (*team, event.channelId);
 	}
 
+    if (channel && channel->member_count >= 0) {
+        ++channel->member_count;
+    }
 
 	auto addChannelMemberFn = [this, channel, team] (const BackendUser& user) {
 
@@ -453,6 +456,9 @@ void WebSocketEventHandler::handleEvent (const UserLeaveTeamEvent& event)
 		storage.eraseTeam (team->id);
 	} else {
 		for (auto &channel: team->channels) {
+            if (channel->member_count > 0) {
+                --channel->member_count;
+            }
 			channel->members.remove (user->id);
 			emit (channel->onUserRemoved (*user));
 		}
@@ -475,6 +481,10 @@ void WebSocketEventHandler::handleEvent (const UserRemovedFromChannelEvent& even
 	if (!channel || !user) {
 		return;
 	}
+
+    if (channel->member_count > 0) {
+        --channel->member_count;
+    }
 
 	//if the logged-in user is being removed, remove the channel from the team's channel list
 	if (user->id == storage.loginUser->id) {
