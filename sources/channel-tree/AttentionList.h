@@ -18,6 +18,7 @@
 #include "backend/FollowingModel.h"
 
 class QMouseEvent;
+class QTimer;
 
 namespace Mattermost {
 
@@ -59,6 +60,11 @@ private:
     // Presentation-only snapshot for keeping the selected row visible.
     // Navigation always resolves the current cursor from FollowingModel.
     std::optional<FollowingModel::Entry> retainedEntry_;
+
+    // Keep the tree geometrically stable for a brief moment after selection
+    // moves. The newly selected entry is activated immediately; only the
+    // projection rebuild/removal of the old retained row is deferred.
+    QTimer* selectionRefreshTimer_ = nullptr;
 
     bool refreshing_ = false;
     int lastAttentionCount_ = -1;
