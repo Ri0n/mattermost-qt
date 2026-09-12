@@ -70,8 +70,10 @@ AttentionList::AttentionList(QWidget* parent)
     selectionRefreshTimer_ = new QTimer(this);
     selectionRefreshTimer_->setSingleShot(true);
     selectionRefreshTimer_->setInterval(SelectionSettleDelayMs);
-    connect(selectionRefreshTimer_, &QTimer::timeout,
-            this, &AttentionList::refresh);
+    connect(selectionRefreshTimer_, &QTimer::timeout, this, [this] {
+        selectionRefreshTimer_->stop();
+        refresh();
+    });
 
     connect(this, &QTreeWidget::currentItemChanged, this,
             [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
