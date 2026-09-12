@@ -548,7 +548,8 @@ void ViewChannelMembersListDialog::filterEdited(const QString& text)
     std::sort(pages.begin(), pages.end());
     for (int page : std::as_const(pages)) {
         const int first = page * ChannelMemberPageSize;
-        const int last = std::min(memberIds.size(), first + ChannelMemberPageSize);
+        const int last = std::min(static_cast<int>(memberIds.size()),
+                                  first + ChannelMemberPageSize);
         for (int index = first; index < last; ++index) {
             const QString& userId = memberIds.at(index);
             if (userId.isEmpty() || seen.contains(userId)) {
