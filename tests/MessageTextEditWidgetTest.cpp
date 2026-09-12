@@ -83,6 +83,50 @@ private slots:
         QCoreApplication::processEvents();
         QCOMPARE(editor.toPlainText(), QStringLiteral("hello @alice "));
     }
+
+    void completionQueryChangesAreDeduplicatedAndCancelled()
+    {
+        MessageTextEditWidget editor;
+        QStringList queries;
+
+        InteractiveTextEdit::CompletionRule rule;
+        rule.prefix = QStringLiteral("@");
+        rule.provider = [] {
+            InteractiveTextEdit::CompletionCandidate alice;
+            alice.displayText = QStringLiteral("Alice Example");
+            alice.insertText = QStringLiteral("alice");
+            alice.detailText = QStringLiteral("@alice");
+            return QVector<InteractiveTextEdit::CompletionCandidate> {alice};
+        };
+        rule.queryChanged = [&queries](const QString& query) {
+            queries.push_back(query);
+        };
+        editor.setCompletionRules({std::move(rule)});
+        editor.resize(360, 40);
+        editor.show();
+        editor.setFocus();
+        QCoreApplication::processEvents();
+
+        QTest::keyClicks(&editor, QStringLiteral("@al"));
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+
+        QCOMPARE(queries.count(QStringLiteral("al")), 1);
+        QCOMPARE(queries.constLast(), QStringLiteral("al"));
+
+        // An asynchronous provider refresh for the same query must only rebuild
+        // the popup; it must not look like another user query and retrigger I/O.
+        editor.refreshCompletions();
+        editor.refreshCompletions();
+        QCoreApplication::processEvents();
+        QCOMPARE(queries.count(QStringLiteral("al")), 1);
+
+        QTest::keyClick(&editor, Qt::Key_Space);
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+        QVERIFY(!queries.isEmpty());
+        QCOMPARE(queries.constLast(), QString());
+    }
 };
 
 QTEST_MAIN(MessageTextEditWidgetTest)

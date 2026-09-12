@@ -18,6 +18,7 @@
 #include <QMouseEvent>
 #include <QPointer>
 #include <QSignalBlocker>
+#include <QTimer>
 #include <QVector>
 
 #include "backend/Backend.h"
@@ -27,12 +28,14 @@
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendUser.h"
 #include "channel-tree/ChannelIcons.h"
+#include "channel-tree/FollowingNavigation.h"
 #include "navigation/AppNavigationService.h"
 
 namespace Mattermost {
 namespace {
 
 constexpr int ThreadSnippetLength = 120;
+constexpr int SelectionSettleDelayMs = 180;
 
 QString entryKey(const FollowingModel::Entry& entry)
 {
@@ -65,14 +68,27 @@ AttentionList::AttentionList(QWidget* parent)
     setUniformRowHeights(true);
     header()->setSectionResizeMode(0, QHeaderView::Stretch);
 
+    selectionRefreshTimer_ = new QTimer(this);
+    selectionRefreshTimer_->setSingleShot(true);
+    selectionRefreshTimer_->setInterval(SelectionSettleDelayMs);
+    connect(selectionRefreshTimer_, &QTimer::timeout, this, [this] {
+        selectionRefreshTimer_->stop();
+        refresh();
+    });
+
     connect(this, &QTreeWidget::currentItemChanged, this,
             [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
         if (refreshing_ || !current) {
             return;
         }
+
+        // Change the navigation cursor immediately, but keep the old geometry
+        // stable for a fraction of a second. Any synchronous/asynchronous model
+        // updates caused by activation are coalesced by refresh() while the
+        // settle timer is active.
         retainSelection(current);
-        refresh();
-        activateItem(currentItem());
+        selectionRefreshTimer_->start();
+        activateItem(current);
     });
 }
 
@@ -107,7 +123,6 @@ void AttentionList::mousePressEvent(QMouseEvent* event)
 void AttentionList::retainSelection(QTreeWidgetItem* item)
 {
     retainedEntry_.reset();
-    retainedPostId_.clear();
     if (!item || !model_) {
         return;
     }
@@ -122,13 +137,15 @@ void AttentionList::retainSelection(QTreeWidgetItem* item)
 void AttentionList::releaseSelectionRetention()
 {
     retainedEntry_.reset();
-    retainedPostId_.clear();
     {
         const QSignalBlocker blocker(this);
         setCurrentItem(nullptr);
         clearSelection();
     }
-    refresh();
+
+    // External navigation should have the same visual stability as selecting a
+    // neighbouring Attention row: clear selection immediately, compact later.
+    selectionRefreshTimer_->start();
 }
 
 void AttentionList::refreshThreads()
@@ -150,14 +167,25 @@ void AttentionList::activateItem(QTreeWidgetItem* item)
         return;
     }
 
-    const FollowingModel::Entry* current = model_->findEntry(channelId, threadId);
-    const FollowingModel::Entry* entry = current;
-    if (retainedEntry_
-        && retainedEntry_->channelId == channelId
-        && retainedEntry_->threadId == threadId) {
-        entry = &*retainedEntry_;
-    }
+    const FollowingModel::Entry* entry = model_->findEntry(channelId, threadId);
     if (!entry) {
+        // The row can outlive its attention entry, but its old cursor cannot.
+        if (!retainedEntry_
+            || retainedEntry_->channelId != channelId
+            || retainedEntry_->threadId != threadId) {
+            return;
+        }
+
+        if (retainedEntry_->isThread()) {
+            if (retainedEntry_->synthetic) {
+                model_->ensureThreadsFresh();
+                AppNavigationService::instance(*backend_).openPost(threadId);
+            } else {
+                AppNavigationService::instance(*backend_).openThread(channelId, threadId);
+            }
+        } else {
+            AppNavigationService::instance(*backend_).openChannel(channelId);
+        }
         return;
     }
 
@@ -166,15 +194,9 @@ void AttentionList::activateItem(QTreeWidgetItem* item)
         return;
     }
 
-    if (!retainedPostId_.isEmpty()) {
-        AppNavigationService::instance(*backend_).openPost(retainedPostId_);
-        return;
-    }
-
     if (entry->resumeState == FollowingModel::ResumeState::FirstUnread
         && !entry->firstUnreadPostId.isEmpty()) {
-        retainedPostId_ = entry->firstUnreadPostId;
-        AppNavigationService::instance(*backend_).openPost(retainedPostId_);
+        AppNavigationService::instance(*backend_).openPost(entry->firstUnreadPostId);
         return;
     }
     if (entry->resumeState == FollowingModel::ResumeState::AtEnd) {
@@ -191,15 +213,33 @@ void AttentionList::activateItem(QTreeWidgetItem* item)
     QPointer<AttentionList> guard(this);
     backend_->retrieveChannelUnreadPost(*channel,
         [guard, channelId](const QString& postId) {
-            if (!guard || !guard->backend_ || !guard->retainedEntry_
+            if (!guard || !guard->backend_ || !guard->model_ || !guard->retainedEntry_
                 || guard->retainedEntry_->channelId != channelId
                 || !guard->retainedEntry_->threadId.isEmpty()) {
                 return;
             }
-            if (!postId.isEmpty()) {
-                guard->retainedPostId_ = postId;
+
+            const FollowingModel::Entry* current = guard->model_->findEntry(channelId);
+            if (!current || current->resumeState == FollowingModel::ResumeState::AtEnd) {
+                AppNavigationService::instance(*guard->backend_).openChannel(channelId);
+                return;
+            }
+            if (current->resumeState == FollowingModel::ResumeState::FirstUnread
+                && !current->firstUnreadPostId.isEmpty()) {
+                AppNavigationService::instance(*guard->backend_).openPost(
+                    current->firstUnreadPostId);
+                return;
+            }
+
+            BackendChannel* currentChannel =
+                guard->backend_->getStorage().getChannelById(channelId);
+            if (!postId.isEmpty() && currentChannel
+                && !isStaleConversationResumeTarget(*current, *currentChannel, postId)) {
                 AppNavigationService::instance(*guard->backend_).openPost(postId);
             } else {
+                // The server unread cursor can lag behind the local viewport
+                // high-water mark until channel acknowledgement completes.
+                // Never let that asynchronous fallback navigate backwards.
                 AppNavigationService::instance(*guard->backend_).openChannel(channelId);
             }
         });
@@ -237,6 +277,11 @@ void AttentionList::openThread(const FollowingModel::Entry& entry)
         return;
     }
 
+    if (entry.resumeState == FollowingModel::ResumeState::AtEnd) {
+        AppNavigationService::instance(*backend_).openThread(entry.channelId, entry.threadId);
+        return;
+    }
+
     uint64_t resumeAfter = entry.lastViewedAt;
     if (entry.hasLocalProgress()) {
         resumeAfter = entry.readThroughCreateAt;
@@ -255,6 +300,13 @@ void AttentionList::openThread(const FollowingModel::Entry& entry)
 void AttentionList::refresh()
 {
     if (!backend_ || !model_) {
+        return;
+    }
+
+    // Selection changes intentionally leave the existing item geometry alone
+    // for a short settle period. Model notifications arriving in that window
+    // are not lost: the timer fires one refresh against the latest model state.
+    if (selectionRefreshTimer_ && selectionRefreshTimer_->isActive()) {
         return;
     }
 

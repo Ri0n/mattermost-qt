@@ -61,9 +61,12 @@ protected:
 private:
     UserProfileDialog(Backend* backend, const BackendUser& user, QWidget* parent);
     static UserProfileDialog* showTransient(UserProfileDialog* dialog);
+    void refreshSharedAvatar();
     void startDirectMessage();
 
     Ui::UserProfileDialog* ui;
+    // Kept only for the backend-less legacy constructor. Backend-backed
+    // profiles use UserProfileService so every consumer shares one avatar.
     HTTPConnector avatarConnector;
     Backend* backend = nullptr;
     QString userId;

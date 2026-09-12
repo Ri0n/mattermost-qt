@@ -48,10 +48,23 @@ public:
                         std::function<void()> callback = {});
     void searchUsers(const UserSearchOptions& options,
                      std::function<void(QVector<const BackendUser*>)> callback);
+
+    /** Query the authoritative channel member count without loading member rows. */
+    void queryChannelMemberCount(BackendChannel& channel,
+                                 std::function<void(int)> callback);
+
+    /**
+     * Load one server page of channel membership in server order, resolve the
+     * corresponding user profiles/statuses in batches, and return user IDs in
+     * the same page order. This is the paged primitive for virtual member lists.
+     */
+    void loadChannelMembersPage(BackendChannel& channel,
+                                int page,
+                                int perPage,
+                                std::function<void(QStringList)> callback);
+
     void ensureTeamMembers(BackendTeam& team,
                            std::function<void()> callback = {});
-    void ensureChannelMembers(BackendChannel& channel,
-                              std::function<void()> callback = {});
     /** Load a group DM's small member set and rebuild its client-side title. */
     void ensureGroupChannelMembers(BackendChannel& channel,
                                    std::function<void()> callback = {});

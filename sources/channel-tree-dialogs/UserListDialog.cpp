@@ -25,16 +25,43 @@
 #include "UserListDialog.h"
 
 #include <set>
-#include <QMenu>
-#include <QDebug>
+
 #include <QDateTime>
-#include "backend/types/BackendUser.h"
-#include "backend/types/BackendTeamMember.h"
+#include <QDebug>
+#include <QEvent>
+#include <QLineEdit>
+#include <QMenu>
+#include <QPalette>
+#include <QScrollBar>
+#include <QTimer>
+
+#include "backend/UserProfileService.h"
 #include "backend/types/BackendChannelMember.h"
+#include "backend/types/BackendTeamMember.h"
+#include "backend/types/BackendUser.h"
 #include "info-dialogs/UserProfileDialog.h"
+#include "ui/AvatarUtils.h"
 #include "ui_FilterListDialog.h"
 
 namespace Mattermost {
+namespace {
+
+constexpr int UserListAvatarSize = 24;
+constexpr int UserListPresenceBadgeSize = 6;
+
+QIcon userListIcon(const BackendUser* user, const QColor& background)
+{
+    if (!user || user->avatar.isNull()) {
+        return {};
+    }
+    return QIcon(AvatarUtils::withStatus(user->avatar,
+                                         UserListAvatarSize,
+                                         user->status,
+                                         UserListPresenceBadgeSize,
+                                         background));
+}
+
+} // namespace
 
 UserListEntry::UserListEntry (const BackendUser* user, bool disabledItem)
 :disabledItem (disabledItem)
@@ -116,7 +143,10 @@ UserListDialog::UserListDialog (const FilterListDialogConfig& cfg, const std::ve
 	create (cfg, entrySet, {"Full Name", "Status"});
 }
 
-UserListDialog::~UserListDialog () = default;
+UserListDialog::~UserListDialog ()
+{
+    clearVisualConnections();
+}
 
 const BackendUser* UserListDialog::getSelectedUser ()
 {
@@ -129,9 +159,43 @@ const BackendUser* UserListDialog::getSelectedUser ()
 	return selection.first()->data(Qt::UserRole).value<BackendUser*>();
 }
 
+void UserListDialog::setProfileBackend(Backend* backend)
+{
+    profileBackend = backend;
+    if (!profileBackend || avatarViewportTrackingInstalled) {
+        return;
+    }
+
+    avatarViewportTrackingInstalled = true;
+    connect(ui->tableWidget->verticalScrollBar(), &QScrollBar::valueChanged,
+            this, [this](int) { ensureVisibleAvatars(); });
+    connect(ui->filterLineEdit, &QLineEdit::textChanged,
+            this, [this](const QString&) {
+        // FilterListDialog updates row visibility in the same signal turn.
+        // Defer until that work has completed, then fetch only the new viewport.
+        QTimer::singleShot(0, this, [this] { ensureVisibleAvatars(); });
+    });
+}
+
+void UserListDialog::changeEvent(QEvent* event)
+{
+    FilterListDialog::changeEvent(event);
+    if (!event || (event->type() != QEvent::PaletteChange
+                   && event->type() != QEvent::ApplicationPaletteChange
+                   && event->type() != QEvent::StyleChange)) {
+        return;
+    }
+
+    const auto users = dataToItemMap.keys();
+    for (const BackendUser* user : users) {
+        refreshUserVisual(user);
+    }
+}
+
 void UserListDialog::create (const FilterListDialogConfig& cfg, const std::set<UserListEntry>& users, const QStringList& columnNames)
 {
 	FilterListDialog::create (cfg);
+    clearVisualConnections();
 
 	//2 columns: name (with image) and status
 	ui->tableWidget->setColumnCount (columnNames.size());
@@ -147,12 +211,14 @@ void UserListDialog::create (const FilterListDialogConfig& cfg, const std::set<U
 	int usersCount = 0;
 
 	for (const UserListEntry& entry: users) {
-
-		QTableWidgetItem* nameItem = new QTableWidgetItem (QIcon(*entry.userAvatar), entry.fields[0]);
-		nameItem->setData (Qt::UserRole, QVariant::fromValue (const_cast<BackendUser*> (entry.dataPointer)));
+        const BackendUser* user = entry.dataPointer;
+        const QColor avatarBackground = ui->tableWidget->palette().color(QPalette::Base);
+		QTableWidgetItem* nameItem = new QTableWidgetItem (
+            userListIcon(user, avatarBackground), entry.fields[0]);
+		nameItem->setData (Qt::UserRole, QVariant::fromValue (const_cast<BackendUser*> (user)));
 
 		ui->tableWidget->setItem (usersCount, 0, nameItem);
-		dataToItemMap[entry.dataPointer] = nameItem;
+		dataToItemMap[user] = nameItem;
 
 		/**
 		 * Mark entries for already existing users, so that they can be distinguished. They will be still selectable.
@@ -175,13 +241,80 @@ void UserListDialog::create (const FilterListDialogConfig& cfg, const std::set<U
 			ui->tableWidget->setItem (usersCount, fi, new QTableWidgetItem (entry.fields[fi]));
 		}
 
+        if (user) {
+            visualConnections.push_back(connect(
+                user, &BackendUser::onAvatarChanged, this,
+                [this, user] { refreshUserVisual(user); }));
+            visualConnections.push_back(connect(
+                user, &BackendUser::onStatusChanged, this,
+                [this, user] { refreshUserVisual(user); }));
+        }
+
 		++usersCount;
 	}
 
-	ui->tableWidget->setIconSize(QSize (24,24));
+	ui->tableWidget->setIconSize(QSize (UserListAvatarSize, UserListAvatarSize));
 	ui->tableWidget->horizontalHeader()->setSectionResizeMode (0, QHeaderView::Stretch);
 
 	setItemCountLabel (static_cast<uint32_t>(usersCount));
+    QTimer::singleShot(0, this, [this] { ensureVisibleAvatars(); });
+}
+
+void UserListDialog::clearVisualConnections()
+{
+    for (const QMetaObject::Connection& connection : visualConnections) {
+        QObject::disconnect(connection);
+    }
+    visualConnections.clear();
+}
+
+void UserListDialog::refreshUserVisual(const BackendUser* user)
+{
+    if (!user || !ui || !ui->tableWidget) {
+        return;
+    }
+
+    auto it = dataToItemMap.constFind(user);
+    if (it == dataToItemMap.cend() || !it.value()) {
+        return;
+    }
+
+    QTableWidgetItem* nameItem = it.value();
+    nameItem->setIcon(userListIcon(
+        user, ui->tableWidget->palette().color(QPalette::Base)));
+
+    const int row = nameItem->row();
+    if (row >= 0 && ui->tableWidget->columnCount() > UserListEntry::userStatus) {
+        if (QTableWidgetItem* statusItem = ui->tableWidget->item(
+                row, UserListEntry::userStatus)) {
+            statusItem->setText(user->status);
+        }
+    }
+}
+
+void UserListDialog::ensureVisibleAvatars()
+{
+    if (!profileBackend || !ui || !ui->tableWidget || !ui->tableWidget->viewport()) {
+        return;
+    }
+
+    const QRect viewportRect = ui->tableWidget->viewport()->rect();
+    auto& profiles = UserProfileService::instance(*profileBackend);
+    for (int row = 0; row < ui->tableWidget->rowCount(); ++row) {
+        if (ui->tableWidget->isRowHidden(row)) {
+            continue;
+        }
+
+        QTableWidgetItem* item = ui->tableWidget->item(row, 0);
+        if (!item || !ui->tableWidget->visualItemRect(item).intersects(viewportRect)) {
+            continue;
+        }
+
+        BackendUser* user = item->data(Qt::UserRole).value<BackendUser*>();
+        if (user) {
+            profiles.ensureAvatar(*user);
+        }
+    }
 }
 
 void UserListDialog::setItemCountLabel (uint32_t count)

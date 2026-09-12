@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -398,7 +398,6 @@ void Backend::retrieveMultipleUsersStatus (const QVector<QString> & userIDs, std
 	}));
 }
 
-
 void Backend::retrieveTotalUsersCount (std::function<void(uint32_t)> callback)
 {
 	NetworkRequest request ("users/stats");
@@ -547,7 +546,6 @@ void Backend::retrieveFile (const QString & fileID, std::function<void(const QBy
 	QIODevice* cacheIO = attachmentsCache.prepare(metaData);
 
 	request.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
-
 	httpConnector.get (request, HttpResponseCallback ([this, fileID, callback, cacheIO](QVariant, QByteArray data) {
 		//LOG_DEBUG ("Retrieve File " << fileID << " done");
 		cacheIO->write (data);
@@ -885,26 +883,6 @@ void Backend::retrieveChannelUnreadPost (BackendChannel& channel, std::function<
 			emit onUnreadPostsAtStartup (channel);
 		}
     }));
-}
-
-void Backend::retrieveChannelMembers (BackendChannel& channel, std::function<void ()> callback)
-{
-	NetworkRequest request ("channels/" + channel.id + "/members");
-
-	httpConnector.get (request, HttpResponseCallback ([this, &channel, callback](const QJsonDocument& doc) {
-
-		//LOG_DEBUG ("retrieveChannelMembers reply");
-
-#if 0
-		QString jsonString = doc.toJson(QJsonDocument::Indented);
-		std::cout << "retrieveChannelMembers reply: " <<  jsonString.toStdString() << std::endl;
-#endif
-		auto root = doc.array();
-		for (const auto &itemRef: std::as_const(root)) {
-			channel.addMember (storage, itemRef.toObject());
-		}
-		callback ();
-	}));
 }
 
 void Backend::retrieveChannelMember (BackendChannel& channel, const BackendUser& user)
@@ -1362,4 +1340,3 @@ ServerDialogsMap& Backend::getServerDialogsMap ()
 }
 
 } /* namespace Mattermost */
-

@@ -368,39 +368,6 @@ void UserProfileService::ensureTeamMembers(BackendTeam& team,
     (*fetchPage)(0);
 }
 
-void UserProfileService::ensureChannelMembers(BackendChannel& channel,
-                                              std::function<void()> callback)
-{
-    const auto userIds = std::make_shared<QStringList>();
-    const auto fetchPage = std::make_shared<std::function<void(int)>>();
-
-    *fetchPage = [this, &channel, callback, userIds, fetchPage](int page) {
-        NetworkRequest request(
-            QStringLiteral("channels/") + channel.id + QStringLiteral("/members?page=")
-            + QString::number(page) + QStringLiteral("&per_page=")
-            + QString::number(MembersPerPage));
-
-        httpConnector.get(request, HttpResponseCallback(
-            [this, &channel, callback, userIds, fetchPage, page](const QJsonDocument& doc) {
-                const QJsonArray members = doc.array();
-                for (const auto& value : members) {
-                    const QJsonObject object = value.toObject();
-                    channel.addMember(backend.getStorage(), object);
-                    userIds->push_back(object.value(QStringLiteral("user_id")).toString());
-                }
-
-                if (members.size() == MembersPerPage) {
-                    (*fetchPage)(page + 1);
-                    return;
-                }
-
-                finishMemberProfiles(*userIds, callback);
-            }));
-    };
-
-    (*fetchPage)(0);
-}
-
 void UserProfileService::finishMemberProfiles(const QStringList& userIds,
                                               std::function<void()> callback)
 {
