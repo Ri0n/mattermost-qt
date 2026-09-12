@@ -28,6 +28,7 @@
 #include "backend/types/BackendChannel.h"
 #include "backend/types/BackendUser.h"
 #include "channel-tree/ChannelIcons.h"
+#include "channel-tree/FollowingNavigation.h"
 #include "navigation/AppNavigationService.h"
 
 namespace Mattermost {
@@ -230,9 +231,15 @@ void AttentionList::activateItem(QTreeWidgetItem* item)
                 return;
             }
 
-            if (!postId.isEmpty()) {
+            BackendChannel* currentChannel =
+                guard->backend_->getStorage().getChannelById(channelId);
+            if (!postId.isEmpty() && currentChannel
+                && !isStaleConversationResumeTarget(*current, *currentChannel, postId)) {
                 AppNavigationService::instance(*guard->backend_).openPost(postId);
             } else {
+                // The server unread cursor can lag behind the local viewport
+                // high-water mark until channel acknowledgement completes.
+                // Never let that asynchronous fallback navigate backwards.
                 AppNavigationService::instance(*guard->backend_).openChannel(channelId);
             }
         });
