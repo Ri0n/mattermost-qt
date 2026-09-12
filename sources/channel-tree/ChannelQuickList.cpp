@@ -27,6 +27,7 @@
 #include "backend/types/BackendUser.h"
 #include "channel-tree/ChannelIcons.h"
 #include "channel-tree/ChannelItemDelegate.h"
+#include "channel-tree/FollowingNavigation.h"
 #include "channel-tree/SidebarItem.h"
 #include "navigation/AppNavigationService.h"
 
@@ -221,10 +222,27 @@ void ChannelQuickList::activateItem(QTreeWidgetItem* current)
     const QString requestedKey = key;
     backend_->retrieveChannelUnreadPost(
         *channel, [guard, channelId, requestedKey](const QString& postId) {
-            if (!guard || !guard->backend_ || guard->retainedKey_ != requestedKey) {
+            if (!guard || !guard->backend_ || !guard->model_
+                || guard->retainedKey_ != requestedKey) {
                 return;
             }
-            if (!postId.isEmpty()) {
+
+            const FollowingModel::Entry* current = guard->model_->findEntry(channelId);
+            if (!current || current->resumeState == FollowingModel::ResumeState::AtEnd) {
+                AppNavigationService::instance(*guard->backend_).openChannel(channelId);
+                return;
+            }
+            if (current->resumeState == FollowingModel::ResumeState::FirstUnread
+                && !current->firstUnreadPostId.isEmpty()) {
+                AppNavigationService::instance(*guard->backend_).openPost(
+                    current->firstUnreadPostId);
+                return;
+            }
+
+            BackendChannel* currentChannel =
+                guard->backend_->getStorage().getChannelById(channelId);
+            if (!postId.isEmpty() && currentChannel
+                && !isStaleConversationResumeTarget(*current, *currentChannel, postId)) {
                 AppNavigationService::instance(*guard->backend_).openPost(postId);
             } else {
                 AppNavigationService::instance(*guard->backend_).openChannel(channelId);
