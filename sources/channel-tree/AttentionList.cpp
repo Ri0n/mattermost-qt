@@ -18,6 +18,7 @@
 #include <QMouseEvent>
 #include <QPointer>
 #include <QSignalBlocker>
+#include <QTimer>
 #include <QVector>
 
 #include "backend/Backend.h"
@@ -33,6 +34,7 @@ namespace Mattermost {
 namespace {
 
 constexpr int ThreadSnippetLength = 120;
+constexpr int SelectionSettleDelayMs = 180;
 
 QString entryKey(const FollowingModel::Entry& entry)
 {
@@ -65,14 +67,25 @@ AttentionList::AttentionList(QWidget* parent)
     setUniformRowHeights(true);
     header()->setSectionResizeMode(0, QHeaderView::Stretch);
 
+    selectionRefreshTimer_ = new QTimer(this);
+    selectionRefreshTimer_->setSingleShot(true);
+    selectionRefreshTimer_->setInterval(SelectionSettleDelayMs);
+    connect(selectionRefreshTimer_, &QTimer::timeout,
+            this, &AttentionList::refresh);
+
     connect(this, &QTreeWidget::currentItemChanged, this,
             [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
         if (refreshing_ || !current) {
             return;
         }
+
+        // Change the navigation cursor immediately, but keep the old geometry
+        // stable for a fraction of a second. Any synchronous/asynchronous model
+        // updates caused by activation are coalesced by refresh() while the
+        // settle timer is active.
         retainSelection(current);
-        refresh();
-        activateItem(currentItem());
+        selectionRefreshTimer_->start();
+        activateItem(current);
     });
 }
 
@@ -126,7 +139,10 @@ void AttentionList::releaseSelectionRetention()
         setCurrentItem(nullptr);
         clearSelection();
     }
-    refresh();
+
+    // External navigation should have the same visual stability as selecting a
+    // neighbouring Attention row: clear selection immediately, compact later.
+    selectionRefreshTimer_->start();
 }
 
 void AttentionList::refreshThreads()
@@ -275,6 +291,13 @@ void AttentionList::openThread(const FollowingModel::Entry& entry)
 void AttentionList::refresh()
 {
     if (!backend_ || !model_) {
+        return;
+    }
+
+    // Selection changes intentionally leave the existing item geometry alone
+    // for a short settle period. Model notifications arriving in that window
+    // are not lost: the timer fires one refresh against the latest model state.
+    if (selectionRefreshTimer_ && selectionRefreshTimer_->isActive()) {
         return;
     }
 
