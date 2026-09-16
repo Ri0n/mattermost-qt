@@ -23,6 +23,13 @@ uint64_t nowMs()
     return static_cast<uint64_t>(QDateTime::currentMSecsSinceEpoch());
 }
 
+QString manualUnreadKey(const QString& channelId, const QString& threadId)
+{
+    return threadId.isEmpty()
+        ? QStringLiteral("c:") + channelId
+        : QStringLiteral("t:") + channelId + QLatin1Char(':') + threadId;
+}
+
 } // namespace
 
 FollowingModel& FollowingModel::instance(Backend& backend)
@@ -59,6 +66,9 @@ FollowingModel::FollowingModel(Backend& backend)
 
     connect(&backend_, &Backend::onChannelViewed, this,
             [this](const BackendChannel& channel) {
+        const QString key = manualUnreadKey(channel.id, QString());
+        manualUnreadMarkers_.remove(key);
+        manualAttentionKeys_.remove(key);
         clearSyntheticMentions(channel.id);
         syncConversations();
         emit changed();
@@ -183,16 +193,28 @@ void FollowingModel::syncConversations()
     for (auto it = backend_.getStorage().channels.cbegin();
          it != backend_.getStorage().channels.cend(); ++it) {
         BackendChannel* channel = it.value();
-        if (!channel
-            || (channel->type != BackendChannel::directChannel
-                && channel->type != BackendChannel::groupChannel)) {
+        if (!channel) {
             continue;
         }
 
-        const bool unread = sidebar.isChannelUnread(*channel);
+        const QString manualKey = manualUnreadKey(channel->id, QString());
+        const bool serverUnread = sidebar.isChannelUnread(*channel);
         const bool mentioned = sidebar.hasUnreadMention(channel->id);
+        // Reading consumes the marker; channel acknowledgement consumes the
+        // remaining unread state. Once both happened, the manual projection
+        // must not depend on a later channel_viewed WebSocket echo to disappear.
+        if (!manualUnreadMarkers_.contains(manualKey) && !serverUnread && !mentioned) {
+            manualAttentionKeys_.remove(manualKey);
+        }
+        const bool manualAttention = manualAttentionKeys_.contains(manualKey);
+        const bool conversation = channel->type == BackendChannel::directChannel
+            || channel->type == BackendChannel::groupChannel;
+        if (!conversation && !manualAttention) {
+            continue;
+        }
+
         const bool muted = sidebar.isChannelMuted(*channel);
-        if (muted || (!unread && !mentioned)) {
+        if (!manualAttention && (muted || (!serverUnread && !mentioned))) {
             continue;
         }
 
@@ -205,9 +227,9 @@ void FollowingModel::syncConversations()
         entry.channelId = channel->id;
         entry.threadId.clear();
         entry.teamId.clear();
-        entry.unread = unread;
+        entry.unread = serverUnread || manualAttention;
         entry.mentioned = mentioned;
-        entry.muted = false;
+        entry.muted = manualAttention ? false : muted;
         entry.unreadReplies = 0;
         entry.unreadMentions = 0;
         entry.synthetic = false;
@@ -215,6 +237,13 @@ void FollowingModel::syncConversations()
         entry.lastReplyAt = sidebar.channelActivityTime(*channel);
         if (entry.lastReplyAt == 0) {
             entry.lastReplyAt = channel->last_post_at;
+        }
+        const auto manualIt = manualUnreadMarkers_.constFind(manualKey);
+        if (manualIt != manualUnreadMarkers_.cend()) {
+            entry.resumeState = ResumeState::FirstUnread;
+            entry.firstUnreadPostId = manualIt->postId;
+            entry.readThroughPostId.clear();
+            entry.readThroughCreateAt = 0;
         }
         noteAttentionTransition(entry, wasAttention);
         next.push_back(std::move(entry));
@@ -319,6 +348,53 @@ void FollowingModel::clearSyntheticMentions(const QString& channelId)
     }
 }
 
+void FollowingModel::markPostUnread(const QString& channelId,
+                                           const QString& threadId,
+                                           const QString& postId,
+                                           uint64_t createAt)
+{
+    if (channelId.isEmpty() || postId.isEmpty()) {
+        return;
+    }
+
+    const QString key = manualUnreadKey(channelId, threadId);
+    manualUnreadMarkers_.insert(
+        key, ManualUnreadMarker {channelId, threadId, postId, createAt});
+    manualAttentionKeys_.insert(key);
+
+    if (threadId.isEmpty()) {
+        syncConversations();
+        emit changed();
+        return;
+    }
+
+    Entry* entry = findThreadMutable(threadId);
+    if (!entry) {
+        Entry created;
+        created.kind = Kind::Thread;
+        created.channelId = channelId;
+        created.threadId = threadId;
+        if (BackendChannel* channel = backend_.getStorage().getChannelById(channelId)) {
+            created.teamId = channel->team ? channel->team->id : QString();
+        }
+        entries_.push_back(std::move(created));
+        entry = &entries_.last();
+    }
+
+    const bool wasAttention = entry->requiresAttention();
+    entry->unreadReplies = std::max(1, entry->unreadReplies);
+    entry->resumeState = ResumeState::FirstUnread;
+    entry->firstUnreadPostId = postId;
+    entry->readThroughPostId.clear();
+    entry->readThroughCreateAt = 0;
+    entry->readAcknowledgementPending = false;
+    entry->readAcknowledgementAt = 0;
+    entry->lastReplyAt = std::max(entry->lastReplyAt, createAt);
+    entry->muted = false;
+    noteAttentionTransition(*entry, wasAttention);
+    emit changed();
+}
+
 void FollowingModel::scheduleThreadRefresh()
 {
     threadSnapshotDirty_ = true;
@@ -420,6 +496,19 @@ void FollowingModel::applyThreadSnapshot(
             ? SidebarService::instance(backend_).isChannelMuted(*channel)
             : false;
 
+        const QString manualKey = manualUnreadKey(entry.channelId, entry.threadId);
+        const bool manualAttention = manualAttentionKeys_.contains(manualKey);
+        const auto manualIt = manualUnreadMarkers_.constFind(manualKey);
+        if (manualAttention) {
+            entry.unreadReplies = std::max(1, entry.unreadReplies);
+            if (manualIt != manualUnreadMarkers_.cend()) {
+                entry.resumeState = ResumeState::FirstUnread;
+                entry.firstUnreadPostId = manualIt->postId;
+                entry.readThroughPostId.clear();
+                entry.readThroughCreateAt = 0;
+            }
+        }
+
         if (readPending) {
             if (entry.unreadReplies <= 0 && entry.unreadMentions <= 0) {
                 entry.readAcknowledgementPending = false;
@@ -442,6 +531,27 @@ void FollowingModel::applyThreadSnapshot(
             next[existingNextIndex] = std::move(entry);
         } else {
             next.push_back(std::move(entry));
+        }
+    }
+
+    // A locally requested Mark as unread is authoritative for this client
+    // until the lower-edge read rule consumes it. A followed-thread snapshot
+    // may have started before set_unread, and a non-followed thread may not
+    // appear in that snapshot at all, so retain such entries explicitly.
+    for (const Entry& old : std::as_const(entries_)) {
+        if (!old.isThread()
+            || !manualAttentionKeys_.contains(manualUnreadKey(old.channelId, old.threadId))) {
+            continue;
+        }
+        bool present = false;
+        for (const Entry& candidate : std::as_const(next)) {
+            if (candidate.isThread() && candidate.threadId == old.threadId) {
+                present = true;
+                break;
+            }
+        }
+        if (!present) {
+            next.push_back(old);
         }
     }
 
@@ -516,15 +626,32 @@ void FollowingModel::observeReadThrough(const QString& channelId,
         return;
     }
 
+    const QString manualKey = manualUnreadKey(channelId, threadId);
+    const auto manualIt = manualUnreadMarkers_.constFind(manualKey);
+    const bool consumedManualMarker = manualIt != manualUnreadMarkers_.cend()
+        && (post.id == manualIt->postId
+            || isAfter(post.create_at, post.id, manualIt->createAt, manualIt->postId));
+    const auto publishMarkerConsumption = [&] {
+        if (consumedManualMarker) {
+            if (threadId.isEmpty()) syncConversations();
+            emit changed();
+        }
+    };
+    if (consumedManualMarker) {
+        manualUnreadMarkers_.remove(manualKey);
+    }
+
     const bool sameBoundary = entry->readThroughPostId == post.id;
     if (!entry->readThroughPostId.isEmpty() && !sameBoundary
         && !isAfter(post.create_at, post.id,
                     entry->readThroughCreateAt, entry->readThroughPostId)) {
+        publishMarkerConsumption();
         return;
     }
 
     BackendChannel* channel = backend_.getStorage().getChannelById(channelId);
     if (!channel) {
+        publishMarkerConsumption();
         return;
     }
 
@@ -550,7 +677,11 @@ void FollowingModel::observeReadThrough(const QString& channelId,
         entry->firstUnreadPostId.clear();
     }
 
-    if (oldState != entry->resumeState
+    if (consumedManualMarker) {
+        // Sidebar acknowledgement may have arrived before this visibility pass.
+        // Marker consumption itself must publish the resulting projection too.
+        publishMarkerConsumption();
+    } else if (oldState != entry->resumeState
         || oldFirstUnread != entry->firstUnreadPostId
         || oldReadThrough != entry->readThroughPostId
         || oldReadThroughCreateAt != entry->readThroughCreateAt) {
@@ -569,7 +700,9 @@ void FollowingModel::markThreadRead(const QString& teamId,
         return;
     }
 
+    QString manualKey;
     if (Entry* entry = findThreadMutable(threadId)) {
+        manualKey = manualUnreadKey(entry->channelId, threadId);
         entry->unreadReplies = 0;
         entry->unreadMentions = 0;
         entry->mentioned = false;
@@ -587,7 +720,7 @@ void FollowingModel::markThreadRead(const QString& teamId,
     QPointer<FollowingModel> guard(this);
     ThreadFollowService::instance(backend_).markThreadRead(
         teamId, threadId,
-        [guard, threadId, callback = std::move(callback)](bool success) mutable {
+        [guard, threadId, manualKey, callback = std::move(callback)](bool success) mutable {
             if (!guard) {
                 return;
             }
@@ -597,16 +730,21 @@ void FollowingModel::markThreadRead(const QString& teamId,
                     entry->readAcknowledgementPending = false;
                     entry->readAcknowledgementAt = 0;
                 }
-                guard->scheduleThreadRefresh();
-            } else {
-                // Keep the watermark until a shared CRT snapshot confirms it.
-                guard->scheduleThreadRefresh();
+            } else if (!manualKey.isEmpty()) {
+                guard->manualUnreadMarkers_.remove(manualKey);
+                guard->manualAttentionKeys_.remove(manualKey);
             }
+
+            // On failure the retained manual-attention key makes the next CRT
+            // snapshot restore the unread thread. On success the server snapshot
+            // confirms and retires the optimistic read acknowledgement.
+            guard->scheduleThreadRefresh();
 
             if (callback) {
                 callback(success);
             }
         });
 }
+
 
 } // namespace Mattermost

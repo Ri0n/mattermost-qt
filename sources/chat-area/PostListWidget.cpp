@@ -29,6 +29,16 @@ PostListWidget::PostListWidget(QWidget* parent)
     setRequestBlockSize(10);
     setPrefetchScreens(0);
     setSeekDebounceMs(100);
+
+    connect(this, &LongListWidget::hoveredItemChanged, this,
+            [this](int previousIndex, int currentIndex) {
+        if (auto* previous = qobject_cast<PostWidget*>(itemWidget(previousIndex))) {
+            previous->setHovered(false);
+        }
+        if (auto* current = qobject_cast<PostWidget*>(itemWidget(currentIndex))) {
+            current->setHovered(true);
+        }
+    });
 }
 
 QString PostListWidget::itemIdentity(const QWidget* widget) const

@@ -15,6 +15,7 @@
 #include "backend/ServerUiService.h"
 #include "backend/Storage.h"
 #include "backend/WebappPluginService.h"
+#include "backend/types/BackendChannel.h"
 #include "backend/types/BackendDirectChannelsTeam.h"
 #include "channel-tree/AttentionList.h"
 #include "channel-tree/ChannelQuickList.h"
@@ -23,6 +24,7 @@
 #include "notifications/NotificationManager.h"
 #include "post-collection/PostCollectionView.h"
 #include "server-dialog/ServerDialog.h"
+#include "ui/TeamSelectorLabel.h"
 
 namespace Mattermost {
 
@@ -58,6 +60,16 @@ void MainWindow::installRealtimeUiSync()
         }
         raise();
         activateWindow();
+
+        // Public/private channels have an intrinsic team. Make that team the
+        // visible sidebar context before semantic navigation opens the target.
+        // Direct/group conversations are server-wide and intentionally keep the
+        // user's current team context.
+        if (BackendChannel* channel = backend.getStorage().getChannelById(target.channelId)) {
+            if (channel->team) {
+                TeamSelectorLabel::activateTeam(this, channel->team->id);
+            }
+        }
 
         AppNavigationService::instance(backend).openPost(target.postId);
     });

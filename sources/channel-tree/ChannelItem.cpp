@@ -110,6 +110,11 @@ void ChannelItem::setMuted(bool muted)
     }
 }
 
+void ChannelItem::setUnread(bool unread)
+{
+    setData(0, SidebarItem::UnreadRole, unread);
+}
+
 void ChannelItem::setMentioned(bool mentioned)
 {
     setData(0, SidebarItem::MentionedRole, mentioned);
@@ -144,10 +149,25 @@ void ChannelItem::addCommonContextMenuActions(QMenu& menu, BackendChannel& chann
     });
 
     auto* tree = static_cast<ChannelTree*>(treeWidget());
-    if (tree && tree->canRemoveChannelFromCategory(this)) {
-        menu.addAction(QStringLiteral("Remove from group"), [tree, this] {
-            tree->removeChannelFromCategory(this);
+    if (tree) {
+        const auto targets = tree->customCategoryTargets(this);
+        QMenu* moveMenu = menu.addMenu(QStringLiteral("Move to group"));
+        for (const auto& target : targets) {
+            moveMenu->addAction(target.second, [tree, this, categoryId = target.first] {
+                tree->moveChannelToCategory(this, categoryId);
+            });
+        }
+        if (!targets.isEmpty()) {
+            moveMenu->addSeparator();
+        }
+        moveMenu->addAction(QStringLiteral("Create new group…"), [tree, this] {
+            tree->createGroupAndMoveChannel(this);
         });
+        if (tree->canRemoveChannelFromCategory(this)) {
+            menu.addAction(QStringLiteral("Remove from group"), [tree, this] {
+                tree->removeChannelFromCategory(this);
+            });
+        }
     }
 }
 

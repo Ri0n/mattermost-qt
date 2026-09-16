@@ -5,6 +5,8 @@
 
 #include "NotificationManager.h"
 
+#include <algorithm>
+
 #include <QApplication>
 #include <QStringList>
 #include <QSystemTrayIcon>
@@ -19,6 +21,28 @@
 #endif
 
 namespace Mattermost {
+
+namespace {
+
+int notificationDisplayDurationMs(const QString& title, const QString& body)
+{
+    // Give a short notification enough time to register, while allowing a
+    // normal message roughly the time needed to read and understand it. 14
+    // characters/second is deliberately conservative for chat text; the extra
+    // two seconds cover noticing the popup and switching attention to it.
+    constexpr qint64 minimumMs = 5000;
+    constexpr qint64 maximumMs = 12000;
+    constexpr qint64 attentionMs = 2000;
+    constexpr qint64 charactersPerSecond = 14;
+
+    const qint64 characterCount = static_cast<qint64>(title.simplified().size())
+        + static_cast<qint64>(body.simplified().size());
+    const qint64 readingMs = attentionMs
+        + (characterCount * 1000 + charactersPerSecond - 1) / charactersPerSecond;
+    return static_cast<int>(std::clamp(readingMs, minimumMs, maximumMs));
+}
+
+} // namespace
 
 NotificationManager::NotificationManager(QSystemTrayIcon& trayIcon, QObject* parent)
     : QObject(parent)
@@ -81,7 +105,8 @@ void NotificationManager::show(const QString& title, const QString& body,
 #endif
 
     fallbackTarget = target;
-    trayIcon.showMessage(title, body, QSystemTrayIcon::Information);
+    trayIcon.showMessage(title, body, QSystemTrayIcon::Information,
+                         notificationDisplayDurationMs(title, body));
 }
 
 void NotificationManager::onFallbackMessageClicked()
@@ -126,7 +151,7 @@ bool NotificationManager::showFreedesktop(const QString& title, const QString& b
         body,
         actions,
         hints,
-        -1,
+        notificationDisplayDurationMs(title, body),
     };
 
     const QDBusMessage message = notifications.callWithArgumentList(

@@ -43,6 +43,8 @@
 #include <QList>
 
 #include "NetworkRequest.h"
+#include "AvatarImage.h"
+#include "PublicChannelPaging.h"
 #include "RealtimeFallbackService.h"
 #include "types/BackendPoll.h"
 #include "types/BackendNewPollData.h"
@@ -509,10 +511,12 @@ void Backend::retrieveUserAvatar (const QString & userID)
 			return;
 		}
 
-		//we need somehow avoid creating QImage object for each PostWidget
-		QPixmap pixmap;
-		pixmap.loadFromData(data);
-		user->avatar = pixmap.scaled(48,48,Qt::IgnoreAspectRatio,Qt::SmoothTransformation);
+		QPixmap pixmap = decodeAvatarImage(data);
+		if (pixmap.isNull()) {
+			return;
+		}
+		user->avatar = std::move(pixmap);
+		user->avatar_picture_update = user->last_picture_update;
 
 		emit user->onAvatarChanged();
 
@@ -623,33 +627,36 @@ void Backend::retrieveTeam (QString teamID)
     }));
 }
 
-void Backend::retrieveTeamPublicChannels (QString teamID, std::function<void(std::list<BackendChannel>&)> callback)
+void Backend::retrieveTeamPublicChannelsPage(
+    QString teamID,
+    int page,
+    int perPage,
+    std::function<void(QJsonArray)> callback)
 {
-	NetworkRequest request ("teams/" + teamID + "/channels");
+    NetworkRequest request(publicChannelsPagePath(teamID, page, perPage));
+    httpConnector.get(request, HttpResponseCallback(
+        [callback = std::move(callback)](QVariant, const QJsonDocument& doc) mutable {
+            if (callback) {
+                callback(doc.array());
+            }
+        }));
+}
 
-    std::cout << "get team channels " << teamID.toStdString() << std::endl;
-
-    httpConnector.get (request, HttpResponseCallback ([this, callback, teamID](QVariant, const QJsonDocument& doc) {
-    	LOG_DEBUG ("getTeamChannels reply");
-
-		BackendTeam* team = storage.getTeamById (teamID);
-
-		if (!team) {
-			return;
-		}
-
-		team->allPublicChannels.clear();
-
-		for (const auto &item: doc.array()) {
-			team->allPublicChannels.emplace_back (storage, item.toObject());
-		}
-
-#if 0
-		QString jsonString = QJsonDocument::fromJson(data).toJson(QJsonDocument::Indented);
-		std::cout << "get team channels reply: " <<  jsonString.toStdString() << std::endl;
-#endif
-		callback (team->allPublicChannels);
-    }));
+void Backend::searchTeamPublicChannels(
+    QString teamID,
+    QString term,
+    std::function<void(QJsonArray)> callback)
+{
+    NetworkRequest request(QStringLiteral("teams/") + teamID
+                           + QStringLiteral("/channels/search"));
+    const QJsonObject payload {{QStringLiteral("term"), std::move(term)}};
+    httpConnector.post(request, QByteArrayCreator(payload),
+                       HttpResponseCallback(
+        [callback = std::move(callback)](const QJsonDocument& doc) mutable {
+            if (callback) {
+                callback(doc.array());
+            }
+        }));
 }
 
 void Backend::retrieveOwnChannelMembershipsForTeam (BackendTeam& team, std::function<void(BackendChannel&)> callback)

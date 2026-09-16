@@ -197,6 +197,23 @@ private slots:
         QVERIFY(!tracker.isUnread(QStringLiteral("channel")));
     }
 
+    void explicitMarkUnreadCanMoveWatermarkBackwards()
+    {
+        ChannelActivityTracker tracker;
+        setMembership(tracker, 5000, 12, 8);
+        synchronize(tracker, 5000, 12, 8, true, false);
+        QVERIFY(!tracker.isUnread(QStringLiteral("channel")));
+
+        tracker.markUnread(QStringLiteral("channel"), 2999,
+                           7, 5, true, 0, 0, true);
+        QCOMPARE(tracker.lastViewedTime(QStringLiteral("channel")), uint64_t(2999));
+        QVERIFY(tracker.isUnread(QStringLiteral("channel")));
+
+        tracker.recordViewed(QStringLiteral("channel"), 5000, 12, 8, true);
+        QVERIFY(!tracker.isUnread(QStringLiteral("channel")));
+        QCOMPARE(tracker.lastViewedTime(QStringLiteral("channel")), uint64_t(5000));
+    }
+
     void ownPostDoesNotCreateUnreadState()
     {
         ChannelActivityTracker tracker;

@@ -77,6 +77,7 @@ public:
     }
     QStringList visibleChannelIds(const SidebarCategory& category) const;
     void markChannelViewedLocally(const BackendChannel& channel);
+    void markPostUnread(const QString& postId, std::function<void(bool)> callback = {});
     void synchronizeChannelActivity();
 
     void retrieveChannelMemberships(std::function<void()> callback = {});
@@ -90,6 +91,8 @@ public:
     const SidebarTeamState* teamState(const QString& teamId) const;
     SidebarTeamState* teamState(const QString& teamId);
 
+    void createCategory(const QString& teamId, const QString& displayName,
+                        std::function<void(const SidebarCategory&)> callback = {});
     void updateCategory(const SidebarCategory& category,
                         std::function<void(const SidebarCategory&)> callback = {});
     void updateCategories(const QString& teamId, const QVector<SidebarCategory>& categories,

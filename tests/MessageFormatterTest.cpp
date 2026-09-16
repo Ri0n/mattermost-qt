@@ -131,6 +131,16 @@ private slots:
 #endif
     }
 
+    void explicitLineBreaksRemainVisible()
+    {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+        QCOMPARE(renderedPlainText(QStringLiteral("first line\nsecond line\nthird line")),
+       QStringLiteral("first line\nsecond line\nthird line"));
+#else
+        QSKIP("Qt Markdown renderer is enabled starting with Qt 6.10");
+#endif
+    }
+
     void singleLineInlineCodeStaysInline()
     {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)

@@ -22,6 +22,11 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QContextMenuEvent>
+#include <QSignalBlocker>
+#include <QPropertyAnimation>
+#include <QPainter>
+#include <QGraphicsOpacityEffect>
+#include <QCheckBox>
 #include <QCursor>
 #include <QDateTime>
 #include <QDebug>
@@ -61,6 +66,8 @@
 #include "navigation/AppNavigationService.h"
 #include "reactions/PostReactionList.h"
 #include "ui/AvatarUtils.h"
+#include "ui/IconUtils.h"
+#include "ui/EmojiFont.h"
 #include "ui_PostWidget.h"
 
 namespace Mattermost {
@@ -109,6 +116,43 @@ PostWidget::PostWidget(Backend& backend,
     , parentChatArea(chatArea)
 {
 	ui->setupUi(this);
+
+    wholeMessageCheck_ = new QCheckBox(this);
+    wholeMessageCheck_->setToolTip(tr("Select message"));
+    wholeMessageCheck_->setAccessibleName(tr("Select message"));
+    wholeMessageCheck_->setVisible(false);
+    ui->horizontalLayout_2->insertWidget(0, wholeMessageCheck_, 0, Qt::AlignTop);
+    connect(wholeMessageCheck_, &QCheckBox::toggled, this, [this](bool checked) {
+        wholeMessageSelected_ = checked;
+        update();
+        emit wholeMessageSelectionToggled(this->post.id, checked);
+    });
+
+    reactionAffordance_ = new QPushButton(QString::fromUtf8("❤️"), this);
+    reactionAffordance_->setFlat(true);
+    reactionAffordance_->setFixedSize(28, 28);
+    reactionAffordance_->setCursor(Qt::PointingHandCursor);
+    reactionAffordance_->setToolTip(tr("Add reaction"));
+    reactionAffordance_->setAccessibleName(tr("Add reaction"));
+    QFont reactionFont = EmojiFont::applySystemEmojiFamily(reactionAffordance_->font());
+    reactionFont.setPointSize(14);
+    reactionAffordance_->setFont(reactionFont);
+    reactionOpacity_ = new QGraphicsOpacityEffect(reactionAffordance_);
+    reactionOpacity_->setOpacity(0.0);
+    reactionAffordance_->setGraphicsEffect(reactionOpacity_);
+    reactionAnimation_ = new QPropertyAnimation(reactionOpacity_, "opacity", this);
+    reactionAnimation_->setDuration(140);
+    reactionAffordance_->hide();
+    connect(reactionAnimation_, &QPropertyAnimation::finished, this, [this] {
+        if (reactionAffordance_ && !reactionAffordanceWanted_) {
+            reactionAffordance_->hide();
+        }
+    });
+    connect(reactionAffordance_, &QPushButton::clicked, this, [this] {
+        showEmojiDialog([this](Emoji emoji) {
+            backend_.addPostReaction(this->post.id, emoji.name);
+        });
+    });
 	ui->authorAvatar->setFrameShape(QFrame::NoFrame);
 	ui->authorName->setText(post.getDisplayAuthorName());
 
@@ -123,6 +167,8 @@ PostWidget::PostWidget(Backend& backend,
 	ui->verticalLayout->insertWidget(messageIndex, messageContent);
 	connect(messageContent, &MessageContentWidget::dimensionsChanged,
 	        this, &PostWidget::dimensionsChanged);
+	connect(messageContent, &MessageContentWidget::paletteRefreshCompleted,
+	        this, &PostWidget::connectMessageLinks);
 	messageContent->setMessage(displayMessage(post, post.message));
 	connectMessageLinks();
 	refreshPermalinkPreviews();
@@ -163,7 +209,7 @@ PostWidget::PostWidget(Backend& backend,
 			post.user_id, [guard](const BackendUser* user) {
 				if (guard && user) {
 					guard->setAuthor(guard->backend_, user);
-				}
+			}
 			});
 	}
 
@@ -264,7 +310,6 @@ void PostWidget::changeEvent(QEvent* event)
     }
 
     updateAuthorAvatar();
-    refreshMentionLinks();
     update();
     const auto childWidgets = findChildren<QWidget*>();
     for (QWidget* child : childWidgets) {
@@ -286,38 +331,136 @@ void PostWidget::contextMenuEvent(QContextMenuEvent* event)
     event->accept();
 }
 
+void PostWidget::paintEvent(QPaintEvent* event)
+{
+    QWidget::paintEvent(event);
+    if (!wholeMessageSelected_
+        && !property("_mmqt_contextMenuActive").toBool()) {
+        return;
+    }
+    QColor selected = palette().color(QPalette::Highlight);
+    selected.setAlpha(34);
+    QPainter painter(this);
+    painter.fillRect(rect(), selected);
+}
+
+void PostWidget::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    positionReactionAffordance();
+}
+
+void PostWidget::setWholeMessageSelectionMode(bool enabled)
+{
+    if (wholeMessageSelectionMode_ == enabled) {
+        return;
+    }
+    wholeMessageSelectionMode_ = enabled;
+    if (wholeMessageCheck_) {
+        wholeMessageCheck_->setVisible(enabled);
+    }
+    if (enabled) {
+        clearTextSelection();
+    }
+    animateReactionAffordance(hovered_);
+    updateGeometry();
+    update();
+}
+
+void PostWidget::setWholeMessageSelected(bool selected)
+{
+    wholeMessageSelected_ = selected;
+    if (wholeMessageCheck_) {
+        const QSignalBlocker blocker(wholeMessageCheck_);
+        wholeMessageCheck_->setChecked(selected);
+    }
+    update();
+}
+
+void PostWidget::setHovered(bool hovered)
+{
+    if (hovered_ == hovered) {
+        return;
+    }
+    hovered_ = hovered;
+    animateReactionAffordance(hovered_);
+}
+
+void PostWidget::clearTextSelection()
+{
+    if (messageContent) {
+        messageContent->clearSelection();
+    }
+    if (ui && ui->authorName && ui->authorName->selectionStart() >= 0) {
+        ui->authorName->setSelection(0, 0);
+    }
+}
+
+void PostWidget::animateReactionAffordance(bool visible)
+{
+    visible = visible && !wholeMessageSelectionMode_ && !post.isDeleted;
+    reactionAffordanceWanted_ = visible;
+    if (!reactionAffordance_ || !reactionOpacity_ || !reactionAnimation_) {
+        return;
+    }
+    reactionAnimation_->stop();
+    if (visible) {
+        positionReactionAffordance();
+        reactionAffordance_->show();
+        reactionAffordance_->raise();
+    }
+    reactionAnimation_->setStartValue(reactionOpacity_->opacity());
+    reactionAnimation_->setEndValue(visible ? 1.0 : 0.0);
+    reactionAnimation_->start();
+}
+
+void PostWidget::positionReactionAffordance()
+{
+    if (!reactionAffordance_) {
+        return;
+    }
+    int x = 4;
+    int y = std::max(4, height() - reactionAffordance_->height() - 6);
+    if (threadSummary && threadSummary->isVisible()) {
+        const QPoint threadTopLeft = threadSummary->mapTo(this, QPoint(0, 0));
+        x = std::max(4, threadTopLeft.x() - reactionAffordance_->width() - 4);
+        y = threadTopLeft.y()
+            + (threadSummary->height() - reactionAffordance_->height()) / 2;
+    }
+    reactionAffordance_->move(x, std::max(2, y));
+}
+
 void PostWidget::showPostContextMenu(const QPoint& globalPos)
 {
     if (post.isDeleted) {
         return;
     }
 
+    setProperty("_mmqt_contextMenuActive", true);
+    update();
+
     QMenu menu(this);
+    const auto icon = [](const QString& path) { return IconUtils::symbolicIcon(path); };
 
     if (parentChatArea) {
-        QAction* replyAction = menu.addAction(tr("Reply"));
+        QAction* replyAction = menu.addAction(icon(QStringLiteral(":/icons/message-balloon")),
+                                             tr("Reply"));
         connect(replyAction, &QAction::triggered, this, [this] {
             if (parentChatArea) {
                 QuotedReplyController::instance(*parentChatArea).begin(post);
             }
         });
-
-        if (!parentChatArea->isThread) {
-            QAction* threadAction = menu.addAction(tr("Reply in thread"));
-            connect(threadAction, &QAction::triggered,
-                    this, &PostWidget::openThreadWindow);
-        }
         menu.addSeparator();
     }
 
     if (post.isOwnPost()) {
         if (parentChatArea) {
-            QAction* editAction = menu.addAction(tr("Edit"));
+            QAction* editAction = menu.addAction(icon(QStringLiteral(":/icons/edit")), tr("Edit"));
             connect(editAction, &QAction::triggered, this, [this] {
                 parentChatArea->editPost(post);
             });
         }
-        QAction* deleteAction = menu.addAction(tr("Delete"));
+        QAction* deleteAction = menu.addAction(icon(QStringLiteral(":/icons/trash")), tr("Delete"));
         connect(deleteAction, &QAction::triggered, this, [this] {
             backend_.deletePost(post.id);
         });
@@ -325,13 +468,15 @@ void PostWidget::showPostContextMenu(const QPoint& globalPos)
     }
 
     if (!hoveredLink.isEmpty()) {
-        QAction* copyLinkAction = menu.addAction(tr("Copy link to clipboard"));
+        QAction* copyLinkAction = menu.addAction(icon(QStringLiteral(":/icons/link")),
+                                                tr("Copy link to clipboard"));
         connect(copyLinkAction, &QAction::triggered, this, [this] {
             QApplication::clipboard()->setText(hoveredLink);
         });
     }
 
-    QAction* copyMessageLinkAction = menu.addAction(tr("Copy message link"));
+    QAction* copyMessageLinkAction = menu.addAction(icon(QStringLiteral(":/icons/link")),
+                                                    tr("Copy message link"));
     connect(copyMessageLinkAction, &QAction::triggered, this, [this] {
         const QString link = messagePermalink(post);
         if (!link.isEmpty()) {
@@ -341,30 +486,27 @@ void PostWidget::showPostContextMenu(const QPoint& globalPos)
 
     const QString selectedText = getSelectedText();
     if (!selectedText.isEmpty()) {
-        QAction* copySelectedAction = menu.addAction(tr("Copy selected text"));
+        QAction* copySelectedAction = menu.addAction(icon(QStringLiteral(":/icons/copy")),
+                                                     tr("Copy selected text"));
         connect(copySelectedAction, &QAction::triggered, this, [selectedText] {
             QApplication::clipboard()->setText(selectedText);
         });
     }
 
-    QAction* copyEntireAction = menu.addAction(tr("Copy entire post (formatted)"));
-    connect(copyEntireAction, &QAction::triggered, this, [this] {
-        QApplication::clipboard()->setText(formatForClipboardSelection(entirePost));
-    });
-
-    QAction* copyMessageAction = menu.addAction(tr("Copy post message"));
+    QAction* copyMessageAction = menu.addAction(icon(QStringLiteral(":/icons/copy")),
+                                                tr("Copy post message"));
     connect(copyMessageAction, &QAction::triggered, this, [this] {
         QApplication::clipboard()->setText(formatForClipboardSelection(messageOnly));
     });
 
-    QAction* reactionAction = menu.addAction(tr("Add emoji reaction"));
-    connect(reactionAction, &QAction::triggered, this, [this] {
-        showEmojiDialog([this](Emoji emoji) {
-            backend_.addPostReaction(post.id, emoji.name);
-        });
+    QAction* unreadAction = menu.addAction(icon(QStringLiteral(":/icons/unread")),
+                                           tr("Mark as unread"));
+    connect(unreadAction, &QAction::triggered, this, [this] {
+        emit markUnreadRequested(post.id);
     });
 
-    QAction* saveAction = menu.addAction(tr("Save message"));
+    QAction* saveAction = menu.addAction(icon(QStringLiteral(":/icons/bookmark")),
+                                         tr("Save message"));
     connect(saveAction, &QAction::triggered, this, [this] {
         backend_.updateUserPreferences(BackendUserPreferences {
             QStringLiteral("flagged_post"), post.id, QStringLiteral("true")});
@@ -373,6 +515,7 @@ void PostWidget::showPostContextMenu(const QPoint& globalPos)
     if (post.author) {
         menu.addSeparator();
         QAction* profileAction = menu.addAction(
+            icon(QStringLiteral(":/icons/members")),
             tr("View %1's profile").arg(post.author->getDisplayName()));
         connect(profileAction, &QAction::triggered, this, [this] {
             if (!post.author) {
@@ -385,6 +528,8 @@ void PostWidget::showPostContextMenu(const QPoint& globalPos)
     }
 
     menu.exec(globalPos);
+    setProperty("_mmqt_contextMenuActive", false);
+    update();
 }
 
 void PostWidget::setAuthor(Backend& backendInstance, const BackendUser* user)

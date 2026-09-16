@@ -182,6 +182,52 @@ int fencedBlockEnd(const QString& text, int lineStart)
     return text.size();
 }
 
+QString preserveUserLineBreaks(const QString& text)
+{
+    QString result;
+    result.reserve(text.size() + text.count(QLatin1Char('\n')) * 2);
+
+    int position = 0;
+    while (position < text.size()) {
+        const int fenceEnd = fencedBlockEnd(text, position);
+        if (fenceEnd != -1) {
+            result += text.mid(position, fenceEnd - position);
+            position = fenceEnd;
+            continue;
+        }
+
+        const int newline = text.indexOf(QLatin1Char('\n'), position);
+        if (newline == -1) {
+            result += text.mid(position);
+            break;
+        }
+
+        result += text.mid(position, newline - position);
+
+        // A blank line already creates a Markdown block boundary, and a fenced
+        // block beginning on the next line is also a hard structural boundary.
+        // Only ordinary soft line breaks need CommonMark's two-space marker.
+        const bool blankBoundary = newline + 1 < text.size()
+            && text.at(newline + 1) == QLatin1Char('\n');
+        const bool beforeFence = newline + 1 < text.size()
+            && fencedBlockEnd(text, newline + 1) != -1;
+        if (!blankBoundary && !beforeFence && newline + 1 < text.size()) {
+            int trailingSpaces = 0;
+            for (int i = result.size() - 1;
+                 i >= 0 && result.at(i) == QLatin1Char(' '); --i) {
+                ++trailingSpaces;
+            }
+            while (trailingSpaces++ < 2) {
+                result += QLatin1Char(' ');
+            }
+        }
+
+        result += QLatin1Char('\n');
+        position = newline + 1;
+    }
+    return result;
+}
+
 QString promoteMultilineCodeSpans(const QString& text)
 {
     QString result;
@@ -525,7 +571,8 @@ void buildMarkdownDocument(QTextDocument& document, const QString& text)
     // Raw HTML is disabled at the parser level instead.
     QTextDocument::MarkdownFeatures features(QTextDocument::MarkdownDialectGitHub);
     features.setFlag(QTextDocument::MarkdownNoHTML);
-    document.setMarkdown(promoteMultilineCodeSpans(text), features);
+    const QString markdown = promoteMultilineCodeSpans(text);
+    document.setMarkdown(preserveUserLineBreaks(markdown), features);
 
     // Qt's GFM autolinker still misses some valid long percent-encoded URLs.
     // Complete only bare http(s) links after Markdown parsing so explicit links

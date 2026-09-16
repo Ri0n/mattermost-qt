@@ -11,10 +11,13 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkReply>
+#include <QPointer>
 #include <QTimer>
 
 #include "backend/Backend.h"
 #include "backend/NetworkRequest.h"
+#include "backend/PostUnreadRequest.h"
 #include "backend/QByteArrayCreator.h"
 #include "backend/Storage.h"
 #include "backend/UserProfileService.h"
@@ -114,12 +117,12 @@ const SidebarCategory* SidebarTeamState::categoryByType(const QString& type) con
 
 SidebarService& SidebarService::instance(Backend& backend)
 {
-    static QMap<Backend*, SidebarService*> instances;
-    auto it = instances.find(&backend);
-    if (it == instances.end()) {
-        it = instances.insert(&backend, new SidebarService(backend));
+    static QMap<Backend*, QPointer<SidebarService>> instances;
+    auto& service = instances[&backend];
+    if (!service) {
+        service = new SidebarService(backend);
     }
-    return **it;
+    return *service;
 }
 
 SidebarService::SidebarService(Backend& backend)
@@ -365,6 +368,67 @@ QStringList SidebarService::visibleChannelIds(const SidebarCategory& category) c
 void SidebarService::markChannelViewedLocally(const BackendChannel& channel)
 {
     recordChannelViewed(channel);
+}
+
+void SidebarService::markPostUnread(const QString& postId,
+                                           std::function<void(bool)> callback)
+{
+    const QString userId = currentUserId();
+    if (userId.isEmpty() || postId.isEmpty()) {
+        if (callback) {
+            callback(false);
+        }
+        return;
+    }
+
+    NetworkRequest request(postUnreadPath(userId, postId));
+    httpConnector.post(
+        request,
+        QByteArrayCreator(postUnreadPayload(collapsedThreadsEnabled)),
+        HttpResponseCallback([this, callback = std::move(callback)](
+                                 QVariant status, const QJsonDocument& doc) mutable {
+            if (status.toInt() != QNetworkReply::NoError || !doc.isObject()) {
+                if (callback) {
+                    callback(false);
+                }
+                return;
+            }
+
+            const QJsonObject object = doc.object();
+            const QString channelId = object.value(QStringLiteral("channel_id")).toString();
+            if (channelId.isEmpty()) {
+                if (callback) {
+                    callback(false);
+                }
+                return;
+            }
+
+            const auto nonNegative = [&object](const char* name) -> uint64_t {
+                const qint64 value = object.value(QString::fromLatin1(name))
+                    .toVariant().toLongLong();
+                return value > 0 ? static_cast<uint64_t>(value) : 0;
+            };
+
+            const bool wasMentioned = activityTracker.hasMention(channelId);
+            activityTracker.markUnread(
+                channelId,
+                nonNegative("last_viewed_at"),
+                nonNegative("msg_count"),
+                nonNegative("msg_count_root"),
+                object.contains(QStringLiteral("msg_count_root")),
+                nonNegative("mention_count"),
+                nonNegative("mention_count_root"),
+                object.contains(QStringLiteral("mention_count_root")));
+
+            const bool isMentioned = activityTracker.hasMention(channelId);
+            if (wasMentioned != isMentioned) {
+                emit channelMentionedChanged(channelId, isMentioned);
+            }
+            emit channelActivityChanged(channelId);
+            if (callback) {
+                callback(true);
+            }
+        }));
 }
 
 void SidebarService::synchronizeChannelActivity()
@@ -732,6 +796,46 @@ SidebarTeamState* SidebarService::teamState(const QString& teamId)
 {
     auto it = sidebarByTeam.find(teamId);
     return it == sidebarByTeam.end() ? nullptr : &it.value();
+}
+
+void SidebarService::createCategory(
+    const QString& teamId,
+    const QString& displayName,
+    std::function<void(const SidebarCategory&)> callback)
+{
+    const QString name = displayName.trimmed();
+    if (teamId.isEmpty() || name.isEmpty() || currentUserId().isEmpty()) {
+        return;
+    }
+
+    SidebarCategory category;
+    category.userId = currentUserId();
+    category.teamId = teamId;
+    category.sorting = QStringLiteral("manual");
+    category.type = QStringLiteral("custom");
+    category.displayName = name;
+
+    QJsonObject payload = category.toJson();
+    payload.remove(QStringLiteral("id"));
+    payload.remove(QStringLiteral("sort_order"));
+
+    NetworkRequest request(categoriesPath(teamId));
+    httpConnector.post(request, QByteArrayCreator(payload),
+                       HttpResponseCallback([this, teamId, callback](const QJsonDocument& doc) {
+        SidebarCategory created = SidebarCategory::fromJson(doc.object());
+        if (created.id.isEmpty()) {
+            return;
+        }
+        SidebarTeamState& state = sidebarByTeam[teamId];
+        state.categories.insert(created.id, created);
+        if (!state.order.contains(created.id)) {
+            state.order.push_back(created.id);
+        }
+        emit categoriesChanged(teamId);
+        if (callback) {
+            callback(state.categories[created.id]);
+        }
+    }));
 }
 
 void SidebarService::updateCategory(const SidebarCategory& category,

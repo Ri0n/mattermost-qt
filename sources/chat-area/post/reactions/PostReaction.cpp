@@ -62,6 +62,11 @@ PostReaction::PostReaction(Backend& backend,
     , ui_(new Ui::PostReaction)
 {
     ui_->setupUi(this);
+    // The whole chip is one click target. QLabel children otherwise win
+    // hit-testing, which made clicks on later/more tightly packed chips
+    // appear to do nothing.
+    ui_->emoji->setAttribute(Qt::WA_TransparentForMouseEvents);
+    ui_->count->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     const QFont reactionFont = EmojiPresentation::fontForMode(
         ui_->emoji->font(), EmojiPresentation::Mode::Reaction);

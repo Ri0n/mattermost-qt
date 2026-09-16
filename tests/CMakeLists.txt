@@ -401,3 +401,62 @@ if(TARGET mattermost-core)
     add_test(NAME thread-post-source-integration-test COMMAND thread-post-source-integration-test)
     set_tests_properties(thread-post-source-integration-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
+
+
+add_executable(public-channel-paging-test PublicChannelPagingTest.cpp)
+target_include_directories(public-channel-paging-test PRIVATE "${CMAKE_SOURCE_DIR}/sources")
+target_link_libraries(public-channel-paging-test PRIVATE Qt${QT_VERSION_MAJOR}::Test Qt${QT_VERSION_MAJOR}::Core)
+add_test(NAME public-channel-paging-test COMMAND public-channel-paging-test)
+
+add_executable(avatar-image-test AvatarImageTest.cpp)
+target_include_directories(avatar-image-test PRIVATE "${CMAKE_SOURCE_DIR}/sources")
+target_link_libraries(avatar-image-test PRIVATE Qt${QT_VERSION_MAJOR}::Test Qt${QT_VERSION_MAJOR}::Widgets)
+add_test(NAME avatar-image-test COMMAND avatar-image-test)
+set_tests_properties(avatar-image-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(theme-icon-widgets-test
+    ThemeIconWidgetsTest.cpp
+    "${CMAKE_SOURCE_DIR}/sources/ui/ThemeIconWidgets.cpp"
+    "${CMAKE_SOURCE_DIR}/sources/ui/IconUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/resource.qrc"
+)
+target_include_directories(theme-icon-widgets-test PRIVATE "${CMAKE_SOURCE_DIR}/sources")
+target_link_libraries(theme-icon-widgets-test PRIVATE Qt${QT_VERSION_MAJOR}::Test Qt${QT_VERSION_MAJOR}::Widgets)
+add_test(NAME theme-icon-widgets-test COMMAND theme-icon-widgets-test)
+set_tests_properties(theme-icon-widgets-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(sidebar-channel-move-policy-test SidebarChannelMovePolicyTest.cpp)
+target_include_directories(sidebar-channel-move-policy-test PRIVATE "${CMAKE_SOURCE_DIR}/sources")
+target_link_libraries(sidebar-channel-move-policy-test PRIVATE Qt${QT_VERSION_MAJOR}::Test Qt${QT_VERSION_MAJOR}::Core)
+add_test(NAME sidebar-channel-move-policy-test COMMAND sidebar-channel-move-policy-test)
+
+
+add_executable(post-selection-policy-test PostSelectionPolicyTest.cpp)
+target_include_directories(post-selection-policy-test PRIVATE "${CMAKE_SOURCE_DIR}/sources")
+target_link_libraries(post-selection-policy-test PRIVATE Qt${QT_VERSION_MAJOR}::Test Qt${QT_VERSION_MAJOR}::Core)
+add_test(NAME post-selection-policy-test COMMAND post-selection-policy-test)
+
+
+add_executable(manual-unread-visibility-gate-test ManualUnreadVisibilityGateTest.cpp)
+target_include_directories(manual-unread-visibility-gate-test PRIVATE "${CMAKE_SOURCE_DIR}/sources")
+target_link_libraries(manual-unread-visibility-gate-test PRIVATE Qt${QT_VERSION_MAJOR}::Test Qt${QT_VERSION_MAJOR}::Core)
+add_test(NAME manual-unread-visibility-gate-test COMMAND manual-unread-visibility-gate-test)
+
+add_executable(post-unread-request-test PostUnreadRequestTest.cpp)
+target_include_directories(post-unread-request-test PRIVATE "${CMAKE_SOURCE_DIR}/sources")
+target_link_libraries(post-unread-request-test PRIVATE Qt${QT_VERSION_MAJOR}::Test Qt${QT_VERSION_MAJOR}::Core)
+add_test(NAME post-unread-request-test COMMAND post-unread-request-test)
+
+if(TARGET mattermost-core)
+    add_executable(post-reaction-interaction-test PostReactionInteractionTest.cpp)
+    target_link_libraries(post-reaction-interaction-test PRIVATE mattermost-core Qt${QT_VERSION_MAJOR}::Test)
+    add_test(NAME post-reaction-interaction-test COMMAND post-reaction-interaction-test)
+    set_tests_properties(post-reaction-interaction-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
+
+if(TARGET mattermost-core)
+    add_executable(manual-unread-read-state-test ManualUnreadReadStateTest.cpp)
+    target_link_libraries(manual-unread-read-state-test PRIVATE mattermost-core Qt${QT_VERSION_MAJOR}::Test)
+    add_test(NAME manual-unread-read-state-test COMMAND manual-unread-read-state-test)
+    set_tests_properties(manual-unread-read-state-test PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()

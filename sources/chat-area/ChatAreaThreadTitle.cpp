@@ -36,11 +36,20 @@ void ChatArea::updateThreadWindowTitle()
         return;
     }
 
+    ui->statusLabel->setPresenceRoutingEnabled(false);
+
     BackendPost* rootPost = channel.postIdToPost.value(root_id, nullptr);
     if (rootPost) {
+        ui->statusLabel->setText(rootPost->isDeleted
+            ? tr("(Message deleted)") : rootPost->message);
         setWindowTitle(threadWindowTitle(channel, *rootPost));
         return;
     }
+
+    // A thread window can be constructed before its root reaches the local
+    // cache. Keep the compact header empty until ThreadPostSource publishes the
+    // body; the existing source signals below will refresh it immediately.
+    ui->statusLabel->setText(QString());
 
     QString channelName = channel.display_name.trimmed();
     if (channelName.isEmpty()) {

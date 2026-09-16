@@ -10,7 +10,7 @@
  *
  * Mattermost-QT is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
+ * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * Mattermost-QT is distributed in the hope that it will be useful,
@@ -31,9 +31,11 @@
 #include "ChannelTreeItem.h"
 #include "SidebarItem.h"
 
+class QDragMoveEvent;
 class QDropEvent;
 class QEvent;
 class QMouseEvent;
+class QPainter;
 class QStackedWidget;
 class QTreeWidgetItem;
 
@@ -128,6 +130,9 @@ public:
 
 	bool canRemoveChannelFromCategory(const ChannelItem* item) const;
 	void removeChannelFromCategory(ChannelItem* item);
+	QVector<QPair<QString, QString>> customCategoryTargets(const ChannelItem* item) const;
+	void moveChannelToCategory(ChannelItem* item, const QString& categoryId);
+	void createGroupAndMoveChannel(ChannelItem* item);
 
 signals:
     void virtualDestinationRequested(int destination, const QString& teamId);
@@ -137,13 +142,20 @@ signals:
 protected:
 	void currentChanged(const QModelIndex& current, const QModelIndex& previous) override;
 	void mousePressEvent(QMouseEvent* event) override;
+	void dragMoveEvent(QDragMoveEvent* event) override;
 	void dropEvent(QDropEvent* event) override;
     void changeEvent(QEvent* event) override;
+    void rowsInserted(const QModelIndex& parent, int start, int end) override;
+    void drawBranches(QPainter* painter, const QRect& rect,
+                      const QModelIndex& index) const override;
 
 private:
 	void refreshCurrentChannelReadState(QTreeWidgetItem* item);
 	void showContextMenu (const QPoint& pos);
 	void handleChannelLeave();
+    void handleChannelUpdated();
+    void scheduleChannelDisplaySync();
+    void syncChannelDisplayRows();
 	void refreshTeamSidebar(Backend& backend, BackendTeam& team);
 	void renderTeamSidebar(Backend& backend, TeamItem& teamItem,
 	                       const SidebarTeamState& state);
@@ -163,10 +175,19 @@ private:
     void activateVirtualDestination(QTreeWidgetItem* item);
 	void setCategoryCollapsed(QTreeWidgetItem* item, bool collapsed);
 	void setChannelMutedVisual(const QString& channelId, bool muted);
+    void refreshChannelUnreadVisual(const QString& channelId);
+	void setChannelUnreadVisual(const QString& channelId, bool unread);
 	void setChannelMentionedVisual(const QString& channelId, bool mentioned);
 	void syncCategoryChannels(QTreeWidgetItem* firstCategory, QTreeWidgetItem* secondCategory = nullptr);
 	void syncCategoryOrder(QTreeWidgetItem* teamItem);
 	QStringList channelIds(QTreeWidgetItem* categoryItem) const;
+	bool resolveChannelDropTarget(QTreeWidgetItem* source, const QPoint& pos,
+	                              QTreeWidgetItem*& targetCategoryItem,
+	                              QString& targetChannelId, bool& afterTarget) const;
+	void moveChannel(ChannelItem* item, const QString& targetCategoryId,
+	                 const QString& targetChannelId, bool afterTarget,
+	                 bool explicitPosition);
+	void refreshSidebarTeam(const QString& teamId);
     void refreshPaletteDependentIcons();
 
 	QStackedWidget*						chatAreaStackedWidget;
@@ -177,6 +198,7 @@ private:
 	Backend*							backendForSidebar;
 	bool							renderingSidebar;
     bool                                personalUserConnected = false;
+    bool                                channelDisplaySyncScheduled = false;
 };
 
 } /* namespace Mattermost */

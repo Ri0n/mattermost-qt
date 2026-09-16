@@ -49,6 +49,7 @@ public:
     // type, so ChatArea's existing calls resolve to this formatting wrapper.
     void setText(const QString& text);
     void setLinkHandler(LinkHandler handler);
+    void setPresenceRoutingEnabled(bool enabled) { presenceRoutingEnabled = enabled; }
 
     // Rich-text QLabel uses its unwrapped document width as a minimum hint.
     // A topic must never dictate a thread-window or chat-pane width.
@@ -73,6 +74,7 @@ private:
     QPointer<QTextBrowser> popover;
     QTimer hideTimer;
     LinkHandler linkHandler;
+    bool presenceRoutingEnabled = true;
 };
 
 } // namespace Mattermost

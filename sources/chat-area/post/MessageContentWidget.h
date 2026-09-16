@@ -4,6 +4,7 @@
 #include <QtGlobal>
 #include <QWidget>
 
+class QEvent;
 class QVBoxLayout;
 
 namespace Mattermost {
@@ -18,10 +19,15 @@ public:
     void setMessage(const QString& message);
     void clear();
     QString selectedText() const;
+    void clearSelection();
 
 signals:
     void linkHovered(const QString& link);
     void dimensionsChanged();
+    void paletteRefreshCompleted();
+
+protected:
+    void changeEvent(QEvent* event) override;
 
 private:
     void clearContent();
@@ -36,6 +42,7 @@ private:
 
     QVBoxLayout* contentLayout;
     bool dimensionsChangePending = false;
+    bool paletteRefreshPending = false;
     QString _sourceMessage;
     bool _jumboEmojiMessage = false;
 };

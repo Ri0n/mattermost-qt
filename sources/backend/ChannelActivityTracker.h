@@ -50,6 +50,11 @@ public:
     void recordViewed(const QString& channelId, uint64_t viewedAt,
                       uint64_t totalMessageCount, uint64_t totalRootMessageCount,
                       bool hasTotalRootMessageCount);
+    /** Apply the authoritative response from POST /posts/{id}/set_unread. */
+    void markUnread(const QString& channelId, uint64_t lastViewedAt,
+                    uint64_t readMessageCount, uint64_t readRootMessageCount,
+                    bool hasReadRootMessageCount, uint64_t mentionCount,
+                    uint64_t rootMentionCount, bool hasRootMentionCount);
     void setRecencyTimes(const QString& channelId, uint64_t approximateViewAt,
                          uint64_t openTimeAt);
     void setOpenTime(const QString& channelId, uint64_t openTimeAt);

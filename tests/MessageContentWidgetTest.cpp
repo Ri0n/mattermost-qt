@@ -3,7 +3,9 @@
 #include <QAbstractTextDocumentLayout>
 #include <QFontMetrics>
 #include <QImage>
+#include <QPalette>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QScrollBar>
 #include <QTemporaryDir>
 #include <QTextBlock>
@@ -132,6 +134,38 @@ private slots:
                  "The rich-text viewport must not cover the containing post hover background");
         QVERIFY2(richText->styleSheet().isEmpty(),
                  "Rich text transparency must not rely on a per-widget style sheet");
+    }
+
+    void paletteChangeDefersContentRebuild()
+    {
+        MessageContentWidget widget;
+        widget.setMessage(QStringLiteral("theme-sensitive text"));
+        showAndSettle(widget);
+
+        QSignalSpy refreshSpy(&widget, &MessageContentWidget::paletteRefreshCompleted);
+        auto* originalBrowser =
+            widget.findChild<QTextBrowser*>(QStringLiteral("messageRichText"));
+        QVERIFY(originalBrowser != nullptr);
+        QPointer<QTextBrowser> originalBrowserGuard(originalBrowser);
+
+        QPalette firstPalette = widget.palette();
+        firstPalette.setColor(QPalette::Text, Qt::red);
+        widget.setPalette(firstPalette);
+        QPalette secondPalette = firstPalette;
+        secondPalette.setColor(QPalette::Text, Qt::blue);
+        widget.setPalette(secondPalette);
+
+        QVERIFY2(!originalBrowserGuard.isNull(),
+                 "Palette propagation must not synchronously destroy message children");
+        QCOMPARE(refreshSpy.count(), 0);
+
+        QTRY_COMPARE(refreshSpy.count(), 1);
+        QVERIFY2(originalBrowserGuard.isNull(),
+                 "The deferred refresh should replace the old text widget afterwards");
+        auto* rebuiltBrowser =
+            widget.findChild<QTextBrowser*>(QStringLiteral("messageRichText"));
+        QVERIFY(rebuiltBrowser != nullptr);
+        QCOMPARE(rebuiltBrowser->toPlainText(), QStringLiteral("theme-sensitive text"));
     }
 
     void inlineUnicodeEmojiUsesLargerFont()

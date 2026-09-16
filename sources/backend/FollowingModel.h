@@ -3,7 +3,9 @@
 #include <cstdint>
 #include <functional>
 
+#include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QTimer>
 #include <QVector>
@@ -105,6 +107,10 @@ public:
                             const BackendPost& post,
                             bool sourceAtEnd);
 
+    /** Keep an explicit server-backed Mark as unread in Attention until it is read again. */
+    void markPostUnread(const QString& channelId, const QString& threadId,
+                        const QString& postId, uint64_t createAt);
+
     /** Optimistically acknowledge a followed thread and reconcile with CRT. */
     void markThreadRead(const QString& teamId,
                         const QString& threadId,
@@ -137,7 +143,16 @@ private:
     static void noteAttentionTransition(Entry& entry, bool wasAttention);
     static void noteIncomingForResume(Entry& entry, const BackendPost& post);
 
+    struct ManualUnreadMarker {
+        QString channelId;
+        QString threadId;
+        QString postId;
+        uint64_t createAt = 0;
+    };
+
     Backend& backend_;
+    QHash<QString, ManualUnreadMarker> manualUnreadMarkers_;
+    QSet<QString> manualAttentionKeys_;
     QVector<Entry> entries_;
     QTimer threadRefreshTimer_;
     bool threadRefreshInFlight_ = false;

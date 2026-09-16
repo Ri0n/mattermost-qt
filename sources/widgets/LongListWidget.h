@@ -195,6 +195,9 @@ signals:
     void visibleRangeChanged(int first, int last);
     void materializedRangeChanged(int first, int last);
 
+    /** Emitted when the same top-level item hover used by the row highlight changes. */
+    void hoveredItemChanged(int previousIndex, int currentIndex);
+
     /** Emitted only for direct user scrollbar/wheel movement. */
     void userViewportChanged(bool atEnd);
 

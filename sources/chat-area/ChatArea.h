@@ -56,6 +56,7 @@ class BackendPost;
 class BackendUser;
 class ChannelItem;
 class PostCollectionView;
+class ThemeIconButton;
 
 class ChatArea: public QWidget {
 	Q_OBJECT
@@ -153,7 +154,7 @@ private:
 	std::uint64_t viewportNavigationGeneration = 0;
 	AbstractPostSource* postSource = nullptr; // QObject child; owned by ChatArea
 	QTimer* loadingDelayTimer = nullptr;
-	QToolButton* threadFollowButton = nullptr;
+	ThemeIconButton* threadFollowButton = nullptr;
 	QStackedWidget* contentStack = nullptr;
 	PostCollectionView* pinnedPostsView = nullptr;
 	int pendingMessageLoads = 0;

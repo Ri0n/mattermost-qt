@@ -25,6 +25,11 @@ constexpr int MuteIconSize = 16;
 constexpr int HorizontalMargin = 4;
 constexpr int ItemSpacing = 4;
 
+bool isTeamRow(const QModelIndex& index)
+{
+    return index.data(SidebarItem::KindRole).toInt() == SidebarItem::Team;
+}
+
 int channelType(const QModelIndex& index)
 {
     return index.data(SidebarItem::ChannelTypeRole).toInt();
@@ -70,7 +75,9 @@ QSize ChannelItemDelegate::sizeHint(const QStyleOptionViewItem& option,
                                     const QModelIndex& index) const
 {
     QSize hint = QStyledItemDelegate::sizeHint(option, index);
-    if (isConversationRow(index)) {
+    if (isTeamRow(index)) {
+        hint.setHeight(0);
+    } else if (isConversationRow(index)) {
         hint.setHeight(ChannelRowHeight);
     }
     return hint;
@@ -80,6 +87,9 @@ void ChannelItemDelegate::paint(QPainter* painter,
                                 const QStyleOptionViewItem& option,
                                 const QModelIndex& index) const
 {
+    if (isTeamRow(index)) {
+        return;
+    }
     if (!isConversationRow(index)) {
         QStyledItemDelegate::paint(painter, option, index);
         return;

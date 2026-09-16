@@ -513,8 +513,10 @@ void LongListWidget::setHoverHighlightEnabled(bool enabled)
         return;
     }
     hoverHighlightEnabled = enabled;
-    if (!hoverHighlightEnabled) {
+    if (!hoverHighlightEnabled && hoveredWidget) {
+        const int previousIndex = widgetIndexes.value(hoveredWidget.data(), -1);
         hoveredWidget.clear();
+        emit hoveredItemChanged(previousIndex, -1);
     }
     viewport()->update();
 }
@@ -838,11 +840,18 @@ bool LongListWidget::eventFilter(QObject* watched, QEvent* event)
     const auto it = widgetIndexes.constFind(watched);
     if (it != widgetIndexes.cend()) {
         if (event->type() == QEvent::Enter && hoverHighlightEnabled) {
-            hoveredWidget = qobject_cast<QWidget*>(watched);
+            QWidget* current = qobject_cast<QWidget*>(watched);
+            if (current && hoveredWidget.data() != current) {
+                const int previousIndex = widgetIndexes.value(hoveredWidget.data(), -1);
+                hoveredWidget = current;
+                emit hoveredItemChanged(previousIndex, it.value());
+            }
             viewport()->update();
         } else if ((event->type() == QEvent::Leave || event->type() == QEvent::Hide)
                    && hoveredWidget.data() == watched) {
+            const int previousIndex = it.value();
             hoveredWidget.clear();
+            emit hoveredItemChanged(previousIndex, -1);
             viewport()->update();
         }
 

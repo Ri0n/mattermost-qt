@@ -24,8 +24,10 @@
 
 #include "ChannelTree.h"
 
+#include <QDragMoveEvent>
 #include <QDropEvent>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QPointer>
 #include <QStackedWidget>
 
@@ -37,6 +39,7 @@
 #include "channel-tree/ChannelIcons.h"
 #include "channel-tree/ChannelItem.h"
 #include "channel-tree/ChannelItemDelegate.h"
+#include "channel-tree/SidebarChannelMovePolicy.h"
 #include "channel-tree/channel-item/DirectChannelItem.h"
 #include "channel-tree/team-item/GroupTeamItem.h"
 #include "log.h"
@@ -166,6 +169,8 @@ void ChannelTree::populateSidebars(Backend& backend)
     auto& sidebar = SidebarService::instance(backend);
     connect(&sidebar, &SidebarService::channelMutedChanged,
             this, &ChannelTree::setChannelMutedVisual, Qt::UniqueConnection);
+    connect(&sidebar, &SidebarService::channelActivityChanged,
+            this, &ChannelTree::refreshChannelUnreadVisual, Qt::UniqueConnection);
     connect(&sidebar, &SidebarService::channelMentionedChanged,
             this, &ChannelTree::setChannelMentionedVisual, Qt::UniqueConnection);
 
@@ -460,6 +465,7 @@ ChannelItem* ChannelTree::createChannelItem(Backend& backend, TeamItem& teamItem
     addChannelToItem(channel.id, item);
     auto& sidebar = SidebarService::instance(backend);
     item->setMuted(sidebar.isChannelMuted(channel));
+    item->setUnread(sidebar.isChannelUnread(channel));
     item->setMentioned(sidebar.hasUnreadMention(channel.id));
     return item;
 }
@@ -791,6 +797,31 @@ void ChannelTree::setChannelMutedVisual(const QString& channelId, bool muted)
     }
 }
 
+void ChannelTree::refreshChannelUnreadVisual(const QString& channelId)
+{
+    if (!backendForSidebar) {
+        return;
+    }
+
+    BackendChannel* channel = backendForSidebar->getStorage().getChannelById(channelId);
+    if (!channel) {
+        return;
+    }
+
+    setChannelUnreadVisual(
+        channelId, SidebarService::instance(*backendForSidebar).isChannelUnread(*channel));
+}
+
+void ChannelTree::setChannelUnreadVisual(const QString& channelId, bool unread)
+{
+    const auto items = channelToItemMap.value(channelId);
+    for (QTreeWidgetItem* item : items) {
+        if (item && item->data(0, ItemKindRole).toInt() == ChannelItemKind) {
+            static_cast<ChannelItem*>(item)->setUnread(unread);
+        }
+    }
+}
+
 void ChannelTree::setChannelMentionedVisual(const QString& channelId, bool mentioned)
 {
     const auto items = channelToItemMap.value(channelId);
@@ -867,88 +898,252 @@ void ChannelTree::removeChannelFromCategory(ChannelItem* item)
         });
 }
 
-void ChannelTree::dropEvent(QDropEvent* event)
+void ChannelTree::refreshSidebarTeam(const QString& teamId)
 {
-    const QPoint eventPosition = dropEventPosition(event);
-    QTreeWidgetItem* source = currentItem();
-    QTreeWidgetItem* target = itemAt(eventPosition);
-    if (!source || !target || source == target) {
-        event->ignore();
+    if (!backendForSidebar) {
+        return;
+    }
+    if (BackendTeam* team = backendForSidebar->getStorage().getTeamById(teamId)) {
+        refreshTeamSidebar(*backendForSidebar, *team);
+    }
+}
+
+QVector<QPair<QString, QString>> ChannelTree::customCategoryTargets(const ChannelItem* item) const
+{
+    QVector<QPair<QString, QString>> result;
+    if (!backendForSidebar || !item || !item->parent()) {
+        return result;
+    }
+
+    const QTreeWidgetItem* sourceCategoryItem = item->parent();
+    const QString teamId = sourceCategoryItem->data(0, ItemTeamIdRole).toString();
+    const QString sourceCategoryId = sourceCategoryItem->data(0, ItemIdRole).toString();
+    const SidebarTeamState* state = SidebarService::instance(*backendForSidebar).teamState(teamId);
+    if (!state) {
+        return result;
+    }
+
+    for (const QString& categoryId : state->order) {
+        const SidebarCategory* category = state->category(categoryId);
+        if (!category || !category->isCustom() || category->id == sourceCategoryId) {
+            continue;
+        }
+        result.push_back(qMakePair(category->id, categoryDisplayName(*category)));
+    }
+    return result;
+}
+
+void ChannelTree::createGroupAndMoveChannel(ChannelItem* item)
+{
+    if (!backendForSidebar || !item || !item->parent()) {
         return;
     }
 
-    if (source->data(0, ItemKindRole).toInt() != ChannelItemKind) {
-        event->ignore();
+    const QString teamId = item->data(0, ItemTeamIdRole).toString();
+    const QString channelId = item->data(0, ItemIdRole).toString();
+    const QString sourceCategoryId = item->parent()->data(0, ItemIdRole).toString();
+    if (teamId.isEmpty() || channelId.isEmpty() || sourceCategoryId.isEmpty()) {
         return;
     }
 
-    QTreeWidgetItem* targetCategoryItem = target;
-    if (target->data(0, ItemKindRole).toInt() == ChannelItemKind) {
+    bool accepted = false;
+    const QString name = QInputDialog::getText(
+        this, tr("Create group"), tr("Group name:"), QLineEdit::Normal,
+        QString(), &accepted).trimmed();
+    if (!accepted || name.isEmpty()) {
+        return;
+    }
+
+    QPointer<ChannelTree> guard(this);
+    SidebarService::instance(*backendForSidebar).createCategory(
+        teamId, name,
+        [guard, teamId, sourceCategoryId, channelId](const SidebarCategory& created) {
+            if (!guard || !guard->backendForSidebar || created.id.isEmpty()) {
+                return;
+            }
+
+            auto& sidebar = SidebarService::instance(*guard->backendForSidebar);
+            SidebarTeamState* state = sidebar.teamState(teamId);
+            const SidebarCategory* source = state ? state->category(sourceCategoryId) : nullptr;
+            const SidebarCategory* target = state ? state->category(created.id) : nullptr;
+            if (!target) {
+                return;
+            }
+
+            QVector<SidebarCategory> updates;
+            if (source && source->id != target->id) {
+                SidebarCategory sourceUpdate = *source;
+                sourceUpdate.channelIds.removeAll(channelId);
+                updates.push_back(std::move(sourceUpdate));
+            }
+
+            SidebarCategory targetUpdate = *target;
+            targetUpdate.channelIds.removeAll(channelId);
+            targetUpdate.channelIds.push_back(channelId);
+            targetUpdate.sorting = QStringLiteral("manual");
+            updates.push_back(std::move(targetUpdate));
+
+            sidebar.updateCategories(teamId, updates,
+                [guard, teamId](const SidebarTeamState&) {
+                    if (guard) {
+                        guard->refreshSidebarTeam(teamId);
+                    }
+                });
+        });
+}
+
+void ChannelTree::moveChannelToCategory(ChannelItem* item, const QString& categoryId)
+{
+    moveChannel(item, categoryId, {}, false, false);
+}
+
+void ChannelTree::moveChannel(ChannelItem* item,
+                              const QString& targetCategoryId,
+                              const QString& targetChannelId,
+                              bool afterTarget,
+                              bool explicitPosition)
+{
+    if (!backendForSidebar || !item || !item->parent() || targetCategoryId.isEmpty()) {
+        return;
+    }
+
+    QTreeWidgetItem* sourceCategoryItem = item->parent();
+    const QString teamId = sourceCategoryItem->data(0, ItemTeamIdRole).toString();
+    SidebarTeamState* state = SidebarService::instance(*backendForSidebar).teamState(teamId);
+    const SidebarCategory* sourceCategory = state
+        ? state->category(sourceCategoryItem->data(0, ItemIdRole).toString()) : nullptr;
+    const SidebarCategory* targetCategory = state ? state->category(targetCategoryId) : nullptr;
+    if (!sourceCategory || !targetCategory || targetCategory->teamId != teamId) {
+        return;
+    }
+
+    const QString channelId = item->data(0, ItemIdRole).toString();
+    if (channelId.isEmpty()) {
+        return;
+    }
+
+    QPointer<ChannelTree> guard(this);
+    auto refresh = [guard, teamId] {
+        if (guard) {
+            guard->refreshSidebarTeam(teamId);
+        }
+    };
+
+    if (sourceCategory->id == targetCategory->id) {
+        SidebarCategory update = *sourceCategory;
+        if (!reorderSidebarChannel(update.channelIds, channelId,
+                                   targetChannelId, afterTarget)) {
+            return;
+        }
+        // Dragging establishes an explicit order. Alpha/recent sorting would
+        // otherwise immediately undo the user's move when the tree refreshes.
+        update.sorting = QStringLiteral("manual");
+        SidebarService::instance(*backendForSidebar).updateCategory(
+            update, [refresh](const SidebarCategory&) { refresh(); });
+        return;
+    }
+
+    SidebarCategory sourceUpdate = *sourceCategory;
+    SidebarCategory targetUpdate = *targetCategory;
+    if (!moveSidebarChannel(sourceUpdate.channelIds, targetUpdate.channelIds,
+                            channelId, targetChannelId, afterTarget)) {
+        return;
+    }
+    if (explicitPosition) {
+        targetUpdate.sorting = QStringLiteral("manual");
+    }
+
+    SidebarService::instance(*backendForSidebar).updateCategories(
+        teamId, QVector<SidebarCategory> {sourceUpdate, targetUpdate},
+        [refresh](const SidebarTeamState&) { refresh(); });
+}
+
+bool ChannelTree::resolveChannelDropTarget(QTreeWidgetItem* source,
+                                           const QPoint& pos,
+                                           QTreeWidgetItem*& targetCategoryItem,
+                                           QString& targetChannelId,
+                                           bool& afterTarget) const
+{
+    targetCategoryItem = nullptr;
+    targetChannelId.clear();
+    afterTarget = false;
+    if (!source || source->data(0, ItemKindRole).toInt() != ChannelItemKind) {
+        return false;
+    }
+
+    QTreeWidgetItem* target = itemAt(pos);
+    if (!target || target == source) {
+        return false;
+    }
+
+    const int targetKind = target->data(0, ItemKindRole).toInt();
+    if (targetKind == ChannelItemKind) {
         targetCategoryItem = target->parent();
-    }
-    if (!targetCategoryItem || targetCategoryItem->data(0, ItemKindRole).toInt() != CategoryItemKind) {
-        event->ignore();
-        return;
+        targetChannelId = target->data(0, ItemIdRole).toString();
+        const QRect rect = visualItemRect(target);
+        afterTarget = rect.isValid() && pos.y() >= rect.center().y();
+    } else if (targetKind == CategoryItemKind) {
+        targetCategoryItem = target;
+    } else if (targetKind == VirtualDestinationItemKind) {
+        // Personal/Saved are presentation-only rows inside Favorites and have
+        // no position in category.channel_ids. Treat dropping on them as
+        // dropping on the category itself rather than inventing an ordinal.
+        targetCategoryItem = target->parent();
+    } else {
+        return false;
     }
 
     QTreeWidgetItem* sourceCategoryItem = source->parent();
-    QTreeWidgetItem* teamItem = sourceCategoryItem ? sourceCategoryItem->parent() : nullptr;
-    if (!sourceCategoryItem || !teamItem || targetCategoryItem->parent() != teamItem) {
-        event->ignore();
-        return;
-    }
-
-    const QString teamId = targetCategoryItem->data(0, ItemTeamIdRole).toString();
-    SidebarTeamState* state = backendForSidebar
-        ? SidebarService::instance(*backendForSidebar).teamState(teamId)
-        : nullptr;
-    SidebarCategory* sourceCategory = state
-        ? state->category(sourceCategoryItem->data(0, ItemIdRole).toString()) : nullptr;
-    SidebarCategory* targetCategory = state
-        ? state->category(targetCategoryItem->data(0, ItemIdRole).toString()) : nullptr;
-    if (!sourceCategory || !targetCategory) {
-        event->ignore();
-        return;
-    }
-
-    const QString channelId = source->data(0, ItemIdRole).toString();
-    if (channelId.isEmpty()) {
-        event->ignore();
-        return;
-    }
-
-    if (sourceCategory->id == targetCategory->id) {
-        const int oldIndex = sourceCategory->channelIds.indexOf(channelId);
-        int newIndex = targetCategoryItem->indexOfChild(target);
-        if (oldIndex < 0 || newIndex < 0) {
-            event->ignore();
-            return;
-        }
-        sourceCategory->channelIds.removeAt(oldIndex);
-        if (newIndex > oldIndex) {
-            --newIndex;
-        }
-        sourceCategory->channelIds.insert(newIndex, channelId);
-        SidebarService::instance(*backendForSidebar).updateCategory(*sourceCategory);
-    } else {
-        sourceCategory->channelIds.removeAll(channelId);
-        targetCategory->channelIds.removeAll(channelId);
-        int insertIndex = targetCategoryItem->indexOfChild(target);
-        if (insertIndex < 0 || insertIndex > targetCategory->channelIds.size()) {
-            insertIndex = targetCategory->channelIds.size();
-        }
-        targetCategory->channelIds.insert(insertIndex, channelId);
-
-        QVector<SidebarCategory> updates {*sourceCategory, *targetCategory};
-        SidebarService::instance(*backendForSidebar).updateCategories(teamId, updates);
-    }
-
-    event->acceptProposedAction();
-    if (backendForSidebar) {
-        if (BackendTeam* team = backendForSidebar->getStorage().getTeamById(teamId)) {
-            refreshTeamSidebar(*backendForSidebar, *team);
-        }
-    }
+    QTreeWidgetItem* sourceTeamItem = sourceCategoryItem ? sourceCategoryItem->parent() : nullptr;
+    return targetCategoryItem
+        && targetCategoryItem->data(0, ItemKindRole).toInt() == CategoryItemKind
+        && sourceTeamItem
+        && targetCategoryItem->parent() == sourceTeamItem;
 }
+
+void ChannelTree::dragMoveEvent(QDragMoveEvent* event)
+{
+    QTreeWidget::dragMoveEvent(event);
+    const auto selected = selectedItems();
+    QTreeWidgetItem* source = selected.size() == 1 ? selected.front() : currentItem();
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    const QPoint pos = event->position().toPoint();
+#else
+    const QPoint pos = event->pos();
+#endif
+    QTreeWidgetItem* targetCategoryItem = nullptr;
+    QString targetChannelId;
+    bool afterTarget = false;
+    if (!resolveChannelDropTarget(source, pos, targetCategoryItem,
+                                  targetChannelId, afterTarget)) {
+        event->ignore();
+        return;
+    }
+    event->setDropAction(Qt::MoveAction);
+    event->accept();
+}
+
+void ChannelTree::dropEvent(QDropEvent* event)
+{
+    const auto selected = selectedItems();
+    QTreeWidgetItem* source = selected.size() == 1 ? selected.front() : currentItem();
+    const QPoint pos = dropEventPosition(event);
+    QTreeWidgetItem* targetCategoryItem = nullptr;
+    QString targetChannelId;
+    bool afterTarget = false;
+    if (!resolveChannelDropTarget(source, pos, targetCategoryItem,
+                                  targetChannelId, afterTarget)) {
+        event->ignore();
+        return;
+    }
+
+    auto* channelItem = static_cast<ChannelItem*>(source);
+    const QString targetCategoryId = targetCategoryItem->data(0, ItemIdRole).toString();
+    moveChannel(channelItem, targetCategoryId, targetChannelId,
+                afterTarget, !targetChannelId.isEmpty());
+    event->setDropAction(Qt::MoveAction);
+    event->accept();
+}
+
 
 } // namespace Mattermost

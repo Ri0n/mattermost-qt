@@ -91,7 +91,7 @@ jobs:
           cat > Containerfile <<'EOF'
           FROM fedora:latest
           RUN dnf -y update \
-              && dnf -y install cmake gcc-c++ make qt5-qtbase-devel qt5-qtwebsockets-devel \
+              && dnf -y install cmake gcc-c++ make qt5-qtbase-devel qt5-qtsvg qt5-qtwebsockets-devel \
               && dnf clean all
           COPY mattermost-qt /mattermost-qt
           WORKDIR /mattermost-qt
@@ -135,6 +135,16 @@ jobs:
 
       - name: Build
         run: cmake --build build --parallel 4
+
+      - name: Diagnose sidebar delegate test
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          & .\build\tests\sidebar-item-delegate-test.exe -v2
+          $code = $LASTEXITCODE
+          Write-Host "sidebar-item-delegate-test exit code: $code"
+          exit 0
 
       - name: Unit tests
         run: ctest --test-dir build --output-on-failure

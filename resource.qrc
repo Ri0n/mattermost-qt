@@ -13,6 +13,10 @@
         <file alias="emoji">img/emoji.svg</file>
         <file alias="paperclip">img/paperclip.svg</file>
         <file alias="message-balloon">img/message-balloon.svg</file>
+        <file alias="edit">img/edit.svg</file>
+        <file alias="copy">img/copy.svg</file>
+        <file alias="link">img/link.svg</file>
+        <file alias="unread">img/unread.svg</file>
         <file>img/icon0.ico</file>
         <file>img/icon1.ico</file>
         <file>img/icon2.ico</file>

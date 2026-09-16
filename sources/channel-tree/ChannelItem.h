@@ -41,6 +41,7 @@ public:
     void setLabel (const QString& label);
     void setWidget (ChannelItemWidget* itemWidget);
     void setMuted (bool muted);
+    void setUnread (bool unread);
     void setMentioned (bool mentioned);
     void setStatus (const QString& status);
 protected:

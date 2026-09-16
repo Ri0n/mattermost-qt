@@ -128,18 +128,16 @@ void GroupTeamItem::showContextMenu (const QPoint& pos)
 			return;
 		}
 
-		backend.retrieveTeamPublicChannels (team->id, [this, team] (std::list<BackendChannel>& channels) {
-			FilterListDialogConfig dialogCfg {
-				"Public Channels - Mattermost",
-				"Public Channels in team '" + team->display_name + "':",
-				"Filter channels by name:",
-				QDialogButtonBox::Close,
-				""
-			};
+		FilterListDialogConfig dialogCfg {
+			"Public Channels - Mattermost",
+			"Public Channels in team '" + team->display_name + "':",
+			"Filter channels by name:",
+			QDialogButtonBox::Close,
+			""
+		};
 
-			TeamChannelsListDialog* dialog = new TeamChannelsListDialog (backend, dialogCfg, channels, treeWidget());
-			dialog->show ();
-		});
+		auto* dialog = new TeamChannelsListDialog(backend, dialogCfg, *team, treeWidget());
+		dialog->show();
 	});
 
 	myMenu.exec (pos);

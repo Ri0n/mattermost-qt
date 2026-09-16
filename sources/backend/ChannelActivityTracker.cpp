@@ -122,6 +122,42 @@ void ChannelActivityTracker::recordViewed(const QString& channelId, uint64_t vie
     entry.runtimeMentioned = false;
 }
 
+void ChannelActivityTracker::markUnread(const QString& channelId,
+                                                uint64_t lastViewedAt,
+                                                uint64_t readMessageCount,
+                                                uint64_t readRootMessageCount,
+                                                bool hasReadRootMessageCount,
+                                                uint64_t mentionCount,
+                                                uint64_t rootMentionCount,
+                                                bool hasRootMentionCount)
+{
+    if (channelId.isEmpty()) {
+        return;
+    }
+
+    Entry& entry = entries[channelId];
+    entry.tracked = true;
+
+    // Unlike ordinary membership refreshes, set_unread is explicitly allowed
+    // to move the user's read watermark backwards.
+    entry.lastViewedAt = lastViewedAt;
+    entry.readMessageCount = readMessageCount;
+    if (hasReadRootMessageCount) {
+        entry.readRootMessageCount = readRootMessageCount;
+        entry.hasReadRootMessageCount = true;
+    }
+
+    entry.mentionCount = mentionCount;
+    entry.rootMentionCount = rootMentionCount;
+    entry.hasRootMentionCount = hasRootMentionCount;
+    entry.serverUnreadActivity = true;
+    entry.runtimeUnreadActivity = false;
+    entry.serverMentioned = collapsedThreadsEnabled && hasRootMentionCount
+        ? rootMentionCount > 0
+        : mentionCount > 0;
+    entry.runtimeMentioned = false;
+}
+
 void ChannelActivityTracker::setRecencyTimes(const QString& channelId, uint64_t approximateViewAt,
                                              uint64_t openTimeAt)
 {

@@ -78,7 +78,7 @@ void ChannelHeaderTextLabel::setText(const QString& text)
     // A direct-message presence is presentation state, not channel header text.
     // Route it to the avatar badge so we use the same AvatarUtils visual as the
     // timeline and never depend on rich-text foreground palette propagation.
-    if (PresenceAvatarLabel::isPresenceStatus(text)) {
+    if (presenceRoutingEnabled && PresenceAvatarLabel::isPresenceStatus(text)) {
         sourceText.clear();
         formattedText.clear();
         QLabel::clear();

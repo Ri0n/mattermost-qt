@@ -30,7 +30,9 @@
 #include "BackendChannel.h"
 #include "BackendPoll.h"
 #include "backend/Storage.h"
+#include "backend/emoji/EmojiInfo.h"
 #include "log.h"
+#include "reactions/ReactionUsageTracker.h"
 
 namespace Mattermost {
 
@@ -353,7 +355,24 @@ void BackendChannel::addPostReaction (QString postId, QString userId, QString em
 		return;
 	}
 
-	existingPost->addReaction (storage.getUserDisplayNameByUserId (userId, true), emojiName);
+	const QString userName = storage.getUserDisplayNameByUserId(userId, true);
+	const bool ownReaction = storage.loginUser && userId == storage.loginUser->id;
+	const EmojiID emojiId = ownReaction
+		? EmojiInfo::findByName(emojiName) : EmojiID {0, 0};
+	const auto hasOwnReaction = [&] {
+		if (!emojiId) {
+			return false;
+		}
+		const auto reaction = existingPost->reactions.find(emojiId);
+		return reaction != existingPost->reactions.end()
+			&& reaction->second.contains(userName);
+	};
+	const bool alreadyPresent = ownReaction && hasOwnReaction();
+
+	existingPost->addReaction (userName, emojiName);
+	if (ownReaction && !alreadyPresent && hasOwnReaction()) {
+		ReactionUsageTracker::instance().recordUse(emojiName);
+	}
 	emit onPostReactionUpdated (*existingPost);
 }
 

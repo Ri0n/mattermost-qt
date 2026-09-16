@@ -1,6 +1,10 @@
 #include <QtTest>
 
+#include <QEvent>
 #include <QScrollBar>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QEnterEvent>
+#endif
 
 #include "widgets/LongListWidget.h"
 
@@ -11,6 +15,18 @@ void settleEvents(int rounds = 8)
     for (int i = 0; i < rounds; ++i) {
         QCoreApplication::processEvents();
     }
+}
+
+void sendEnterEvent(QWidget* widget)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    const QPointF local(1.0, 1.0);
+    const QPointF global = widget->mapToGlobal(QPoint(1, 1));
+    QEnterEvent event(local, local, global);
+#else
+    QEvent event(QEvent::Enter);
+#endif
+    QCoreApplication::sendEvent(widget, &event);
 }
 
 class VariableRow : public QWidget
@@ -92,6 +108,52 @@ private slots:
         const int center = list.indexAtViewportPosition(list.viewport()->height() / 2);
         QVERIFY2(qAbs(center - 5000) <= 3,
                  "A uniform 10k list must map the middle of the scrollbar near logical item 5000");
+    }
+
+    void hoverStateFollowsLatestTopLevelItem()
+    {
+        TestLongListWidget list;
+        list.resize(480, 180);
+        list.setDefaultItemHeight(60);
+        list.setItemCount(2);
+        list.setRangeAvailable(0, 1);
+        list.show();
+        settleEvents();
+
+        QWidget* first = list.itemWidget(0);
+        QWidget* second = list.itemWidget(1);
+        QVERIFY(first);
+        QVERIFY(second);
+
+        // Qt's offscreen QPA keeps a virtual cursor at a fixed screen position
+        // and Qt 6 can therefore deliver a real Enter while show() settles.
+        // Start the synthetic ordering check from a known empty hover state.
+        list.setHoverHighlightEnabled(false);
+        list.setHoverHighlightEnabled(true);
+
+        QSignalSpy hoverChanges(&list, &Mattermost::LongListWidget::hoveredItemChanged);
+
+        sendEnterEvent(first);
+        QCOMPARE(hoverChanges.count(), 1);
+        QCOMPARE(hoverChanges.at(0).at(0).toInt(), -1);
+        QCOMPARE(hoverChanges.at(0).at(1).toInt(), 0);
+
+        // Entering the next row may be observed before the stale Leave from
+        // the previous one. The newest Enter must own hover state.
+        sendEnterEvent(second);
+        QCOMPARE(hoverChanges.count(), 2);
+        QCOMPARE(hoverChanges.at(1).at(0).toInt(), 0);
+        QCOMPARE(hoverChanges.at(1).at(1).toInt(), 1);
+
+        QEvent leaveFirst(QEvent::Leave);
+        QCoreApplication::sendEvent(first, &leaveFirst);
+        QCOMPARE(hoverChanges.count(), 2);
+
+        QEvent leaveSecond(QEvent::Leave);
+        QCoreApplication::sendEvent(second, &leaveSecond);
+        QCOMPARE(hoverChanges.count(), 3);
+        QCOMPARE(hoverChanges.at(2).at(0).toInt(), 1);
+        QCOMPARE(hoverChanges.at(2).at(1).toInt(), -1);
     }
 
     void missingItemsRequestContiguousViewportDemand()
@@ -474,7 +536,6 @@ private slots:
         bar->setSliderDown(false);
         settleEvents(12);
         QVERIFY(requests.count() > 0);
-
         const QList<QVariant> request = requests.takeFirst();
         requests.clear();
         list.finishRangeRequest(request.at(0).toInt(), request.at(1).toInt());

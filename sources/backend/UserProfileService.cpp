@@ -17,6 +17,7 @@
 #include <QTimer>
 
 #include "backend/Backend.h"
+#include "backend/AvatarImage.h"
 #include "backend/NetworkRequest.h"
 #include "backend/QByteArrayCreator.h"
 #include "backend/Storage.h"
@@ -212,13 +213,14 @@ void UserProfileService::ensureAvatar(const BackendUser& user)
                 return;
             }
 
-            QPixmap pixmap;
-            if (!pixmap.loadFromData(data)) {
+            QPixmap pixmap = decodeAvatarImage(data);
+            if (pixmap.isNull()) {
                 return;
             }
 
-            currentUser->avatar = pixmap.scaled(
-                48, 48, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            // BackendUser owns the original pixels. Small chat/sidebar avatars
+            // are scaled at their presentation sites; profile dialogs need 128px.
+            currentUser->avatar = std::move(pixmap);
             currentUser->avatar_picture_update = pictureVersion;
             emit currentUser->onAvatarChanged();
         }));
